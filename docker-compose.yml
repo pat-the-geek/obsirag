@@ -1,0 +1,39 @@
+services:
+  obsirag:
+    build: .
+    container_name: obsirag
+    image: obsirag:latest
+    ports:
+      - "8501:8501"
+    volumes:
+      # Coffre Obsidian — ObsiRAG écrit UNIQUEMENT dans obsirag/insights/ et obsirag/synthesis/
+      - ${VAULT_PATH}:/vault
+      # Données système (ChromaDB, index, stats) — volume Docker, hors iCloud
+      - obsirag-app-data:/app/data
+      # Cache des modèles d'embedding
+      - obsirag-model-cache:/app/.cache
+      # Logs applicatifs
+      - ./logs:/app/logs
+    env_file:
+      - .env
+    environment:
+      VAULT_PATH: /vault
+      APP_DATA_DIR: /app/data
+      PYTHONPATH: /app
+      TRANSFORMERS_CACHE: /app/.cache/transformers
+      HF_HOME: /app/.cache/huggingface
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8501/_stcore/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+volumes:
+  obsirag-app-data:
+    driver: local
+  obsirag-model-cache:
+    driver: local

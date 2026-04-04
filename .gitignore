@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+env/
+
+# Environnement
+.env
+
+# Logs
+logs/
+*.log
+
+# Cache modèles (volumineux, re-téléchargés automatiquement)
+.cache/
+src/ui/pages/__pycache__/
+
+# Données ObsiRAG générées (dans le coffre, pas dans le repo)
+# (le dossier obsirag/data est dans le vault, pas ici)
+
+# Docker
+.dockerignore
+
+# Streamlit
+.streamlit/secrets.toml
+
+# macOS
+.DS_Store

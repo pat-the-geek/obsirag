@@ -1,0 +1,103 @@
+"""
+Logging professionnel avec loguru.
+- Console colorée
+- Fichier rotatif (10 MB, rétention 30 jours, compression zip)
+- Fichier d'erreurs séparé
+- Suivi de la consommation de tokens IA (méthode dédiée)
+"""
+import sys
+import json
+from pathlib import Path
+from datetime import datetime
+from loguru import logger
+
+
+def configure_logging(log_level: str = "INFO", log_dir: str = "/app/logs") -> None:
+    logger.remove()
+
+    fmt_console = (
+        "<green>{time:HH:mm:ss}</green> | "
+        "<level>{level: <8}</level> | "
+        "<cyan>{name}</cyan>:<cyan>{line}</cyan> — "
+        "<level>{message}</level>"
+    )
+    fmt_file = (
+        "{time:YYYY-MM-DD HH:mm:ss.SSS} | "
+        "{level: <8} | "
+        "{name}:{function}:{line} — "
+        "{message}"
+    )
+
+    logger.add(sys.stdout, format=fmt_console, level=log_level, colorize=True)
+
+    log_path = Path(log_dir)
+    log_path.mkdir(parents=True, exist_ok=True)
+
+    logger.add(
+        log_path / "obsirag.log",
+        format=fmt_file,
+        level="DEBUG",
+        rotation="10 MB",
+        retention="30 days",
+        compression="zip",
+        encoding="utf-8",
+    )
+
+    logger.add(
+        log_path / "errors.log",
+        format=fmt_file + "\n{exception}",
+        level="ERROR",
+        rotation="5 MB",
+        retention="60 days",
+        encoding="utf-8",
+    )
+
+    logger.add(
+        log_path / "tokens.log",
+        format="{time:YYYY-MM-DD HH:mm:ss} | {message}",
+        level="INFO",
+        filter=lambda r: r["extra"].get("token_log") is True,
+        rotation="5 MB",
+        retention="90 days",
+        encoding="utf-8",
+    )
+
+
+def log_token_usage(
+    operation: str,
+    model: str,
+    prompt_tokens: int,
+    completion_tokens: int,
+    token_stats_file: Path,
+) -> None:
+    """Enregistre la consommation de tokens dans le log dédié et met à jour les stats cumulées."""
+    total = prompt_tokens + completion_tokens
+
+    logger.bind(token_log=True).info(
+        f"op={operation} model={model} "
+        f"prompt={prompt_tokens} completion={completion_tokens} total={total}"
+    )
+
+    # Mise à jour du fichier de stats JSON
+    token_stats_file.parent.mkdir(parents=True, exist_ok=True)
+
+    stats: dict = {}
+    if token_stats_file.exists():
+        try:
+            stats = json.loads(token_stats_file.read_text())
+        except Exception:
+            stats = {}
+
+    today = datetime.now().strftime("%Y-%m-%d")
+    day_stats = stats.setdefault(today, {})
+    op_stats = day_stats.setdefault(operation, {"prompt": 0, "completion": 0, "calls": 0})
+    op_stats["prompt"] += prompt_tokens
+    op_stats["completion"] += completion_tokens
+    op_stats["calls"] += 1
+
+    cumul = stats.setdefault("cumulative", {"prompt": 0, "completion": 0, "calls": 0})
+    cumul["prompt"] += prompt_tokens
+    cumul["completion"] += completion_tokens
+    cumul["calls"] += 1
+
+    token_stats_file.write_text(json.dumps(stats, indent=2, ensure_ascii=False))
