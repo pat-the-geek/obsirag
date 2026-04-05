@@ -28,7 +28,19 @@ from src.config import settings
 _WEAK_ANSWER_PATTERNS = re.compile(
     r"je ne sais pas|pas d.information|pas mentionné|pas trouvé|"
     r"aucune information|impossible de répondre|don't know|no information|"
-    r"not found|cannot answer",
+    r"not found|cannot answer|"
+    r"aucune? (critique|mention|référence|donnée|détail|élément|source|réponse|note|information|résultat|contenu|extrait|passage|texte|document|analyse|explication|précision|contexte|indice|lien|connexion|rapport|étude|exemple|preuve|argument|base|fondement|indication|trace|occurrence|cas|fait|observation|constat|insight|réponse spécifique)|"
+    r"n.a pas (été|pu|trouvé|mentionné|abordé|traité|évoqué|discuté|inclus|précisé|détaillé|expliqué|analysé)|"
+    r"les (extraits?|notes?|documents?|textes?) (ne |n.)(contiennent?|mentionnent?|incluent?|précisent?|détaillent?|abordent?|traitent?|évoquent?|discutent?|fournissent?|donnent?|parlent?|font? (pas )?mention)|"
+    r"se concentre(nt)? (plutôt|davantage)|"
+    r"insuffisant|manque d.information|hors de (ma |mon |notre )|(au-delà|en dehors) (du |de la |des )?contexte|"
+    r"aucun (des |de ces |ces )?documents? (ne |n.)|"
+    r"les extraits (fournis|consultés|disponibles)|"
+    r"ne (décri(t|vent)|fournit|précise|détaille|mentionne|aborde|traite|évoque|donne|contient|inclut|présente|explique|analyse)(nt)? pas|"
+    r"il n.y a (pas|aucun)|"
+    r"je ne trouve (pas|aucune?)|"
+    r"context(e)? ne (fournit|donne|contient|précise|inclut|mentionne)|"
+    r"notes (consultées|fournis) (indiquent|précisent|mentionnent).{0,80}(aucun|pas|ne )",
     re.IGNORECASE,
 )
 _MIN_ANSWER_LENGTH = 150  # réponse trop courte = insuffisante
@@ -38,10 +50,20 @@ _QUESTION_PROMPT = """<contenu>
 {content}
 </contenu>
 
-Génère exactement 3 questions en français sur ce contenu, une par ligne, rien d'autre.
+En te basant EXACTEMENT sur le sujet de ce contenu, génère 3 questions en français qui permettent d'approfondir CE SUJET PRÉCIS avec des données externes récentes : chiffres du marché, études scientifiques, comparaisons, impacts mesurables, évolutions récentes. Les questions doivent rester dans le même domaine que le contenu. Une par ligne, rien d'autre.
 Q1:
 Q2:
 Q3:"""
+
+_WEB_ANSWER_PROMPT = """Question : {question}
+
+Contexte depuis mes notes personnelles :
+{rag_context}
+
+Sources web trouvées :
+{web_context}
+
+Rédige une réponse enrichie en français qui apporte de la CONNAISSANCE NOUVELLE par rapport au contexte de mes notes. Appuie-toi sur les sources web pour ajouter des faits, chiffres, études ou exemples concrets. Sois structuré et précis."""
 
 _WEEKLY_SYNTHESIS_PROMPT = """Tu es un assistant de synthèse pour un coffre Obsidian.
 Voici les notes créées ou modifiées cette semaine :
@@ -196,28 +218,49 @@ class AutoLearner:
         for question in questions:
             time.sleep(self._SLEEP_BETWEEN_QUESTIONS)
             try:
-                answer, sources = self._rag.query(question)
-                web_results: list[dict] = []
+                # 1. Web en premier — source principale de connaissance nouvelle
+                web_results = self._web_search(question)
+                web_snippets = [r["body"] for r in web_results if r.get("body")]
 
-                # Compléter avec le web si la réponse RAG est insuffisante
-                if self._is_weak_answer(answer):
-                    web_results = self._web_search(question)
-                    if web_results:
-                        snippets = [r["body"] for r in web_results]
-                        answer = self._enrich_with_web(question, answer, snippets)
-                        logger.info(f"Auto-learner : réponse enrichie via web pour '{question[:60]}'")
+                # 2. RAG pour contexte personnel (secondaire)
+                _, sources = self._rag.query(question)
+                rag_context = "\n\n".join(
+                    c.get("text", "")[:400] for c in sources[:2]
+                ) if sources else "Aucune note personnelle sur ce sujet."
 
-                provenance = "Coffre"
-                if web_results and sources:
-                    provenance = "Coffre et Web"
-                elif web_results:
-                    provenance = "Web"
+                # 3. Synthèse : web + contexte coffre
+                if web_snippets and self._snippets_relevant(question, web_snippets):
+                    web_context = "\n\n".join(web_snippets[:3])
+                    prompt = _WEB_ANSWER_PROMPT.format(
+                        question=question,
+                        rag_context=rag_context[:800],
+                        web_context=web_context,
+                    )
+                    try:
+                        answer = self._rag._llm.chat(
+                            [{"role": "user", "content": prompt}],
+                            temperature=0.3,
+                            max_tokens=4096,
+                            operation="autolearn_enrich",
+                        )
+                        provenance = "Web + Coffre" if sources else "Web"
+                        logger.info(f"Auto-learner : réponse web pour '{question[:60]}'")
+                    except Exception:
+                        answer = "\n\n".join(web_snippets[:2])
+                        provenance = "Web"
+                else:
+                    # Fallback : réponse RAG seule
+                    answer, sources = self._rag.query(question)
+                    web_results = []
+                    provenance = "Coffre"
+                    if self._is_weak_answer(answer):
+                        logger.debug(f"Réponse faible sans web pour '{question[:60]}'")
 
                 qa_pairs.append({
                     "question": question,
                     "answer": answer,
                     "sources": [s["metadata"].get("file_path", "") for s in sources[:3]],
-                    "web_refs": [{"title": r.get("title", r["href"]), "url": r["href"]} for r in web_results],
+                    "web_refs": [{"title": r.get("title", r.get("href", "")), "url": r.get("href", "")} for r in web_results],
                     "provenance": provenance,
                 })
             except Exception as exc:
@@ -243,12 +286,87 @@ class AutoLearner:
         "python.org", "docs.python.org", "developer.mozilla.org",
     }
 
+    @staticmethod
+    def _fetch_url_content(url: str, max_chars: int = 3000) -> str:
+        """Fetche le contenu textuel d'une URL. Retourne une chaîne vide en cas d'échec."""
+        # Ignorer les PDFs — texte extrait sans espaces, inutilisable
+        if url.lower().endswith(".pdf") or "/pdf" in url.lower():
+            logger.debug(f"URL PDF ignorée : {url[:60]}")
+            return ""
+        try:
+            import urllib.request
+            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(req, timeout=8) as resp:
+                content_type = resp.headers.get("Content-Type", "")
+                if "pdf" in content_type.lower():
+                    return ""
+                raw = resp.read(50_000).decode("utf-8", errors="ignore")
+            # Extraction texte brut : supprimer balises HTML
+            text = re.sub(r"<style[^>]*>.*?</style>", " ", raw, flags=re.DOTALL | re.IGNORECASE)
+            text = re.sub(r"<script[^>]*>.*?</script>", " ", text, flags=re.DOTALL | re.IGNORECASE)
+            text = re.sub(r"<[^>]+>", " ", text)
+            # Réparer les mots collés : insérer espace avant une majuscule précédée d'une minuscule
+            text = re.sub(r"([a-zàéèêëîïôùûüç])([A-ZÀÉÈÊËÎÏÔÙÛÜÇ])", r"\1 \2", text)
+            text = re.sub(r"\s+", " ", text).strip()
+            # Rejeter si trop de mots collés (ratio espaces/chars trop bas)
+            if len(text) > 100 and text.count(" ") / len(text) < 0.05:
+                return ""
+            return text[:max_chars]
+        except Exception:
+            return ""
+
+    def _synthesize_web_sources(self, note_title: str, qa_pairs: list[dict]) -> str:
+        """Fetche et synthétise le contenu des URLs citées dans les Q&A."""
+        all_refs: list[dict] = []
+        seen_urls: set[str] = set()
+        for qa in qa_pairs:
+            for ref in qa.get("web_refs", []):
+                url = ref.get("url", "")
+                if url and url not in seen_urls:
+                    seen_urls.add(url)
+                    all_refs.append(ref)
+
+        if not all_refs:
+            return ""
+
+        fetched: list[str] = []
+        for ref in all_refs[:4]:  # max 4 URLs
+            content = self._fetch_url_content(ref["url"])
+            if content:
+                fetched.append(f"### {ref.get('title', ref['url'])}\n{content}")
+                logger.debug(f"Fetché : {ref['url'][:60]}")
+
+        if not fetched:
+            return ""
+
+        combined = "\n\n".join(fetched)
+        prompt = (
+            f"Sujet : {note_title}\n\n"
+            f"Voici le contenu de {len(fetched)} source(s) web citées dans les insights :\n\n"
+            f"{combined}\n\n"
+            f"Rédige une synthèse structurée en français (max 400 mots) qui extrait "
+            f"les informations clés, faits importants et apports de connaissance de ces sources. "
+            f"Format : paragraphes courts avec sous-titres Markdown si pertinent."
+        )
+        try:
+            return self._rag._llm.chat(
+                [{"role": "user", "content": prompt}],
+                temperature=0.3,
+                max_tokens=2048,
+                operation="autolearn_web_synthesis",
+            )
+        except Exception as exc:
+            logger.debug(f"Synthèse sources web échouée : {exc}")
+            return ""
+
     def _web_search(self, query: str) -> list[dict]:
         """Retourne une liste de {body, href, title} filtrée sur les domaines fiables."""
         try:
             from ddgs import DDGS
+            # Enrichir la requête pour orienter vers du contenu académique/informatif
+            enriched_query = f"{query} explication analyse histoire contexte"
             with DDGS() as ddgs:
-                results = list(ddgs.text(query, max_results=10))
+                results = list(ddgs.text(enriched_query, max_results=15))
             trusted = [
                 r for r in results
                 if any(d in r.get("href", "") for d in self._TRUSTED_DOMAINS)
@@ -259,20 +377,35 @@ class AutoLearner:
             logger.debug(f"Web search échouée : {exc}")
             return []
 
+    @staticmethod
+    def _snippets_relevant(question: str, snippets: list[str]) -> bool:
+        """Vérifie que les snippets web contiennent au moins un mot-clé de la question."""
+        words = [w.lower() for w in re.findall(r"\b\w{5,}\b", question)]
+        if not words or not snippets:
+            return bool(snippets)
+        combined = " ".join(snippets).lower()
+        # Seuil très bas : 1 seul mot suffit pour considérer les snippets pertinents
+        return any(w in combined for w in words)
+
     def _enrich_with_web(self, question: str, rag_answer: str, web_snippets: list[str]) -> str:
+        # Vérifier la pertinence des sources avant d'enrichir
+        if not self._snippets_relevant(question, web_snippets):
+            logger.debug(f"Sources web hors sujet pour : {question[:60]}")
+            return rag_answer
+
         context = "\n\n".join(web_snippets[:3])
         prompt = (
             f"Question : {question}\n\n"
-            f"Réponse partielle depuis le coffre de notes :\n{rag_answer}\n\n"
-            f"Informations complémentaires trouvées sur le web :\n{context}\n\n"
-            f"Synthétise une réponse complète et concise en intégrant les deux sources. "
-            f"Réponds uniquement en français."
+            f"Sources web :\n{context}\n\n"
+            f"Rédige une réponse structurée et informative en français, en t'appuyant principalement "
+            f"sur les sources web ci-dessus. Apporte des faits concrets, des chiffres, des exemples "
+            f"et du contexte qui enrichissent la compréhension du sujet. Sois précis et complet."
         )
         try:
             return self._rag._llm.chat(
                 [{"role": "user", "content": prompt}],
                 temperature=0.3,
-                max_tokens=800,
+                max_tokens=4096,
                 operation="autolearn_enrich",
             )
         except Exception as exc:
@@ -465,6 +598,19 @@ class AutoLearner:
                 "",
             ]
 
+        # Synthèse des sources web fetchées
+        note_title = path.stem
+        web_synthesis = self._synthesize_web_sources(note_title, qa_pairs)
+        if web_synthesis:
+            new_lines += [
+                "---",
+                "",
+                "## Synthèse des sources web",
+                "",
+                web_synthesis,
+                "",
+            ]
+
         path.write_text(content.rstrip() + "\n" + "\n".join(new_lines), encoding="utf-8")
         logger.info(
             f"Artefact mis à jour : {path.name} "
@@ -540,6 +686,18 @@ class AutoLearner:
                 f"*Provenance : {provenance_label}*  ",
                 f"*Notes consultées : {source_links}*  " if source_links else "",
                 *([f"*Références web :*"] + [f"- [{r['title']}]({r['url']})" for r in qa.get("web_refs", [])] if qa.get("web_refs") else []),
+                "",
+            ]
+
+        # Synthèse des sources web fetchées
+        web_synthesis = self._synthesize_web_sources(note_title, qa_pairs)
+        if web_synthesis:
+            lines += [
+                "---",
+                "",
+                "## Synthèse des sources web",
+                "",
+                web_synthesis,
                 "",
             ]
 
@@ -634,7 +792,7 @@ class AutoLearner:
         explanation = self._rag._llm.chat(
             [{"role": "user", "content": prompt}],
             temperature=0.6,
-            max_tokens=400,
+            max_tokens=1024,
             operation="autolearn_synapse",
         )
 
@@ -691,7 +849,7 @@ class AutoLearner:
             synthesis = self._rag._llm.chat(
                 [{"role": "user", "content": prompt}],
                 temperature=0.5,
-                max_tokens=600,
+                max_tokens=2048,
                 operation="autolearn_synthesis",
             )
 

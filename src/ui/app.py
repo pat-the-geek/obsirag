@@ -27,6 +27,22 @@ with st.sidebar:
     st.metric("Notes indexées", len(notes))
     st.metric("Chunks vectorisés", svc.chroma.count())
 
+    # Compteur auto-learner
+    import json
+    from src.config import settings as _s
+    _pf = _s.processed_notes_file
+    _processed = len(json.loads(_pf.read_text(encoding="utf-8"))) if _pf.exists() else 0
+    _total = len(notes)
+    _insights = len(list(_s.insights_dir.rglob("*.md"))) if _s.insights_dir.exists() else 0
+    if _processed < _total:
+        st.progress(_processed / _total if _total else 0,
+                    text=f"🧠 Insights {_processed}/{_total} notes")
+        st.caption(f"💡 {_insights} insight(s) générés")
+        time.sleep(10)
+        st.rerun()
+    else:
+        st.caption(f"🧠 {_processed}/{_total} notes · 💡 {_insights} insights")
+
     # Progression de l'indexation initiale (thread background)
     idx = svc.indexing_status
     if idx.get("running"):
