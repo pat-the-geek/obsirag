@@ -13,7 +13,6 @@ st.set_page_config(
     page_title="ObsiRAG",
     page_icon="🧠",
     layout="wide",
-    initial_sidebar_state="expanded",
 )
 
 svc = get_services()

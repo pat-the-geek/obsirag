@@ -10,28 +10,48 @@ from src.logger import configure_logging
 
 
 class ServiceManager:
-    def __init__(self) -> None:
+    def __init__(self, on_step=None) -> None:
+        """
+        on_step : callable(message: str) optionnel, appelé à chaque étape
+                  pour permettre à l'UI d'afficher la progression.
+        """
+        _step = on_step or (lambda msg: None)
+
         configure_logging(settings.log_level, settings.log_dir)
         logger.info("=== Démarrage ObsiRAG ===")
 
+        _step("📁 Initialisation des répertoires de données…")
         self._init_data_dirs()
 
+        _step("🗄️ Chargement de ChromaDB et du modèle d'embedding (peut prendre 30 s)…")
         from src.database.chroma_store import ChromaStore
-        from src.ai.lmstudio import LMStudioClient
-        from src.ai.rag import RAGPipeline
-        from src.indexer.pipeline import IndexingPipeline
-        from src.graph.builder import GraphBuilder
-        from src.learning.autolearn import AutoLearner
-        from src.vault.watcher import VaultWatcher
-
         self.chroma = ChromaStore()
+
+        _step("🤖 Connexion à LM Studio…")
+        from src.ai.lmstudio import LMStudioClient
         self.llm = LMStudioClient()
+
+        _step("🔗 Initialisation du pipeline RAG…")
+        from src.ai.rag import RAGPipeline
         self.rag = RAGPipeline(self.chroma, self.llm)
+
+        _step("🗂️ Initialisation du pipeline d'indexation…")
+        from src.indexer.pipeline import IndexingPipeline
         self.indexer = IndexingPipeline(self.chroma)
+
+        _step("🧠 Initialisation du graphe de connaissances…")
+        from src.graph.builder import GraphBuilder
         self.graph = GraphBuilder()
+
+        _step("📚 Initialisation de l'auto-learner…")
+        from src.learning.autolearn import AutoLearner
         self.learner = AutoLearner(self.chroma, self.rag, self.indexer)
+
+        _step("👁️ Démarrage du watcher de coffre…")
+        from src.vault.watcher import VaultWatcher
         self.watcher = VaultWatcher(self.indexer)
 
+        _step("🚀 Lancement des services en arrière-plan…")
         self._start_background_services()
         logger.info("Tous les services sont opérationnels")
 

@@ -9,12 +9,6 @@ from src.ui.components.note_bridge_component import note_bridge as _note_bridge
 
 st.set_page_config(page_title="Cerveau — ObsiRAG", page_icon="🧠", layout="wide")
 
-# ---- Bridge : intercepte les postMessage du graphe → ouvre la note ----
-_opened_note = _note_bridge(default=None, key="note_bridge_v1")
-if _opened_note:
-    st.session_state.viewing_note = _opened_note
-    st.switch_page("pages/4_Note.py")
-
 svc = get_services()
 
 st.title("🧠 Cerveau")
@@ -28,6 +22,12 @@ if not notes:
 
 # ---- Filtres sidebar ----
 with st.sidebar:
+    # Bridge invisible dans la sidebar — n'affecte pas la hauteur du contenu principal
+    _opened_note = _note_bridge(default=None, key="note_bridge_v1")
+    if _opened_note:
+        st.session_state.viewing_note = _opened_note
+        st.switch_page("pages/4_Note.py")
+
     st.markdown("### Filtres")
 
     from pathlib import Path
