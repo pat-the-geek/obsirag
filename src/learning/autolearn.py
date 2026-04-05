@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import re
 import time
+import unicodedata
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -284,14 +285,193 @@ class AutoLearner:
             answer = self._rag._llm.chat(
                 [{"role": "user", "content": prompt}],
                 temperature=0.7,
-                max_tokens=600,
+                max_tokens=1000,
                 operation="autolearn_questions",
             )
-            lines = [re.sub(r"^[•\-]?\s*Q\d+[.:）]\s*", "", l.strip()) for l in answer.strip().splitlines()]
-            return [l for l in lines if len(l) > 10][:3]
+            _prefix = re.compile(r"^[•\-]?\s*Q\d+[.:）]\s*")
+            questions: list[str] = []
+            for l in answer.strip().splitlines():
+                stripped = l.strip()
+                cleaned = _prefix.sub("", stripped)
+                # Ne garder que les lignes qui avaient réellement un préfixe Q1/Q2/Q3
+                # et qui sont des questions complètes (se terminent par ?)
+                if cleaned != stripped and len(cleaned) > 10 and cleaned.endswith("?"):
+                    questions.append(cleaned)
+            return questions[:3]
         except Exception as exc:
             logger.debug(f"Génération de questions échouée : {exc}")
             return []
+
+    @staticmethod
+    def _entities_to_tags(text: str) -> list[str]:
+        """Extrait les entités NER du texte et les convertit en tags Obsidian."""
+        try:
+            from src.vault.parser import get_nlp
+            nlp = get_nlp()
+            doc = nlp(text[:10_000])
+            tags: list[str] = []
+            seen: set[str] = set()
+            for ent in doc.ents:
+                value = ent.text.strip()
+                if not value or len(value) < 3:
+                    continue
+                label = ent.label_
+                if label == "PER":
+                    prefix = "personne"
+                elif label == "ORG":
+                    prefix = "org"
+                elif label in ("LOC", "GPE"):
+                    prefix = "lieu"
+                else:
+                    continue  # ignorer les entités MISC pour les tags
+                # Normalise : minuscules, supprime accents, remplace espaces par -
+                slug = unicodedata.normalize("NFD", value.lower())
+                slug = "".join(c for c in slug if unicodedata.category(c) != "Mn")
+                slug = re.sub(r"[^\w\s-]", "", slug).strip()
+                slug = re.sub(r"[\s_]+", "-", slug)
+                tag = f"{prefix}/{slug}"
+                if tag not in seen:
+                    seen.add(tag)
+                    tags.append(tag)
+            return tags[:20]
+        except Exception:
+            return []
+
+    # ---- Helpers frontmatter ----
+
+    @staticmethod
+    def _read_frontmatter_tags(content: str) -> list[str]:
+        """Extrait les tags du frontmatter YAML d'un fichier Markdown."""
+        if not content.startswith("---"):
+            return []
+        end = content.find("---", 3)
+        if end == -1:
+            return []
+        tags: list[str] = []
+        in_tags = False
+        for line in content[3:end].splitlines():
+            if re.match(r"^tags\s*:", line):
+                in_tags = True
+                continue
+            if in_tags:
+                m = re.match(r"\s+-\s+(.+)", line)
+                if m:
+                    tags.append(m.group(1).strip())
+                elif line.strip() and not line.startswith(" "):
+                    in_tags = False
+        return tags
+
+    @staticmethod
+    def _merge_frontmatter_tags(content: str, new_tags: list[str]) -> str:
+        """Ajoute de nouveaux tags au frontmatter YAML sans doublons."""
+        existing = AutoLearner._read_frontmatter_tags(content)
+        merged = list(existing)
+        for t in new_tags:
+            if t not in merged:
+                merged.append(t)
+        if not content.startswith("---"):
+            fm = "---\ntags:\n" + "\n".join(f"  - {t}" for t in merged) + "\n---\n"
+            return fm + content
+        end = content.find("---", 3)
+        if end == -1:
+            return content
+        fm = "---\ntags:\n" + "\n".join(f"  - {t}" for t in merged) + "\n---"
+        return fm + content[end + 3:]
+
+    # ---- Recherche et mise à jour d'artefacts existants ----
+
+    def _find_existing_insight(self, note_title: str, ner_tags: list[str]) -> Path | None:
+        """Cherche un artefact insight existant par titre de note ou overlap NER.
+
+        Critères (par ordre de priorité) :
+        1. Le stem du fichier commence par safe_name (même note)
+        2. ≥ 2 tags NER en commun (même thématique)
+        Retourne le chemin du fichier le plus pertinent, ou None.
+        """
+        insights_root = settings.insights_dir
+        if not insights_root.exists():
+            return None
+
+        safe_name = re.sub(r"[^\w\s-]", "", note_title).strip().replace(" ", "_")[:60].lower()
+        new_ner_set = {t for t in ner_tags if "/" in t}
+
+        best_path: Path | None = None
+        best_score = 0
+
+        for path in insights_root.rglob("*.md"):
+            score = 0
+            # Critère 1 : titre
+            if path.stem.lower().startswith(safe_name):
+                score += 10
+            # Critère 2 : overlap NER via frontmatter
+            if new_ner_set:
+                try:
+                    existing_tags = self._read_frontmatter_tags(
+                        path.read_text(encoding="utf-8")
+                    )
+                    existing_ner = {t for t in existing_tags if "/" in t}
+                    overlap = len(new_ner_set & existing_ner)
+                    if overlap >= 2:
+                        score += overlap * 2
+                except Exception:
+                    pass
+            if score > best_score:
+                best_score = score
+                best_path = path
+
+        # Seuil minimal : au moins un critère fort (titre = 10, NER ≥ 2 → score ≥ 4)
+        return best_path if best_score >= 4 else None
+
+    def _append_to_insight(
+        self,
+        path: Path,
+        qa_pairs: list[dict],
+        ner_tags: list[str],
+        provenance: str,
+    ) -> None:
+        """Appende de nouveaux Q&A à un artefact existant et met à jour ses tags NER."""
+        content = path.read_text(encoding="utf-8")
+
+        # Numérotation : compter les ## Question N existants
+        existing_count = len(re.findall(r"^## Question \d+", content, re.MULTILINE))
+
+        # Fusionner les nouveaux tags NER dans le frontmatter
+        content = self._merge_frontmatter_tags(content, ner_tags)
+
+        # Mettre à jour la ligne "Générée le" → "Mise à jour le"
+        content = re.sub(
+            r"\*\*(Générée|Mise à jour) le :\*\*.*",
+            f"**Mise à jour le :** {datetime.utcnow().strftime('%Y-%m-%d %H:%M')} UTC  ",
+            content,
+        )
+
+        def _wikilink(fp: str) -> str:
+            return f"[[{fp.removesuffix('.md')}]]"
+
+        new_lines: list[str] = [""]
+        for i, qa in enumerate(qa_pairs, existing_count + 1):
+            provenance_label = qa.get("provenance", provenance)
+            source_links = ", ".join(_wikilink(s) for s in qa["sources"] if s)
+            new_lines += [
+                f"## Question {i}",
+                "",
+                f"> {qa['question']}",
+                "",
+                qa["answer"],
+                "",
+                f"*Provenance : {provenance_label}*  ",
+                f"*Notes consultées : {source_links}*  " if source_links else "",
+                *([f"*Références web :*"] + [f"- [{r['title']}]({r['url']})" for r in qa.get("web_refs", [])] if qa.get("web_refs") else []),
+                "",
+            ]
+
+        path.write_text(content.rstrip() + "\n" + "\n".join(new_lines), encoding="utf-8")
+        logger.info(
+            f"Artefact mis à jour : {path.name} "
+            f"(+{len(qa_pairs)} Q&A → total {existing_count + len(qa_pairs)})"
+        )
+
+    # ---- Sauvegarde / création d'artefact ----
 
     def _save_knowledge_artifact(
         self,
@@ -299,14 +479,7 @@ class AutoLearner:
         note_meta: dict,
         qa_pairs: list[dict],
     ) -> None:
-        date_str = datetime.utcnow().strftime("%Y-%m")
-        artifact_dir = settings.insights_dir / date_str
-        artifact_dir.mkdir(parents=True, exist_ok=True)
-
-        safe_name = re.sub(r"[^\w\s-]", "", note_title).strip().replace(" ", "_")[:60]
-        artifact_path = artifact_dir / f"{safe_name}_{datetime.utcnow().strftime('%Y%m%d')}.md"
-
-        # Provenance globale de l'artefact
+        # Provenance globale
         provenances = {qa.get("provenance", "Coffre") for qa in qa_pairs}
         if "Coffre et Web" in provenances or ("Coffre" in provenances and "Web" in provenances):
             global_provenance = "Coffre et Web"
@@ -316,16 +489,39 @@ class AutoLearner:
             global_provenance = "Coffre"
 
         def _wikilink(fp: str) -> str:
-            """Convertit un chemin de fichier en wikilink Obsidian cliquable."""
             return f"[[{fp.removesuffix('.md')}]]"
+
+        # Extraction NER sur le contenu QA
+        qa_text = " ".join(qa["question"] + " " + qa["answer"] for qa in qa_pairs)
+        ner_tags = self._entities_to_tags(qa_text)
+        source_tags = [t for t in note_meta.get("tags", []) if t]
+
+        # ---- Vérifier si un artefact existant peut être complété ----
+        existing = self._find_existing_insight(note_title, ner_tags)
+        if existing:
+            self._append_to_insight(existing, qa_pairs, ner_tags, global_provenance)
+            return
+
+        # ---- Création d'un nouvel artefact ----
+        date_str = datetime.utcnow().strftime("%Y-%m")
+        artifact_dir = settings.insights_dir / date_str
+        artifact_dir.mkdir(parents=True, exist_ok=True)
+
+        safe_name = re.sub(r"[^\w\s-]", "", note_title).strip().replace(" ", "_")[:60]
+        artifact_path = artifact_dir / f"{safe_name}_{datetime.utcnow().strftime('%Y%m%d')}.md"
+
+        all_tags = ["insight"] + source_tags + ner_tags
+        fm_tags = "\n".join(f"  - {t}" for t in all_tags)
+        frontmatter = f"---\ntags:\n{fm_tags}\n---\n"
 
         source_link = _wikilink(note_meta["file_path"])
         lines = [
+            frontmatter,
             f"# Insights : {note_title}",
             "",
             f"**Note source :** {source_link}  ",
             f"**Générée le :** {datetime.utcnow().strftime('%Y-%m-%d %H:%M')} UTC  ",
-            f"**Tags source :** {note_meta.get('tags', [])}  ",
+            f"**Tags source :** {source_tags}  ",
             f"**Provenance :** {global_provenance}",
             "",
             "---",
