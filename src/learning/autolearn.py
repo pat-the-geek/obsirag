@@ -246,8 +246,10 @@ class AutoLearner:
                         provenance = "Web + Coffre" if sources else "Web"
                         logger.info(f"Auto-learner : réponse web pour '{question[:60]}'")
                     except Exception:
-                        answer = "\n\n".join(web_snippets[:2])
-                        provenance = "Web"
+                        # Fallback LLM échoué → RAG seul, pas de snippets bruts
+                        answer, sources = self._rag.query(question)
+                        web_results = []
+                        provenance = "Coffre"
                 else:
                     # Fallback : réponse RAG seule
                     answer, sources = self._rag.query(question)
@@ -308,9 +310,16 @@ class AutoLearner:
             # Réparer les mots collés : insérer espace avant une majuscule précédée d'une minuscule
             text = re.sub(r"([a-zàéèêëîïôùûüç])([A-ZÀÉÈÊËÎÏÔÙÛÜÇ])", r"\1 \2", text)
             text = re.sub(r"\s+", " ", text).strip()
-            # Rejeter si trop de mots collés (ratio espaces/chars trop bas)
+            # Rejeter si trop de mots collés :
+            # 1. Ratio espaces/chars trop bas
             if len(text) > 100 and text.count(" ") / len(text) < 0.05:
                 return ""
+            # 2. Trop de "mots" très longs (>15 chars) = mots collés sans majuscule
+            words = text.split()
+            if words:
+                long_words = sum(1 for w in words if len(w) > 15 and w.isalpha())
+                if long_words / len(words) > 0.15:
+                    return ""
             return text[:max_chars]
         except Exception:
             return ""

@@ -55,6 +55,35 @@ Consultation des artefacts, synapses et synthèses générés, avec historique d
 
 ---
 
+## Conditions de génération d'un insight
+
+Toutes les notes ne donnent pas lieu à un insight. Voici les cas où une note est ignorée :
+
+| Condition | Raison | Ce qui se passe |
+| --- | --- | --- |
+| **Note trop courte / mal indexée** | Aucun chunk trouvé dans ChromaDB | La note n'est pas dans l'index vectoriel ; elle sera ignorée jusqu'à la prochaine réindexation |
+| **Aucune question générée** | Le LLM n'a pas suivi le format attendu, ou le contenu est trop pauvre pour formuler une question | L'étape de génération de questions est sautée |
+| **Toutes les réponses QA ont échoué** | Erreur LM Studio (contexte dépassé, modèle non disponible…) pour les 3 questions | L'insight n'est pas sauvegardé |
+| **Note mal parsée (YAML invalide)** | Le frontmatter Obsidian contient des caractères illégaux ou est mal formé | La note n'est pas indexée du tout |
+
+### Notes qui produisent un insight
+
+Une note génère un insight lorsque :
+
+1. Elle est présente et correctement indexée dans ChromaDB (au moins un chunk)
+2. Le LLM génère au moins une question orientée vers des **connaissances externes** pertinentes au domaine
+3. Au moins une réponse QA aboutit — soit via web (DDG + synthèse LLM), soit en fallback via RAG
+4. La réponse n'est pas détectée comme vide ou générique (filtres anti-réponse-creuse)
+
+L'insight est sauvegardé dans `obsirag/insights/YYYY-MM/` avec :
+- Les questions générées et leurs réponses
+- La provenance (Web, Coffre, ou Web+Coffre)
+- Une synthèse des sources web lorsque des URLs ont été récupérées et analysées
+
+> **Astuce** : Si une note attendue ne produit pas d'insight, vérifiez qu'elle est bien indexée (bouton "Re-indexer le coffre" dans le chat) et que le LLM est disponible dans LM Studio.
+
+---
+
 ## Défi principal : les coffres de grande taille
 
 - Index vectoriel incrémental (mise à jour uniquement des notes nouvelles/modifiées)
