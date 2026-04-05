@@ -5,33 +5,15 @@ import streamlit as st
 import streamlit.components.v1 as components
 
 from src.ui.services_cache import get_services
+from src.ui.components.note_bridge_component import note_bridge as _note_bridge
 
 st.set_page_config(page_title="Cerveau — ObsiRAG", page_icon="🧠", layout="wide")
 
-# ---- Bridge : ouverture de note depuis le tooltip du graphe ----
-# Le formulaire est masqué visuellement ; le JS du graphe le soumet programmatiquement.
-st.markdown("""<style>
-/* Masquer le formulaire bridge tout en le gardant dans le DOM */
-div[data-testid="stForm"]:has(input[placeholder="__obsirag_bridge__"]) {
-    visibility: hidden;
-    height: 0;
-    overflow: hidden;
-    margin: 0;
-    padding: 0;
-}
-</style>""", unsafe_allow_html=True)
-
-with st.form("obsirag_bridge_form", clear_on_submit=True):
-    _bridge_fp = st.text_input(
-        "obsirag_bridge",
-        key="bridge_fp",
-        label_visibility="collapsed",
-        placeholder="__obsirag_bridge__",
-    )
-    _bridge_submit = st.form_submit_button("go")
-    if _bridge_submit and _bridge_fp:
-        st.session_state.viewing_note = _bridge_fp
-        st.switch_page("pages/4_Note.py")
+# ---- Bridge : intercepte les postMessage du graphe → ouvre la note ----
+_opened_note = _note_bridge(default=None, key="note_bridge_v1")
+if _opened_note:
+    st.session_state.viewing_note = _opened_note
+    st.switch_page("pages/4_Note.py")
 
 svc = get_services()
 

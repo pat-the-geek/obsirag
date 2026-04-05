@@ -120,8 +120,45 @@ class RAGPipeline:
             chunks = self._chroma.search(query, top_k=settings.search_top_k)
             return chunks, "synthesis"
 
-        # 5. Recherche générale
+        # 5. Détection de noms propres → recherche hybride (sémantique + keyword)
+        proper_nouns = self._extract_proper_nouns(query)
+        if proper_nouns:
+            semantic = self._chroma.search(query, top_k=settings.search_top_k)
+            keyword_chunks: list[dict] = []
+            for noun in proper_nouns:
+                keyword_chunks.extend(self._chroma.search_by_keyword(noun, top_k=4))
+            # Fusion : keyword en priorité, sémantique en complément
+            seen_ids: set[str] = set()
+            merged: list[dict] = []
+            for c in keyword_chunks + semantic:
+                if c["chunk_id"] not in seen_ids:
+                    seen_ids.add(c["chunk_id"])
+                    merged.append(c)
+            return merged[: settings.search_top_k], "hybrid"
+
+        # 6. Recherche générale
         return self._chroma.search(query, top_k=settings.search_top_k), "general"
+
+    @staticmethod
+    def _extract_proper_nouns(query: str) -> list[str]:
+        """Extrait les séquences de mots capitalisés (noms propres, entités)."""
+        # Cherche les groupes de 1 à 4 mots commençant par une majuscule (hors début de phrase)
+        words = query.split()
+        proper: list[str] = []
+        current: list[str] = []
+        for i, w in enumerate(words):
+            clean = re.sub(r"[^\w]", "", w)
+            if clean and clean[0].isupper() and i > 0:
+                current.append(clean)
+            else:
+                if len(current) >= 1:
+                    proper.append(" ".join(current))
+                current = []
+        if current:
+            proper.append(" ".join(current))
+        # Filtre : au moins 3 caractères et pas un mot courant
+        _STOP = {"IA", "AI", "GPT", "LLM", "URL"}
+        return [p for p in proper if len(p) >= 3 and p not in _STOP]
 
     @staticmethod
     def _detect_temporal(query: str) -> int | None:

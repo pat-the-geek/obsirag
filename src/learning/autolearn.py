@@ -315,10 +315,15 @@ class AutoLearner:
         else:
             global_provenance = "Coffre"
 
+        def _wikilink(fp: str) -> str:
+            """Convertit un chemin de fichier en wikilink Obsidian cliquable."""
+            return f"[[{fp.removesuffix('.md')}]]"
+
+        source_link = _wikilink(note_meta["file_path"])
         lines = [
             f"# Insights : {note_title}",
             "",
-            f"**Note source :** `{note_meta['file_path']}`  ",
+            f"**Note source :** {source_link}  ",
             f"**Générée le :** {datetime.utcnow().strftime('%Y-%m-%d %H:%M')} UTC  ",
             f"**Tags source :** {note_meta.get('tags', [])}  ",
             f"**Provenance :** {global_provenance}",
@@ -328,6 +333,7 @@ class AutoLearner:
         ]
         for i, qa in enumerate(qa_pairs, 1):
             provenance_label = qa.get("provenance", "Coffre")
+            source_links = ", ".join(_wikilink(s) for s in qa["sources"] if s)
             lines += [
                 f"## Question {i}",
                 "",
@@ -336,7 +342,7 @@ class AutoLearner:
                 qa["answer"],
                 "",
                 f"*Provenance : {provenance_label}*  ",
-                f"*Notes consultées : {', '.join(f'`{s}`' for s in qa['sources'] if s)}*  ",
+                f"*Notes consultées : {source_links}*  " if source_links else "",
                 *([f"*Références web :*"] + [f"- [{r['title']}]({r['url']})" for r in qa.get("web_refs", [])] if qa.get("web_refs") else []),
                 "",
             ]

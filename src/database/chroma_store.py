@@ -155,6 +155,31 @@ class ChromaStore:
 
     # ---- Méta-informations ----
 
+    def search_by_keyword(self, keyword: str, top_k: int = 10) -> list[dict]:
+        """Recherche exacte par mot-clé dans le contenu des chunks (case-insensitive via double requête)."""
+        results = []
+        for term in [keyword, keyword.lower(), keyword.title()]:
+            try:
+                raw = self._collection.get(
+                    where_document={"$contains": term},
+                    include=["documents", "metadatas"],
+                    limit=top_k * 2,
+                )
+                ids = raw.get("ids", [])
+                docs = raw.get("documents", [])
+                metas = raw.get("metadatas", [])
+                for chunk_id, doc, meta in zip(ids, docs, metas):
+                    if not any(r["chunk_id"] == chunk_id for r in results):
+                        results.append({
+                            "chunk_id": chunk_id,
+                            "text": doc,
+                            "metadata": meta,
+                            "score": 0.95,  # score fixe élevé : correspondance exacte
+                        })
+            except Exception:
+                pass
+        return results[:top_k]
+
     def count(self) -> int:
         return self._collection.count()
 

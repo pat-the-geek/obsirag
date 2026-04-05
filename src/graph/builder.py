@@ -271,28 +271,13 @@ div.vis-network div.vis-navigation div.vis-button:hover {
     var OBSIDIAN_VAULT = __VAULT_NAME__;
 
     function openNote(fp) {
+        // Écrit dans localStorage (partagé entre iframes same-origin)
+        // Le composant bridge lit cette valeur et déclenche le rerun Python via Streamlit
         try {
-            var pdoc = window.parent.document;
-            // Sélecteur robuste : placeholder unique ajouté sur l'input bridge
-            var input = pdoc.querySelector('input[placeholder="__obsirag_bridge__"]');
-            if (!input) {
-                console.warn('ObsiRAG: bridge input not found');
-                return;
-            }
-            // Mise à jour React via le native setter (contourne le state contrôlé)
-            var nativeSetter = Object.getOwnPropertyDescriptor(
-                window.parent.HTMLInputElement.prototype, 'value'
-            ).set;
-            nativeSetter.call(input, fp);
-            input.dispatchEvent(new Event('input', { bubbles: true }));
-            // Soumettre le formulaire
-            var form = input.closest('form');
-            if (form) {
-                var submitBtn = form.querySelector('button');
-                if (submitBtn) submitBtn.click();
-            }
+            localStorage.setItem('obsirag_open_note', fp);
         } catch(e) {
-            console.error('openNote:', e);
+            // Fallback postMessage si localStorage indisponible
+            window.parent.postMessage({ obsirag_open_note: fp }, '*');
         }
     }
 

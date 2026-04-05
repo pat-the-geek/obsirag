@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html>
+<body style="margin:0;padding:0;height:0;overflow:hidden">
+<script>
+// Implémentation minimale du protocole streamlit-component-lib
+function toStreamlit(type, payload) {
+    window.parent.postMessage(
+        Object.assign({ isStreamlitMessage: true, type: type }, payload || {}),
+        '*'
+    );
+}
+
+// 1. Signaler que le composant est prêt
+toStreamlit('streamlit:componentReady', { apiVersion: 1 });
+
+// 2. Hauteur 0 — composant invisible
+toStreamlit('streamlit:setFrameHeight', { height: 0 });
+
+// 3. Polling localStorage (partagé entre iframes de même origine)
+//    Le graphe écrit localStorage.setItem('obsirag_open_note', fp)
+//    Ce bridge le lit et envoie la valeur à Streamlit pour déclencher le rerun Python
+setInterval(function() {
+    try {
+        var fp = localStorage.getItem('obsirag_open_note');
+        if (fp) {
+            localStorage.removeItem('obsirag_open_note');
+            toStreamlit('streamlit:setComponentValue', { value: fp, dataType: 'json' });
+        }
+    } catch(e) {}
+}, 300);
+
+// 4. Aussi écouter les postMessage directs (fallback)
+window.addEventListener('message', function(e) {
+    if (e.data && e.data.obsirag_open_note) {
+        var fp = e.data.obsirag_open_note;
+        toStreamlit('streamlit:setComponentValue', { value: fp, dataType: 'json' });
+    }
+});
+</script>
+</body>
+</html>
