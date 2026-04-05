@@ -157,8 +157,24 @@ if user_input:
             status.markdown("🔍 *Recherche dans le coffre…*")
             stream, sources = svc.rag.query_stream(user_input, chat_history=history)
 
+            # Progression des notes dans le contexte
+            seen: list[str] = []
+            for src in sources:
+                title = src.get("metadata", {}).get("note_title", "")
+                if title and title not in seen:
+                    seen.append(title)
+            for i, note in enumerate(seen, 1):
+                status.markdown(f"📄 *Note {i} sur {len(seen)} — {note}*")
+                time.sleep(0.12)
+
             # Phase 2 — génération LM Studio
-            status.markdown("⏳ *LM Studio charge le contexte…*")
+            ctx_chars = sum(len(s.get("text", "")) for s in sources)
+            ctx_notes = len(seen)
+            status.markdown(
+                f"⏳ *LM Studio charge le contexte… "
+                f"{ctx_notes} note{'s' if ctx_notes > 1 else ''} · "
+                f"~{ctx_chars:,} caractères*"
+            )
 
             for token in stream:
                 if first_token_time is None:

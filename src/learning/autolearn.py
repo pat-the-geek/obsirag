@@ -33,11 +33,11 @@ _WEAK_ANSWER_PATTERNS = re.compile(
 _MIN_ANSWER_LENGTH = 150  # réponse trop courte = insuffisante
 
 
-_QUESTION_PROMPT = """<content>
+_QUESTION_PROMPT = """<contenu>
 {content}
-</content>
+</contenu>
 
-Output exactly 3 questions about this content, one per line, nothing else.
+Génère exactement 3 questions en français sur ce contenu, une par ligne, rien d'autre.
 Q1:
 Q2:
 Q3:"""
@@ -67,6 +67,28 @@ class AutoLearner:
             job_defaults={"coalesce": True, "max_instances": 1},
             timezone="UTC",
         )
+
+    # ---- Suivi des notes traitées ----
+
+    def _load_processed(self) -> dict[str, str]:
+        """Retourne {file_path: last_processed_iso}."""
+        f = settings.processed_notes_file
+        if f.exists():
+            try:
+                return json.loads(f.read_text(encoding="utf-8"))
+            except Exception:
+                return {}
+        return {}
+
+    def _save_processed(self, processed: dict[str, str]) -> None:
+        f = settings.processed_notes_file
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text(json.dumps(processed, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    def _mark_processed(self, file_path: str) -> None:
+        processed = self._load_processed()
+        processed[file_path] = datetime.utcnow().isoformat()
+        self._save_processed(processed)
 
     def start(self) -> None:
         interval = settings.autolearn_interval_minutes
@@ -106,23 +128,46 @@ class AutoLearner:
     def _run_cycle(self) -> None:
         logger.info("Auto-learner : début du cycle")
         try:
+            processed_count = 0
+            processed_map = self._load_processed()
+
+            # Pass 1 — notes récemment modifiées
             since = datetime.utcnow() - timedelta(hours=settings.autolearn_lookback_hours)
             recent = self._chroma.get_recently_modified(since)
-
-            if not recent:
-                logger.info("Auto-learner : aucune note récente")
-                return
-
-            processed = 0
             for note_meta in recent[: settings.autolearn_max_notes_per_run]:
                 try:
                     self._process_note(note_meta)
-                    processed += 1
+                    self._mark_processed(note_meta["file_path"])
+                    processed_count += 1
                     time.sleep(self._SLEEP_BETWEEN_NOTES)
                 except Exception as exc:
                     logger.warning(f"Auto-learner : erreur sur {note_meta['file_path']} : {exc}")
 
-            logger.info(f"Auto-learner : {processed} note(s) traitée(s)")
+            # Pass 2 — full-scan progressif : notes jamais traitées ou les plus anciennes
+            all_notes = self._chroma.list_notes()
+            # Trie : jamais traitées d'abord, puis par date de traitement croissante
+            def _sort_key(n: dict) -> str:
+                return processed_map.get(n["file_path"], "")  # "" < toute date ISO
+
+            pending = sorted(all_notes, key=_sort_key)
+            quota = settings.autolearn_fullscan_per_run
+            for note_meta in pending:
+                if quota <= 0:
+                    break
+                fp = note_meta["file_path"]
+                # Sauter les notes déjà traitées dans ce cycle (pass 1)
+                if fp in {n["file_path"] for n in recent[: settings.autolearn_max_notes_per_run]}:
+                    continue
+                try:
+                    self._process_note(note_meta)
+                    self._mark_processed(fp)
+                    processed_count += 1
+                    quota -= 1
+                    time.sleep(self._SLEEP_BETWEEN_NOTES)
+                except Exception as exc:
+                    logger.warning(f"Auto-learner full-scan : erreur sur {fp} : {exc}")
+
+            logger.info(f"Auto-learner : {processed_count} note(s) traitée(s)")
 
         except Exception as exc:
             logger.error(f"Auto-learner cycle error : {exc}")
@@ -239,7 +284,7 @@ class AutoLearner:
                 max_tokens=600,
                 operation="autolearn_questions",
             )
-            lines = [l.strip().lstrip("•-Q0123456789.:） ") for l in answer.strip().splitlines()]
+            lines = [re.sub(r"^[•\-]?\s*Q\d+[.:）]\s*", "", l.strip()) for l in answer.strip().splitlines()]
             return [l for l in lines if len(l) > 10][:3]
         except Exception as exc:
             logger.debug(f"Génération de questions échouée : {exc}")

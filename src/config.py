@@ -35,6 +35,7 @@ class Settings(BaseSettings):
     autolearn_interval_minutes: int = 60
     autolearn_max_notes_per_run: int = 5
     autolearn_lookback_hours: int = 24
+    autolearn_fullscan_per_run: int = 3   # notes non traitées à couvrir par cycle
 
     # RAG / Chunking
     chunk_size_words: int = 350
@@ -72,6 +73,10 @@ class Settings(BaseSettings):
     @property
     def queries_file(self) -> Path:
         return self.data_dir / "queries" / "queries.jsonl"
+
+    @property
+    def processed_notes_file(self) -> Path:
+        return self.data_dir / "autolearn" / "processed_notes.json"
 
     @property
     def graph_dir(self) -> Path:
