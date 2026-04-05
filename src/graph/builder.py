@@ -142,7 +142,7 @@ class GraphBuilder:
                 "minVelocity": 0.1
             },
             "edges": {
-                "color": {"color": "#6B7280", "highlight": "#A78BFA", "hover": "#C4B5FD"},
+                "color": {"color": "#888888", "highlight": "#FFFFFF", "hover": "#FFFFFF"},
                 "smooth": {"type": "dynamic"},
                 "arrows": {"to": {"enabled": true, "scaleFactor": 0.5}},
                 "width": 1.5
@@ -180,7 +180,25 @@ class GraphBuilder:
         with _pyvis_lock:
             with _tmp_workdir("/tmp"):
                 net.write_html(str(tmp), local=False)
-        return tmp.read_text(encoding="utf-8")
+
+        html = tmp.read_text(encoding="utf-8")
+
+        # Surcharge CSS des boutons de navigation pyvis (icônes SVG sombres sur fond sombre)
+        nav_css = """
+<style>
+div.vis-network div.vis-navigation div.vis-button {
+    background-color: rgba(255,255,255,0.15) !important;
+    border-radius: 4px !important;
+    filter: invert(1) !important;
+    opacity: 0.8 !important;
+}
+div.vis-network div.vis-navigation div.vis-button:hover {
+    background-color: rgba(255,255,255,0.3) !important;
+    opacity: 1 !important;
+}
+</style>
+"""
+        return html.replace("</head>", nav_css + "</head>", 1)
 
     def get_stats(self, graph: nx.DiGraph) -> dict:
         if graph.number_of_nodes() == 0:

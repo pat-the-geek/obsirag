@@ -23,16 +23,24 @@ from loguru import logger
 
 from src.config import settings
 
+# Mots-clés indiquant une réponse RAG insuffisante
+_WEAK_ANSWER_PATTERNS = re.compile(
+    r"je ne sais pas|pas d.information|pas mentionné|pas trouvé|"
+    r"aucune information|impossible de répondre|don't know|no information|"
+    r"not found|cannot answer",
+    re.IGNORECASE,
+)
+_MIN_ANSWER_LENGTH = 150  # réponse trop courte = insuffisante
 
-_QUESTION_PROMPT = """Voici le contenu d'une note Obsidian :
 
----
+_QUESTION_PROMPT = """<content>
 {content}
----
+</content>
 
-Génère exactement 3 questions perspicaces sur ce contenu.
-Les questions doivent explorer les idées clés, les connexions possibles ou les lacunes à approfondir.
-Réponds UNIQUEMENT avec les 3 questions, une par ligne, sans numérotation ni explication."""
+Output exactly 3 questions about this content, one per line, nothing else.
+Q1:
+Q2:
+Q3:"""
 
 _WEEKLY_SYNTHESIS_PROMPT = """Tu es un assistant de synthèse pour un coffre Obsidian.
 Voici les notes créées ou modifiées cette semaine :
@@ -121,32 +129,106 @@ class AutoLearner:
 
     def _process_note(self, note_meta: dict) -> None:
         title = note_meta.get("title", note_meta["file_path"])
-        logger.debug(f"Auto-learner : traitement de '{title}'")
+        logger.info(f"Auto-learner : traitement de '{title}'")
 
         chunks = self._chroma.search(title, top_k=5)
         if not chunks:
+            logger.warning(f"Auto-learner : aucun chunk trouvé pour '{title}'")
             return
 
         content_preview = "\n\n".join(c["text"] for c in chunks[:3])
         questions = self._generate_questions(content_preview)
         if not questions:
+            logger.warning(f"Auto-learner : aucune question générée pour '{title}'")
             return
 
+        logger.info(f"Auto-learner : {len(questions)} question(s) générée(s) pour '{title}'")
         qa_pairs: list[dict] = []
         for question in questions:
             time.sleep(self._SLEEP_BETWEEN_QUESTIONS)
             try:
                 answer, sources = self._rag.query(question)
+                web_results: list[dict] = []
+
+                # Compléter avec le web si la réponse RAG est insuffisante
+                if self._is_weak_answer(answer):
+                    web_results = self._web_search(question)
+                    if web_results:
+                        snippets = [r["body"] for r in web_results]
+                        answer = self._enrich_with_web(question, answer, snippets)
+                        logger.info(f"Auto-learner : réponse enrichie via web pour '{question[:60]}'")
+
+                provenance = "Coffre"
+                if web_results and sources:
+                    provenance = "Coffre et Web"
+                elif web_results:
+                    provenance = "Web"
+
                 qa_pairs.append({
                     "question": question,
                     "answer": answer,
                     "sources": [s["metadata"].get("file_path", "") for s in sources[:3]],
+                    "web_refs": [{"title": r.get("title", r["href"]), "url": r["href"]} for r in web_results],
+                    "provenance": provenance,
                 })
             except Exception as exc:
-                logger.debug(f"Auto-learner QA failed : {exc}")
+                logger.warning(f"Auto-learner QA failed pour '{title}' : {exc}")
 
         if qa_pairs:
             self._save_knowledge_artifact(title, note_meta, qa_pairs)
+        else:
+            logger.warning(f"Auto-learner : aucune réponse QA pour '{title}', artefact non créé")
+
+    def _is_weak_answer(self, answer: str) -> bool:
+        return len(answer.strip()) < _MIN_ANSWER_LENGTH or bool(_WEAK_ANSWER_PATTERNS.search(answer))
+
+    # Domaines considérés comme fiables
+    _TRUSTED_DOMAINS = {
+        "wikipedia.org", "wikimedia.org",
+        "nature.com", "science.org", "pubmed.ncbi.nlm.nih.gov", "arxiv.org",
+        "gouv.fr", "europa.eu", "who.int", "un.org",
+        "mit.edu", "stanford.edu", "harvard.edu",
+        "lemonde.fr", "lefigaro.fr", "liberation.fr", "letemps.ch",
+        "bbc.com", "reuters.com", "apnews.com", "theguardian.com",
+        "economist.com", "hbr.org",
+        "python.org", "docs.python.org", "developer.mozilla.org",
+    }
+
+    def _web_search(self, query: str) -> list[dict]:
+        """Retourne une liste de {body, href, title} filtrée sur les domaines fiables."""
+        try:
+            from duckduckgo_search import DDGS
+            with DDGS() as ddgs:
+                results = list(ddgs.text(query, max_results=10))
+            trusted = [
+                r for r in results
+                if any(d in r.get("href", "") for d in self._TRUSTED_DOMAINS)
+            ]
+            selected = trusted[:3] if trusted else results[:3]
+            return [r for r in selected if r.get("body")]
+        except Exception as exc:
+            logger.debug(f"Web search échouée : {exc}")
+            return []
+
+    def _enrich_with_web(self, question: str, rag_answer: str, web_snippets: list[str]) -> str:
+        context = "\n\n".join(web_snippets[:3])
+        prompt = (
+            f"Question : {question}\n\n"
+            f"Réponse partielle depuis le coffre de notes :\n{rag_answer}\n\n"
+            f"Informations complémentaires trouvées sur le web :\n{context}\n\n"
+            f"Synthétise une réponse complète et concise en intégrant les deux sources. "
+            f"Réponds uniquement en français."
+        )
+        try:
+            return self._rag._llm.chat(
+                [{"role": "user", "content": prompt}],
+                temperature=0.3,
+                max_tokens=800,
+                operation="autolearn_enrich",
+            )
+        except Exception as exc:
+            logger.debug(f"Enrichissement web échoué : {exc}")
+            return rag_answer
 
     def _generate_questions(self, content: str) -> list[str]:
         try:
@@ -154,10 +236,10 @@ class AutoLearner:
             answer = self._rag._llm.chat(
                 [{"role": "user", "content": prompt}],
                 temperature=0.7,
-                max_tokens=300,
+                max_tokens=600,
                 operation="autolearn_questions",
             )
-            lines = [l.strip().lstrip("•-0123456789.） ") for l in answer.strip().splitlines()]
+            lines = [l.strip().lstrip("•-Q0123456789.:） ") for l in answer.strip().splitlines()]
             return [l for l in lines if len(l) > 10][:3]
         except Exception as exc:
             logger.debug(f"Génération de questions échouée : {exc}")
@@ -176,17 +258,28 @@ class AutoLearner:
         safe_name = re.sub(r"[^\w\s-]", "", note_title).strip().replace(" ", "_")[:60]
         artifact_path = artifact_dir / f"{safe_name}_{datetime.utcnow().strftime('%Y%m%d')}.md"
 
+        # Provenance globale de l'artefact
+        provenances = {qa.get("provenance", "Coffre") for qa in qa_pairs}
+        if "Coffre et Web" in provenances or ("Coffre" in provenances and "Web" in provenances):
+            global_provenance = "Coffre et Web"
+        elif "Web" in provenances:
+            global_provenance = "Web"
+        else:
+            global_provenance = "Coffre"
+
         lines = [
             f"# Insights : {note_title}",
             "",
-            f"**Source :** `{note_meta['file_path']}`  ",
+            f"**Note source :** `{note_meta['file_path']}`  ",
             f"**Générée le :** {datetime.utcnow().strftime('%Y-%m-%d %H:%M')} UTC  ",
-            f"**Tags source :** {note_meta.get('tags', [])}",
+            f"**Tags source :** {note_meta.get('tags', [])}  ",
+            f"**Provenance :** {global_provenance}",
             "",
             "---",
             "",
         ]
         for i, qa in enumerate(qa_pairs, 1):
+            provenance_label = qa.get("provenance", "Coffre")
             lines += [
                 f"## Question {i}",
                 "",
@@ -194,7 +287,9 @@ class AutoLearner:
                 "",
                 qa["answer"],
                 "",
-                f"*Sources : {', '.join(f'`{s}`' for s in qa['sources'] if s)}*",
+                f"*Provenance : {provenance_label}*  ",
+                f"*Notes consultées : {', '.join(f'`{s}`' for s in qa['sources'] if s)}*  ",
+                *([f"*Références web :*"] + [f"- [{r['title']}]({r['url']})" for r in qa.get("web_refs", [])] if qa.get("web_refs") else []),
                 "",
             ]
 

@@ -41,3 +41,6 @@ python-dateutil>=2.9.0
 
 # NER — extraction d'entités nommées (modèle multilingue chargé dans Dockerfile)
 spacy>=3.7.0
+
+# Recherche web (auto-learner)
+duckduckgo-search>=6.0.0

@@ -43,9 +43,6 @@ class _DebouncedHandler(FileSystemEventHandler):
     def _queue(self, path: str, event_type: str) -> None:
         if not path.endswith(".md"):
             return
-        # Ignorer les fichiers Markdown écrits par ObsiRAG lui-même
-        if "/obsirag/insights/" in path or "/obsirag/synthesis/" in path:
-            return
 
         with self._lock:
             self._pending[path] = event_type

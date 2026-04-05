@@ -112,12 +112,8 @@ class IndexingPipeline:
 
     @staticmethod
     def _is_internal(path: Path) -> bool:
-        """Ignore les fichiers écrits par ObsiRAG lui-même dans le coffre."""
-        p = str(path)
-        return (
-            "/obsirag/insights/" in p
-            or "/obsirag/synthesis/" in p
-        )
+        """Les fichiers écrits par ObsiRAG sont indexés comme les autres notes."""
+        return False
 
     @staticmethod
     def _file_hash(path: Path) -> str:

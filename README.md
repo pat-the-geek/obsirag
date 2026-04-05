@@ -18,63 +18,83 @@ Exemples de requêtes :
 ## Principes fondamentaux
 
 - **100% local** : vos notes ne quittent jamais votre machine
-- **Coffre en lecture seule** : ObsiRAG ne modifie jamais vos notes Obsidian
+- **Coffre en lecture seule** : ObsiRAG ne modifie jamais vos notes Obsidian existantes
 - **Accès complet au coffre** : pas de fenêtre contextuelle limitée, l'ensemble du coffre est exploitable
-- **Stockage interne** dans `obsirag/data/` à l'intérieur du coffre (arborescence gérée automatiquement par le système)
+- **Artefacts traçables** : les insights générés indiquent leur provenance (Coffre, Web, ou Coffre et Web)
 - **Déploiement Docker** : isolation propre, reproductible
 
 ---
 
-## Architecture
+## Fonctionnalités
 
-```
-obsirag/
-├── chat/           # Interface de chat avec le coffre
-└── learner/        # Moteur d'auto-apprentissage en tâche de fond
-```
-
-### Le Chat
-
+### Chat avec le coffre
 Interface conversationnelle connectée à LM Studio (via son API OpenAI-compatible) et au moteur de recherche du coffre. Les requêtes sont traitées en combinant récupération sémantique et synthèse par l'IA.
 
-### L'Auto-apprentissage (background learner)
+### Cerveau — graphe de connaissances
+Visualisation interactive des connexions entre vos notes (wikilinks et similarité sémantique). Navigation par dossiers et tags, zoom sur les nœuds les plus connectés.
 
+### Auto-apprentissage (background learner)
 Un processus léger tourne en arrière-plan et :
-1. Détecte chaque jour les nouvelles notes ajoutées au coffre
-2. Génère automatiquement des questions et prompts à partir du contenu des notes
-3. **Apprend de vos requêtes** : chaque question posée dans le chat est analysée et intégrée pour affiner les futurs prompts générés automatiquement
-4. Enrichit la base de connaissances interne dans `obsirag/data/`
-5. Optimise l'arborescence de stockage de manière autonome
+1. Détecte les notes récemment modifiées dans le coffre
+2. Génère automatiquement des questions perspicaces sur le contenu
+3. Répond via RAG sur le coffre — et **complète avec le web** si la réponse est insuffisante
+4. N'utilise que des **sources fiables** (Wikipédia, presse de référence, institutions, revues scientifiques…)
+5. Sauvegarde les insights en Markdown dans `obsirag/insights/` avec indication de provenance et **références citées**
+6. Génère une **synthèse hebdomadaire** le dimanche dans `obsirag/synthesis/`
 
-> Le learner est conçu pour consommer un minimum de CPU et s'exécuter très discrètement en tâche de fond.
+> Les artefacts générés sont indexés et deviennent eux-mêmes interrogeables dans le chat.
+
+### Page Insights
+Consultation des artefacts et synthèses générés, avec historique des requêtes posées dans le chat.
 
 ---
 
 ## Défi principal : les coffres de grande taille
 
-La gestion de coffres volumineux est l'enjeu technique central du projet. La stratégie envisagée repose sur :
-
-- Un index vectoriel incrémental (mise à jour uniquement des notes nouvelles/modifiées)
-- Une segmentation intelligente des notes (chunking adaptatif)
-- Une hiérarchie de résumés automatiques pour ne pas charger l'intégralité du coffre en mémoire
-- Des métadonnées légères pour le filtrage rapide avant la recherche sémantique
+- Index vectoriel incrémental (mise à jour uniquement des notes nouvelles/modifiées)
+- Chunking adaptatif des notes
+- Métadonnées légères pour le filtrage rapide avant recherche sémantique
 
 ---
 
 ## Stack technique
 
-| Composant       | Technologie                      |
-|----------------|----------------------------------|
-| Langage         | Python                           |
-| Déploiement     | Docker / Docker Compose          |
-| IA              | LM Studio (API locale)           |
-| Coffre          | Obsidian (lecture seule)         |
-| Stockage interne| `obsirag/data/` dans le coffre   |
+| Composant         | Technologie                              |
+|-------------------|------------------------------------------|
+| Langage           | Python 3.11                              |
+| Déploiement       | Docker / Docker Compose                  |
+| IA                | LM Studio (API locale, compatible OpenAI)|
+| Base vectorielle  | ChromaDB                                 |
+| Embeddings        | sentence-transformers (multilingue)      |
+| Interface         | Streamlit                                |
+| Graphe            | NetworkX + Pyvis                         |
+| Recherche web     | DuckDuckGo Search (sources fiables)      |
+| Coffre            | Obsidian (lecture seule)                 |
+| Artefacts générés | `obsirag/insights/`, `obsirag/synthesis/`|
+
+---
+
+## Installation
+
+```bash
+# Cloner le dépôt
+git clone https://github.com/PatrickOstertagCH/obsirag.git
+cd obsirag
+
+# Configurer l'environnement
+cp .env.example .env
+# Éditer .env : renseigner VAULT_PATH et LMSTUDIO_BASE_URL
+
+# Lancer
+docker compose up -d
+```
+
+L'interface est accessible sur [http://localhost:8501](http://localhost:8501).
 
 ---
 
 ## Statut
 
-Projet en démarrage — développé de façon créative et itérative avec Claude Code.
+Projet actif — développé de façon créative et itérative avec Claude Code.
 
 Le dépôt est public. Contributions et idées bienvenues.

@@ -42,9 +42,7 @@ with st.sidebar:
         st.session_state.viewing_note = note_opts[selected_note_title]
         st.switch_page("pages/4_Note.py")
 
-    st.divider()
-    st.markdown("### Rebuild")
-    rebuild = st.button("🔄 Reconstruire le graphe", use_container_width=True)
+    rebuild = False
 
 # ---- Filtrage ----
 filtered = notes
@@ -65,19 +63,19 @@ def build_graph_html(note_fps: tuple[str, ...]) -> tuple[str, dict]:
     stats = svc.graph.get_stats(graph)
     return html, stats
 
-if rebuild:
-    st.cache_data.clear()
-
 fps_tuple = tuple(n["file_path"] for n in filtered)
 if fps_tuple:
     graph_html, stats = build_graph_html(fps_tuple)
 
     # Métriques
-    c1, c2, c3, c4 = st.columns(4)
+    c1, c2, c3, c4, c5 = st.columns([2, 2, 2, 2, 1])
     c1.metric("Nœuds", stats.get("nodes", 0))
     c2.metric("Connexions", stats.get("edges", 0))
     c3.metric("Densité", stats.get("density", 0))
     c4.metric("Notes filtrées", len(filtered))
+    if c5.button("🔄", help="Reconstruire le graphe"):
+        st.cache_data.clear()
+        st.rerun()
 
     # Graphe interactif
     components.html(graph_html, height=670, scrolling=False)
@@ -85,14 +83,14 @@ if fps_tuple:
     # Top notes les plus connectées
     if stats.get("top_connected"):
         st.markdown("### Nœuds les plus connectés")
-        for item in stats["top_connected"][:5]:
+        for idx, item in enumerate(stats["top_connected"][:5]):
             fp = item["file_path"]
             note = next((n for n in filtered if n["file_path"] == fp), None)
             title = note["title"] if note else fp
             score = item["score"]
             col_t, col_b = st.columns([4, 1])
             col_t.markdown(f"**{title}** — centralité `{score}`")
-            if col_b.button("📖", key=f"top_{fp[:20]}", help="Ouvrir"):
+            if col_b.button("📖", key=f"top_{idx}_{fp}", help="Ouvrir"):
                 st.session_state.viewing_note = fp
                 st.switch_page("pages/4_Note.py")
 else:
