@@ -118,7 +118,7 @@ class GraphBuilder:
         )
         return g
 
-    def to_pyvis_html(self, graph: nx.DiGraph, height: int = 700) -> str:
+    def to_pyvis_html(self, graph: nx.DiGraph, height: int = 700, obsidian_vault: str = "") -> str:
         """Génère l'HTML interactif Pyvis."""
         net = Network(
             height=f"{height}px",
@@ -135,20 +135,23 @@ class GraphBuilder:
                 "barnesHut": {
                     "gravitationalConstant": -8000,
                     "centralGravity": 0.3,
-                    "springLength": 130,
-                    "springConstant": 0.04
+                    "springLength": 150,
+                    "springConstant": 0.04,
+                    "damping": 0.2,
+                    "avoidOverlap": 0.8
                 },
                 "maxVelocity": 50,
-                "minVelocity": 0.1
+                "minVelocity": 0.75,
+                "stabilization": {"iterations": 200, "fit": true}
             },
             "edges": {
                 "color": {"color": "#888888", "highlight": "#FFFFFF", "hover": "#FFFFFF"},
-                "smooth": {"type": "dynamic"},
+                "smooth": {"type": "continuous"},
                 "arrows": {"to": {"enabled": true, "scaleFactor": 0.5}},
                 "width": 1.5
             },
             "nodes": {
-                "font": {"size": 13, "color": "#0F172A", "strokeWidth": 2, "strokeColor": "#FFFFFF"},
+                "font": {"size": 13, "color": "#FFFFFF", "strokeWidth": 0},
                 "borderWidth": 2,
                 "borderWidthSelected": 4,
                 "shadow": {"enabled": true, "color": "rgba(0,0,0,0.5)", "size": 8}
@@ -183,7 +186,7 @@ class GraphBuilder:
 
         html = tmp.read_text(encoding="utf-8")
 
-        # Surcharge CSS des boutons de navigation pyvis (icônes SVG sombres sur fond sombre)
+        # Surcharge CSS des boutons de navigation pyvis + fix canvas HiDPI
         nav_css = """
 <style>
 div.vis-network div.vis-navigation div.vis-button {
@@ -196,9 +199,157 @@ div.vis-network div.vis-navigation div.vis-button:hover {
     background-color: rgba(255,255,255,0.3) !important;
     opacity: 1 !important;
 }
+#obsirag-tooltip {
+    position: fixed;
+    z-index: 9999;
+    background: #1E1E2E;
+    color: #E2E8F0;
+    border: 1px solid #7C3AED;
+    border-radius: 8px;
+    padding: 10px 12px;
+    font-size: 13px;
+    line-height: 1.6;
+    max-width: 300px;
+    white-space: normal;
+    word-wrap: break-word;
+    display: none;
+    pointer-events: auto;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.5);
+}
+#obsirag-tooltip .obsirag-open-note,
+#obsirag-tooltip .obsirag-open-obsidian {
+    padding: 4px 10px;
+    font-size: 12px;
+    color: #fff;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+}
+#obsirag-tooltip .obsirag-open-note { background: #7C3AED; }
+#obsirag-tooltip .obsirag-open-note:hover { background: #6D28D9; }
+#obsirag-tooltip .obsirag-open-obsidian { background: #4B2A7A; }
+#obsirag-tooltip .obsirag-open-obsidian:hover { background: #3A1F5F; }
 </style>
 """
-        return html.replace("</head>", nav_css + "</head>", 1)
+        import json as _json
+        vault_name_js = _json.dumps(obsidian_vault or settings.obsidian_vault)
+        fixes = """
+<script>
+(function waitForNetwork() {
+    if (typeof network === 'undefined') { setTimeout(waitForNetwork, 100); return; }
+
+    // -- Tooltip custom persistant --
+    // Construire un dictionnaire nodeId → HTML décodé
+    var nodesData = network.body.data.nodes;
+    var nodeTooltips = {};
+    nodesData.forEach(function(node) {
+        if (node.title && typeof node.title === 'string') {
+            var ta = document.createElement('textarea');
+            ta.innerHTML = node.title;
+            nodeTooltips[node.id] = ta.value;
+        }
+    });
+
+    // Supprimer les tooltips natifs de vis.js (ils disparaissent dès que le curseur bouge)
+    var clears = Object.keys(nodeTooltips).map(function(id) {
+        return { id: id, title: ' ' };
+    });
+    if (clears.length) nodesData.update(clears);
+
+    // Créer le div tooltip HTML custom
+    var tip = document.createElement('div');
+    tip.id = 'obsirag-tooltip';
+    document.body.appendChild(tip);
+
+    var hideTimer = null;
+    function startHide() {
+        hideTimer = setTimeout(function() { tip.style.display = 'none'; }, 250);
+    }
+    tip.addEventListener('mouseenter', function() { clearTimeout(hideTimer); });
+    tip.addEventListener('mouseleave', startHide);
+
+    var OBSIDIAN_VAULT = __VAULT_NAME__;
+
+    function openNote(fp) {
+        try {
+            var pdoc = window.parent.document;
+            // Sélecteur robuste : placeholder unique ajouté sur l'input bridge
+            var input = pdoc.querySelector('input[placeholder="__obsirag_bridge__"]');
+            if (!input) {
+                console.warn('ObsiRAG: bridge input not found');
+                return;
+            }
+            // Mise à jour React via le native setter (contourne le state contrôlé)
+            var nativeSetter = Object.getOwnPropertyDescriptor(
+                window.parent.HTMLInputElement.prototype, 'value'
+            ).set;
+            nativeSetter.call(input, fp);
+            input.dispatchEvent(new Event('input', { bubbles: true }));
+            // Soumettre le formulaire
+            var form = input.closest('form');
+            if (form) {
+                var submitBtn = form.querySelector('button');
+                if (submitBtn) submitBtn.click();
+            }
+        } catch(e) {
+            console.error('openNote:', e);
+        }
+    }
+
+    function openObsidian(fp) {
+        var relPath = fp.replace(/^\/?(vault\/)?/, '').replace(/\.md$/i, '');
+        var url = 'obsidian://open?vault=' + encodeURIComponent(OBSIDIAN_VAULT)
+                + '&file=' + encodeURIComponent(relPath);
+        // iframe invisible : lance Obsidian sans ouvrir d'onglet vide
+        var fr = document.createElement('iframe');
+        fr.style.display = 'none';
+        fr.src = url;
+        document.body.appendChild(fr);
+        setTimeout(function() { document.body.removeChild(fr); }, 2000);
+    }
+
+    network.on('hoverNode', function(params) {
+        var html = nodeTooltips[params.node];
+        if (!html) return;
+        clearTimeout(hideTimer);
+        tip.innerHTML = html;
+        var btn = tip.querySelector('.obsirag-open-note');
+        if (btn) {
+            btn.onclick = function(e) {
+                e.stopPropagation();
+                openNote(this.getAttribute('data-fp'));
+            };
+        }
+        var btnObs = tip.querySelector('.obsirag-open-obsidian');
+        if (btnObs) {
+            btnObs.onclick = function(e) {
+                e.stopPropagation();
+                openObsidian(this.getAttribute('data-fp'));
+            };
+        }
+        // Positionner près du curseur (événement DOM)
+        var e = params.event;
+        var ex = e.clientX || (e.touches && e.touches[0].clientX) || 0;
+        var ey = e.clientY || (e.touches && e.touches[0].clientY) || 0;
+        tip.style.display = 'block';
+        // Ajustement si débordement viewport
+        setTimeout(function() {
+            var r = tip.getBoundingClientRect();
+            tip.style.left = (ex + 16 + r.width > window.innerWidth ? ex - r.width - 16 : ex + 16) + 'px';
+            tip.style.top  = (ey + r.height > window.innerHeight ? ey - r.height : ey) + 'px';
+        }, 0);
+    });
+    network.on('blurNode', startHide);
+
+    // -- Fix texte flou après zoom (redraw différé pour ne pas interrompre l'animation) --
+    network.on('zoom', function() {
+        setTimeout(function() { network.redraw(); }, 80);
+    });
+})();
+</script>
+"""
+        fixes = fixes.replace("__VAULT_NAME__", vault_name_js)
+        return html.replace("</head>", nav_css + "</head>", 1).replace("</body>", fixes + "</body>", 1)
 
     def get_stats(self, graph: nx.DiGraph) -> dict:
         if graph.number_of_nodes() == 0:
@@ -220,12 +371,18 @@ div.vis-network div.vis-navigation div.vis-button:hover {
 
     @staticmethod
     def _node_tooltip(note: dict) -> str:
+        import html as _html
         tags = ", ".join(note.get("tags", [])[:5])
         date = note.get("date_modified", "")[:10]
+        fp = _html.escape(note.get("file_path", ""), quote=True)
         return (
             f"<b>{note['title']}</b><br>"
             f"📅 {date}<br>"
-            f"{'🏷 ' + tags if tags else ''}"
+            f"{'🏷 ' + tags + '<br>' if tags else ''}"
+            f'<div style="margin-top:8px;display:flex;gap:6px;">'
+            f'<button class="obsirag-open-note" data-fp="{fp}">📖 Lire la note</button>'
+            f'<button class="obsirag-open-obsidian" data-fp="{fp}">🟣 Obsidian</button>'
+            f'</div>'
         )
 
     @staticmethod

@@ -36,6 +36,8 @@ class Settings(BaseSettings):
     autolearn_max_notes_per_run: int = 5
     autolearn_lookback_hours: int = 24
     autolearn_fullscan_per_run: int = 3   # notes non traitées à couvrir par cycle
+    autolearn_synapse_per_run: int = 2    # paires synaptiques à découvrir par cycle
+    autolearn_synapse_threshold: float = 0.65  # similarité cosine minimale
 
     # RAG / Chunking
     chunk_size_words: int = 350
@@ -50,6 +52,13 @@ class Settings(BaseSettings):
     @property
     def vault(self) -> Path:
         return Path(self.vault_path)
+
+    obsidian_vault_name: str = ""  # ex: "Coffre-de-Pat" — à définir dans .env
+
+    @property
+    def obsidian_vault(self) -> str:
+        """Nom du coffre tel qu'Obsidian le connaît."""
+        return self.obsidian_vault_name or Path(self.vault_path).name
 
     # -- Données système (volume Docker, hors coffre) --
 
@@ -98,6 +107,16 @@ class Settings(BaseSettings):
     def synthesis_dir(self) -> Path:
         """Synthèses hebdomadaires — lisibles dans Obsidian."""
         return self.vault_obsirag_dir / "synthesis"
+
+    @property
+    def synapses_dir(self) -> Path:
+        """Connexions implicites découvertes entre notes — lisibles dans Obsidian."""
+        return self.vault_obsirag_dir / "synapses"
+
+    @property
+    def synapse_index_file(self) -> Path:
+        """Index des paires déjà traitées pour éviter les doublons."""
+        return self.data_dir / "autolearn" / "synapse_index.json"
 
     # -- Compatibilité (alias) --
     @property

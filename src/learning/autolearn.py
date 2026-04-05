@@ -169,6 +169,9 @@ class AutoLearner:
 
             logger.info(f"Auto-learner : {processed_count} note(s) traitée(s)")
 
+            # Pass 3 — découverte de synapses (connexions implicites)
+            self._discover_synapses(all_notes)
+
         except Exception as exc:
             logger.error(f"Auto-learner cycle error : {exc}")
 
@@ -340,6 +343,130 @@ class AutoLearner:
 
         artifact_path.write_text("\n".join(lines), encoding="utf-8")
         logger.info(f"Artefact créé : {artifact_path.name}")
+
+    # ---- Découverte de synapses ----
+
+    def _load_synapse_index(self) -> set[str]:
+        """Retourne l'ensemble des paires déjà traitées sous forme 'fp_a|||fp_b'."""
+        f = settings.synapse_index_file
+        if f.exists():
+            try:
+                return set(json.loads(f.read_text(encoding="utf-8")))
+            except Exception:
+                return set()
+        return set()
+
+    def _save_synapse_index(self, index: set[str]) -> None:
+        f = settings.synapse_index_file
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text(json.dumps(sorted(index), ensure_ascii=False), encoding="utf-8")
+
+    @staticmethod
+    def _synapse_pair_key(fp_a: str, fp_b: str) -> str:
+        return "|||".join(sorted([fp_a, fp_b]))
+
+    def _discover_synapses(self, all_notes: list[dict]) -> None:
+        """Trouve des paires de notes sémantiquement proches sans lien existant."""
+        quota = settings.autolearn_synapse_per_run
+        if quota <= 0:
+            return
+
+        synapse_index = self._load_synapse_index()
+
+        # On itère sur les notes dans un ordre aléatoire pour couvrir tout le coffre
+        import random
+        candidates = list(all_notes)
+        random.shuffle(candidates)
+
+        for note_a in candidates:
+            if quota <= 0:
+                break
+            fp_a = note_a["file_path"]
+            # Liens existants (wikilinks déjà connus)
+            existing = {w.lower() for w in note_a.get("wikilinks", [])}
+
+            similar = self._chroma.find_similar_notes(
+                source_fp=fp_a,
+                existing_links=existing,
+                top_k=5,
+                threshold=settings.autolearn_synapse_threshold,
+            )
+
+            for note_b_info in similar:
+                if quota <= 0:
+                    break
+                fp_b = note_b_info["file_path"]
+                pair_key = self._synapse_pair_key(fp_a, fp_b)
+                if pair_key in synapse_index:
+                    continue
+
+                try:
+                    self._create_synapse_artifact(note_a, note_b_info)
+                    synapse_index.add(pair_key)
+                    self._save_synapse_index(synapse_index)
+                    quota -= 1
+                    time.sleep(self._SLEEP_BETWEEN_QUESTIONS)
+                except Exception as exc:
+                    logger.warning(f"Synapse {fp_a} ↔ {fp_b} : {exc}")
+
+    def _create_synapse_artifact(self, note_a: dict, note_b_info: dict) -> None:
+        title_a = note_a.get("title", note_a["file_path"])
+        title_b = note_b_info["title"]
+        score = note_b_info["score"]
+        excerpt_b = note_b_info["excerpt"]
+
+        # Récupère un extrait de note_a
+        chunks_a = self._chroma.search(title_a, top_k=1)
+        excerpt_a = chunks_a[0]["text"][:300] if chunks_a else ""
+
+        prompt = (
+            f"Voici deux notes d'un coffre Obsidian qui semblent liées thématiquement "
+            f"(similarité sémantique : {score:.0%}) mais sans lien explicite entre elles.\n\n"
+            f"**Note A — {title_a} :**\n{excerpt_a}\n\n"
+            f"**Note B — {title_b} :**\n{excerpt_b}\n\n"
+            f"En 3 à 5 phrases, explique quelle connexion implicite unit ces deux notes, "
+            f"comme une synapse qui relie deux neurones. Propose aussi une question que "
+            f"l'utilisateur pourrait se poser pour approfondir ce lien. Réponds en français."
+        )
+
+        explanation = self._rag._llm.chat(
+            [{"role": "user", "content": prompt}],
+            temperature=0.6,
+            max_tokens=400,
+            operation="autolearn_synapse",
+        )
+
+        safe_a = re.sub(r"[^\w\s-]", "", title_a).strip().replace(" ", "_")[:40]
+        safe_b = re.sub(r"[^\w\s-]", "", title_b).strip().replace(" ", "_")[:40]
+        date_str = datetime.utcnow().strftime("%Y%m%d")
+        out_dir = settings.synapses_dir
+        out_dir.mkdir(parents=True, exist_ok=True)
+        out_path = out_dir / f"{safe_a}__{safe_b}_{date_str}.md"
+
+        lines = [
+            f"# Synapse : {title_a} ↔ {title_b}",
+            "",
+            f"**Similarité sémantique :** {score:.0%}  ",
+            f"**Découverte le :** {datetime.utcnow().strftime('%Y-%m-%d %H:%M')} UTC",
+            "",
+            "---",
+            "",
+            "## Connexion identifiée",
+            "",
+            explanation,
+            "",
+            "---",
+            "",
+            f"## [[{title_a}]]",
+            "",
+            f"> {excerpt_a[:250]}…",
+            "",
+            f"## [[{title_b}]]",
+            "",
+            f"> {excerpt_b[:250]}…",
+        ]
+        out_path.write_text("\n".join(lines), encoding="utf-8")
+        logger.info(f"Synapse créée : {title_a} ↔ {title_b} ({score:.0%})")
 
     # ---- Synthèse hebdomadaire ----
 

@@ -185,6 +185,59 @@ class ChromaStore:
         since_iso = since.isoformat()
         return [n for n in notes if (n.get("date_modified") or "") >= since_iso]
 
+    def find_similar_notes(
+        self,
+        source_fp: str,
+        existing_links: set[str],
+        top_k: int = 10,
+        threshold: float = 0.65,
+    ) -> list[dict]:
+        """Retourne les notes sémantiquement proches de source_fp sans lien existant.
+
+        Chaque résultat : {"file_path", "title", "score", "excerpt"}.
+        """
+        # Récupère les chunks de la note source
+        try:
+            raw = self._collection.get(
+                where={"file_path": source_fp},
+                include=["documents"],
+                limit=3,
+            )
+        except Exception:
+            return []
+
+        docs = raw.get("documents", [])
+        if not docs:
+            return []
+
+        query_text = " ".join(docs[:2])  # on utilise les 2 premiers chunks comme requête
+
+        candidates = self.search(query_text, top_k=top_k + 5)
+
+        seen_fps: set[str] = {source_fp}
+        results: list[dict] = []
+        for c in candidates:
+            fp = c["metadata"].get("file_path", "")
+            if not fp or fp in seen_fps:
+                continue
+            seen_fps.add(fp)
+            # Exclure les notes déjà liées
+            note_title = c["metadata"].get("note_title", fp)
+            if fp in existing_links or note_title.lower() in existing_links:
+                continue
+            if c["score"] < threshold:
+                continue
+            results.append({
+                "file_path": fp,
+                "title": note_title,
+                "score": c["score"],
+                "excerpt": c["text"][:300],
+            })
+            if len(results) >= top_k:
+                break
+
+        return results
+
     # ---- helpers ----
 
     @staticmethod
