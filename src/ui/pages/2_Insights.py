@@ -15,8 +15,8 @@ svc = get_services()
 st.title("💡 Insights")
 st.caption("Connaissances générées automatiquement et historique de vos questions")
 
-tab_knowledge, tab_synthesis, tab_queries = st.tabs(
-    ["🧩 Artefacts de connaissance", "📋 Synthèses hebdomadaires", "🔍 Historique requêtes"]
+tab_knowledge, tab_synapses, tab_synthesis, tab_queries = st.tabs(
+    ["🧩 Artefacts de connaissance", "⚡ Synapses", "📋 Synthèses hebdomadaires", "🔍 Historique requêtes"]
 )
 
 # ---- Artefacts de connaissance (vault/obsirag/insights/) ----
@@ -40,6 +40,28 @@ with tab_knowledge:
             date_str = datetime.fromtimestamp(art_path.stat().st_mtime).strftime("%Y-%m-%d %H:%M")
             with st.expander(f"📄 {art_path.stem} — {date_str}", expanded=False):
                 st.markdown(art_path.read_text(encoding="utf-8"))
+
+# ---- Synapses (vault/obsirag/synapses/) ----
+with tab_synapses:
+    synapses_dir = settings.synapses_dir
+    synapses = sorted(synapses_dir.rglob("*.md"), key=lambda p: p.stat().st_mtime, reverse=True) \
+        if synapses_dir.exists() else []
+
+    if not synapses:
+        st.info(
+            "Aucune synapse générée pour l'instant. "
+            "L'auto-learner découvre des connexions implicites entre notes à chaque cycle. "
+            f"Elles apparaîtront dans Obsidian sous `obsirag/synapses/`."
+        )
+    else:
+        st.caption(
+            f"{len(synapses)} synapse(s) découverte(s) · "
+            f"Visibles dans Obsidian sous `obsirag/synapses/`"
+        )
+        for syn_path in synapses[:50]:
+            date_str = datetime.fromtimestamp(syn_path.stat().st_mtime).strftime("%Y-%m-%d %H:%M")
+            with st.expander(f"⚡ {syn_path.stem} — {date_str}", expanded=False):
+                st.markdown(syn_path.read_text(encoding="utf-8"))
 
 # ---- Synthèses hebdomadaires (vault/obsirag/synthesis/) ----
 with tab_synthesis:

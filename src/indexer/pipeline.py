@@ -6,6 +6,7 @@ Pipeline d'indexation incrémentale du coffre Obsidian.
 """
 import json
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 from loguru import logger
@@ -26,8 +27,11 @@ class IndexingPipeline:
 
     # ---- API publique ----
 
-    def index_vault(self) -> dict:
-        """Indexe (ou met à jour) l'ensemble du coffre. Retourne les stats."""
+    def index_vault(self, on_progress: Callable[[str, int, int], None] | None = None) -> dict:
+        """Indexe (ou met à jour) l'ensemble du coffre. Retourne les stats.
+
+        on_progress(current_note, processed, total) — appelé après chaque note traitée.
+        """
         vault = settings.vault
         if not vault.exists():
             logger.error(f"Coffre introuvable : {vault}")
@@ -40,6 +44,8 @@ class IndexingPipeline:
         }
 
         stats = {"added": 0, "updated": 0, "deleted": 0, "skipped": 0, "errors": 0}
+        total = len(all_md)
+        processed = 0
 
         # Suppression des notes retirées du coffre
         stale = set(self._state.keys()) - set(all_md.keys())
@@ -53,16 +59,19 @@ class IndexingPipeline:
                 current_hash = self._file_hash(abs_path)
                 if self._state.get(rel_path) == current_hash:
                     stats["skipped"] += 1
-                    continue
-
-                action = "updated" if rel_path in self._state else "added"
-                self._index_file(abs_path, rel_path)
-                stats[action] += 1
-                time.sleep(self._SLEEP_BETWEEN_NOTES)
+                else:
+                    action = "updated" if rel_path in self._state else "added"
+                    self._index_file(abs_path, rel_path)
+                    stats[action] += 1
+                    time.sleep(self._SLEEP_BETWEEN_NOTES)
 
             except Exception as exc:
                 logger.error(f"Erreur d'indexation pour {rel_path} : {exc}")
                 stats["errors"] += 1
+
+            processed += 1
+            if on_progress:
+                on_progress(rel_path, processed, total)
 
         self._save_state()
         logger.info(f"index_vault → {stats}")

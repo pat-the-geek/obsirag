@@ -27,6 +27,18 @@ with st.sidebar:
     st.metric("Notes indexées", len(notes))
     st.metric("Chunks vectorisés", svc.chroma.count())
 
+    # Progression de l'indexation initiale (thread background)
+    idx = svc.indexing_status
+    if idx.get("running"):
+        total = idx.get("total", 0)
+        processed = idx.get("processed", 0)
+        current = idx.get("current", "")
+        st.progress(processed / total if total else 0, text=f"⏳ Indexation {processed}/{total}")
+        if current:
+            st.caption(f"…{current[-40:]}" if len(current) > 40 else current)
+        time.sleep(1)
+        st.rerun()
+
     llm_ok = svc.llm.is_available()
     st.markdown(f"**LM Studio** : {'🟢 Connecté' if llm_ok else '🔴 Non disponible'}")
 

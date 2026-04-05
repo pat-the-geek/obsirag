@@ -15,6 +15,7 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from loguru import logger
+from openai import BadRequestError
 
 from src.config import settings
 from src.database.chroma_store import ChromaStore
@@ -66,28 +67,47 @@ class RAGPipeline:
         user_query: str,
         chat_history: list[dict[str, str]] | None = None,
     ) -> tuple[Iterator[str], list[dict]]:
-        """Retourne (stream_generator, sources)."""
+        """Retourne (stream_generator, sources). Réduit le contexte si dépassement."""
         chunks, intent = self._retrieve(user_query)
         logger.info(f"RAG intent={intent} chunks={len(chunks)}")
+        history = chat_history or []
 
-        context = self._build_context(chunks)
-        messages = self._build_messages(user_query, context, chat_history or [])
+        for budget in self._context_budgets():
+            context = self._build_context(chunks, char_budget=budget)
+            messages = self._build_messages(user_query, context, history)
+            try:
+                stream = self._llm.stream(messages, operation="rag_query")
+                return stream, chunks
+            except BadRequestError as exc:
+                if self._is_context_error(exc):
+                    logger.warning(f"Contexte trop grand (budget={budget}), réduction…")
+                    continue
+                raise
 
-        stream = self._llm.stream(messages, operation="rag_query")
-        return stream, chunks
+        raise RuntimeError("Impossible d'envoyer la requête : contexte trop grand même après réductions.")
 
     def query(
         self,
         user_query: str,
         chat_history: list[dict[str, str]] | None = None,
     ) -> tuple[str, list[dict]]:
-        """Appel bloquant — retourne (réponse, sources)."""
+        """Appel bloquant — retourne (réponse, sources). Réduit le contexte si dépassement."""
         chunks, intent = self._retrieve(user_query)
-        context = self._build_context(chunks)
-        messages = self._build_messages(user_query, context, chat_history or [])
+        history = chat_history or []
 
-        answer = self._llm.chat(messages, operation="rag_query")
-        return answer, chunks
+        for budget in self._context_budgets():
+            context = self._build_context(chunks, char_budget=budget)
+            messages = self._build_messages(user_query, context, history)
+            try:
+                answer = self._llm.chat(messages, operation="rag_query")
+                return answer, chunks
+            except BadRequestError as exc:
+                if self._is_context_error(exc):
+                    logger.warning(f"Contexte trop grand (budget={budget}), réduction…")
+                    continue
+                raise
+
+        raise RuntimeError("Impossible d'envoyer la requête : contexte trop grand même après réductions.")
 
     # ---- Détection d'intention et récupération ----
 
@@ -176,7 +196,18 @@ class RAGPipeline:
 
     # ---- Construction du prompt ----
 
-    def _build_context(self, chunks: list[dict]) -> str:
+    @staticmethod
+    def _context_budgets() -> list[int]:
+        """Retourne les budgets de chars à tenter : 100%, 50%, 25%, 12%."""
+        base = settings.max_context_chars
+        return [base, base // 2, base // 4, base // 8]
+
+    @staticmethod
+    def _is_context_error(exc: BadRequestError) -> bool:
+        msg = str(exc).lower()
+        return "context" in msg and any(w in msg for w in ("size", "length", "exceeded", "too long"))
+
+    def _build_context(self, chunks: list[dict], char_budget: int | None = None) -> str:
         if not chunks:
             return "Aucune note trouvée dans le coffre pour cette requête."
 
@@ -187,7 +218,7 @@ class RAGPipeline:
             seen_notes.setdefault(fp, []).append(c)
 
         parts: list[str] = []
-        budget = settings.max_context_chars
+        budget = char_budget if char_budget is not None else settings.max_context_chars
 
         for fp, note_chunks in seen_notes.items():
             if budget <= 0:

@@ -246,7 +246,7 @@ class AutoLearner:
     def _web_search(self, query: str) -> list[dict]:
         """Retourne une liste de {body, href, title} filtrée sur les domaines fiables."""
         try:
-            from duckduckgo_search import DDGS
+            from ddgs import DDGS
             with DDGS() as ddgs:
                 results = list(ddgs.text(query, max_results=10))
             trusted = [
@@ -288,14 +288,14 @@ class AutoLearner:
                 max_tokens=1000,
                 operation="autolearn_questions",
             )
-            _prefix = re.compile(r"^[•\-]?\s*Q\d+[.:）]\s*")
+            _prefix = re.compile(r"^[•\*\-]?\s*(?:Q\d+[.:）]|Question\s*\d*[.:]|\d+[.)]\s*)?\s*", re.I)
             questions: list[str] = []
-            for l in answer.strip().splitlines():
-                stripped = l.strip()
-                cleaned = _prefix.sub("", stripped)
-                # Ne garder que les lignes qui avaient réellement un préfixe Q1/Q2/Q3
-                # et qui sont des questions complètes (se terminent par ?)
-                if cleaned != stripped and len(cleaned) > 10 and cleaned.endswith("?"):
+            for line in answer.strip().splitlines():
+                stripped = line.strip()
+                if not stripped:
+                    continue
+                cleaned = _prefix.sub("", stripped).strip()
+                if len(cleaned) > 10 and cleaned.endswith("?"):
                     questions.append(cleaned)
             return questions[:3]
         except Exception as exc:
