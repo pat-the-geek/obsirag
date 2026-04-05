@@ -92,6 +92,12 @@ L'insight est sauvegardé dans `obsirag/insights/YYYY-MM/` avec :
 
 ---
 
+## Performances et recommandations matérielles
+
+Temps de traitement, débit du scan, et choix du Mac Apple Silicon : voir [docs/performances.md](docs/performances.md).
+
+---
+
 ## Modèles IA utilisés via LM Studio
 
 ObsiRAG utilise LM Studio comme serveur IA local (API compatible OpenAI). Trois types d'appels sont effectués :
