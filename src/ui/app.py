@@ -27,8 +27,8 @@ def _autolearn_live_status():
         st.info(f"⚙️ **Traitement en cours**\n\n📄 *{note}*\n\n`{step}`")
         log_entries = ps.get("log", [])
         if log_entries:
-            with st.expander("📋 Journal de traitement", expanded=True):
-                st.code("\n".join(log_entries[-10:]), language=None)
+            st.caption("📋 **Journal de traitement**")
+            st.code("\n".join(log_entries), language=None)
 
 # ---- Sidebar ----
 with st.sidebar:
