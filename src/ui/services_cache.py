@@ -41,8 +41,12 @@ div[data-testid="stMainBlockContainer"] {
 <link rel="icon" type="image/png" sizes="32x32" href="/app/static/favicon-32x32.png">
 <link rel="icon" type="image/png" sizes="16x16" href="/app/static/favicon-16x16.png">
 <link rel="apple-touch-icon" sizes="180x180" href="/app/static/apple-touch-icon.png">
+<link rel="mask-icon" href="/app/static/safari-pinned-tab.svg" color="#7C3AED">
 <link rel="manifest" href="/app/static/site.webmanifest">
 <meta name="theme-color" content="#7C3AED">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="ObsiRAG">
 """
 
 
