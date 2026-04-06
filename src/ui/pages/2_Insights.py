@@ -2,6 +2,7 @@
 Page Insights — Artefacts générés par l'auto-learner + historique des requêtes.
 """
 import json
+import math
 from datetime import datetime
 
 import streamlit as st
@@ -14,6 +15,70 @@ svc = get_services()
 
 st.title("💡 Insights")
 st.caption("Connaissances générées automatiquement et historique de vos questions")
+
+# ---- Estimation du temps de traitement ----
+with st.expander("⏱️ Progression & estimation du temps restant", expanded=True):
+    # Données de traitement
+    processed_map: dict = {}
+    if settings.processed_notes_file.exists():
+        try:
+            processed_map = json.loads(settings.processed_notes_file.read_text(encoding="utf-8"))
+        except Exception:
+            processed_map = {}
+
+    total_notes = len(svc.chroma.list_notes()) if hasattr(svc, "chroma") else 0
+    processed_count = len(processed_map)
+    remaining = max(0, total_notes - processed_count)
+
+    # Paramètres de vitesse (secondes par note)
+    # 1 appel semantic field + 1 appel questions + 3 × (15s sleep + ~10s LLM) + 30s sleep fin
+    secs_per_note = (
+        5          # sleep post-semantic-field
+        + 3 * 15   # sleep entre questions
+        + 30       # sleep entre notes
+        + 3 * 20   # estimation appels LLM (~20s chacun)
+    )
+
+    notes_per_cycle = settings.autolearn_max_notes_per_run + settings.autolearn_fullscan_per_run
+    cycle_minutes = settings.autolearn_interval_minutes
+
+    cycles_needed = math.ceil(remaining / notes_per_cycle) if notes_per_cycle > 0 else 0
+    time_in_cycle_secs = notes_per_cycle * secs_per_note
+    total_secs = cycles_needed * max(cycle_minutes * 60, time_in_cycle_secs)
+
+    def _fmt_duration(secs: int) -> str:
+        if secs < 60:
+            return f"{secs}s"
+        if secs < 3600:
+            return f"{secs // 60} min"
+        h = secs // 3600
+        m = (secs % 3600) // 60
+        return f"{h}h{m:02d}"
+
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("Notes totales", total_notes)
+    col2.metric("Notes traitées", processed_count)
+    col3.metric("Notes restantes", remaining)
+    col4.metric(
+        "Temps estimé restant",
+        _fmt_duration(total_secs) if remaining > 0 else "✅ Complet",
+        help=f"{cycles_needed} cycle(s) × ~{_fmt_duration(time_in_cycle_secs)} / cycle · "
+             f"intervalle cycle : {cycle_minutes} min · "
+             f"{notes_per_cycle} notes/cycle"
+    )
+
+    if remaining > 0 and total_notes > 0:
+        st.progress(processed_count / total_notes, text=f"{processed_count}/{total_notes} notes")
+
+    # Prochaine exécution du cycle
+    if hasattr(svc, "learner") and svc.learner is not None:
+        try:
+            job = svc.learner._scheduler.get_job("autolearn_cycle")
+            if job and job.next_run_time:
+                next_run = job.next_run_time.strftime("%H:%M:%S")
+                st.caption(f"Prochain cycle auto-learner : **{next_run} UTC**")
+        except Exception:
+            pass
 
 tab_knowledge, tab_synapses, tab_synthesis, tab_queries = st.tabs(
     ["🧩 Artefacts de connaissance", "⚡ Synapses", "📋 Synthèses hebdomadaires", "🔍 Historique requêtes"]
