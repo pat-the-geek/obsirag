@@ -18,7 +18,7 @@ svc = get_services()
 
 st.markdown(
     f'<h1 style="display:flex;align-items:center;gap:12px">'
-    f'<img src="data:image/png;base64,{_icon_b64}" width="72" style="border-radius:6px">'
+    f'<img src="data:image/png;base64,{_icon_b64}" width="144" style="border-radius:6px">'
     f'Cerveau</h1>',
     unsafe_allow_html=True,
 )
