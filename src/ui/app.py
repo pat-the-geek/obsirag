@@ -56,7 +56,7 @@ def _autolearn_live_status():
 with st.sidebar:
     st.markdown(
         f'<h2 style="display:flex;align-items:center;gap:10px;margin:0">'
-        f'<img src="data:image/png;base64,{_icon_b64}" width="28" style="border-radius:4px">'
+        f'<img src="data:image/png;base64,{_icon_b64}" width="36" style="border-radius:4px">'
         f'ObsiRAG</h2>',
         unsafe_allow_html=True,
     )
