@@ -110,11 +110,14 @@ Sois concis et percutant (max 400 mots)."""
 class AutoLearner:
     _SLEEP_BETWEEN_NOTES = 30        # secondes entre deux notes
     _SLEEP_BETWEEN_QUESTIONS = 15    # secondes entre deux questions
+    _USER_IDLE_SECONDS = 120         # pause auto-learner si activité chat < N secondes
 
     def __init__(self, chroma, rag, indexer) -> None:
         self._chroma = chroma
         self._rag = rag
         self._indexer = indexer
+        self._last_user_activity: float = 0.0  # timestamp epoch
+        self._activity_lock = threading.Lock()
         self._scheduler = BackgroundScheduler(
             job_defaults={"coalesce": True, "max_instances": 1},
             timezone="UTC",
@@ -167,8 +170,29 @@ class AutoLearner:
         if self._scheduler.running:
             self._scheduler.shutdown(wait=False)
 
+    def signal_user_activity(self) -> None:
+        """Signale une activité utilisateur — suspend temporairement l'auto-learner."""
+        with self._activity_lock:
+            self._last_user_activity = time.monotonic()
+
+    def _user_is_active(self) -> bool:
+        """Retourne True si l'utilisateur a été actif dans les dernières N secondes."""
+        with self._activity_lock:
+            return (time.monotonic() - self._last_user_activity) < self._USER_IDLE_SECONDS
+
+    def _wait_for_idle(self, context: str = "") -> None:
+        """Attend que l'utilisateur soit inactif avant de continuer."""
+        if not self._user_is_active():
+            return
+        label = f" ({context})" if context else ""
+        logger.info(f"Auto-learner en pause{label} — activité chat détectée, reprise dans {self._USER_IDLE_SECONDS}s max")
+        while self._user_is_active():
+            time.sleep(10)
+        logger.info(f"Auto-learner reprise{label}")
+
     def log_user_query(self, query: str) -> None:
-        """Enregistre une requête utilisateur pour l'apprentissage futur."""
+        """Enregistre une requête utilisateur et signale l'activité."""
+        self.signal_user_activity()
         entry = {"ts": datetime.utcnow().isoformat(), "query": query}
         f = settings.queries_file
         f.parent.mkdir(parents=True, exist_ok=True)
@@ -187,6 +211,7 @@ class AutoLearner:
             since = datetime.utcnow() - timedelta(hours=settings.autolearn_lookback_hours)
             recent = self._chroma.get_recently_modified(since)
             for note_meta in recent[: settings.autolearn_max_notes_per_run]:
+                self._wait_for_idle(note_meta.get("title", ""))
                 try:
                     self._process_note(note_meta)
                     self._mark_processed(note_meta["file_path"])
@@ -210,6 +235,7 @@ class AutoLearner:
                 # Sauter les notes déjà traitées dans ce cycle (pass 1)
                 if fp in {n["file_path"] for n in recent[: settings.autolearn_max_notes_per_run]}:
                     continue
+                self._wait_for_idle(note_meta.get("title", ""))
                 try:
                     self._process_note(note_meta)
                     self._mark_processed(fp)
