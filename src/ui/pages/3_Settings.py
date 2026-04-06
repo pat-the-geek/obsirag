@@ -10,7 +10,8 @@ import streamlit as st
 from src.config import settings
 from src.ui.services_cache import get_services
 
-st.set_page_config(page_title="Paramètres — ObsiRAG", page_icon="⚙️", layout="wide")
+_icon = (Path(__file__).parent.parent / "static" / "obsirag_icon.svg").read_bytes()
+st.set_page_config(page_title="Paramètres — ObsiRAG", page_icon=_icon, layout="wide")
 svc = get_services()
 
 st.title("⚙️ Paramètres & Statistiques")

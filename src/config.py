@@ -36,6 +36,7 @@ class Settings(BaseSettings):
     autolearn_max_notes_per_run: int = 5
     autolearn_lookback_hours: int = 24
     autolearn_fullscan_per_run: int = 3   # notes non traitées à couvrir par cycle
+    autolearn_min_reprocess_days: int = 7  # ne pas retraiter une note avant N jours
     autolearn_synapse_per_run: int = 2    # paires synaptiques à découvrir par cycle
     autolearn_synapse_threshold: float = 0.65  # similarité cosine minimale
 

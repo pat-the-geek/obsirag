@@ -1,0 +1,23 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "Icon Preview",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": ["-m", "http.server", "8600", "--directory", "/Users/patrickostertag/Documents/DataForIA/obsirag"],
+      "port": 8600
+    },
+    {
+      "name": "ObsiRAG (Docker)",
+      "runtimeExecutable": "docker",
+      "runtimeArgs": ["compose", "up", "--build"],
+      "port": 8501
+    },
+    {
+      "name": "ObsiRAG (Streamlit direct)",
+      "runtimeExecutable": "streamlit",
+      "runtimeArgs": ["run", "src/ui/app.py", "--server.address=0.0.0.0", "--server.port=8501", "--server.headless=true"],
+      "port": 8501
+    }
+  ]
+}

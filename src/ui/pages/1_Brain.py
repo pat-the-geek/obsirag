@@ -1,13 +1,16 @@
 """
 Page Cerveau — Visualisation interactive du graphe de connaissances.
 """
+from pathlib import Path
+
 import streamlit as st
 import streamlit.components.v1 as components
 
 from src.ui.services_cache import get_services
 from src.ui.components.note_bridge_component import note_bridge as _note_bridge
 
-st.set_page_config(page_title="Cerveau — ObsiRAG", page_icon="🧠", layout="wide")
+_icon = (Path(__file__).parent.parent / "static" / "obsirag_icon.svg").read_bytes()
+st.set_page_config(page_title="Cerveau — ObsiRAG", page_icon=_icon, layout="wide")
 
 svc = get_services()
 

@@ -4,14 +4,17 @@ ObsiRAG — Page principale : Chat
 import time
 from datetime import datetime
 
+from pathlib import Path
+
 import streamlit as st
 
 from src.ui.services_cache import get_services
 
 # ---- Configuration de la page ----
+_icon = (Path(__file__).parent / "static" / "obsirag_icon.svg").read_bytes()
 st.set_page_config(
     page_title="ObsiRAG",
-    page_icon="🧠",
+    page_icon=_icon,
     layout="wide",
 )
 

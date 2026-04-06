@@ -246,6 +246,10 @@ class AutoLearner:
             def _sort_key(n: dict) -> str:
                 return processed_map.get(n["file_path"], "")  # "" < toute date ISO
 
+            # Seuil : ne retraiter une note que si elle n'a pas été traitée depuis N jours
+            min_reprocess_delta = timedelta(days=settings.autolearn_min_reprocess_days)
+            cutoff_iso = (datetime.utcnow() - min_reprocess_delta).isoformat()
+
             pending = sorted(all_notes, key=_sort_key)
             quota = settings.autolearn_fullscan_per_run
             for note_meta in pending:
@@ -254,6 +258,10 @@ class AutoLearner:
                 fp = note_meta["file_path"]
                 # Sauter les notes déjà traitées dans ce cycle (pass 1)
                 if fp in {n["file_path"] for n in recent[: settings.autolearn_max_notes_per_run]}:
+                    continue
+                # Sauter si traitée récemment (< N jours)
+                last_processed = processed_map.get(fp, "")
+                if last_processed and last_processed > cutoff_iso:
                     continue
                 self._wait_for_idle(note_meta.get("title", ""))
                 try:
