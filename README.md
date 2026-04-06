@@ -65,7 +65,7 @@ Ce champ est injecté comme contrainte explicite dans le prompt de génération,
 
 #### Entités nommées (NER) — validation WUDD.ai
 
-Chaque insight généré est enrichi avec des **entités nommées validées** (personnes, organisations, pays, produits) issues de la liste officielle [WUDD.ai](http://100.72.122.51:5050). Le processus :
+Chaque insight généré est enrichi avec des **entités nommées validées** (personnes, organisations, pays, produits) issues de la liste officielle [WUDD.ai](http://localhost:5050). Le processus :
 
 1. Extrait les entités candidates par analyse spaCy du texte Q&A
 2. Valide chaque entité contre la liste officielle WUDD.ai (top 5 000 entités, triées par fréquence de mention) — les entités non reconnues sont ignorées
@@ -163,7 +163,7 @@ Les embeddings sont gérés **localement** par `sentence-transformers` (`paraphr
 | Interface          | Streamlit                                                          |
 | Graphe             | NetworkX + Pyvis                                                   |
 | Recherche web      | DuckDuckGo Search (sources fiables)                                |
-| Entités NER        | spaCy + validation [WUDD.ai](http://100.72.122.51:5050) (top 5 000 entités officielles) |
+| Entités NER        | spaCy + validation [WUDD.ai](http://localhost:5050) (top 5 000 entités officielles) |
 | Géolocalisation    | Wikipedia Coordinates API → frontmatter `location:` (Obsidian Map View) |
 | Coffre             | Obsidian (lecture seule)                                           |
 | Artefacts générés  | `obsirag/insights/`, `obsirag/synthesis/`, `obsirag/synapses/`     |
