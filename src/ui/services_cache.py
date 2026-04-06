@@ -48,31 +48,30 @@ div[data-testid="stMainBlockContainer"] {
 
   function applyHeadTags() {
     var head = document.head;
+    head.querySelectorAll(
+      'link[rel*="icon"], link[rel="manifest"], link[rel="mask-icon"], ' +
+      'meta[name="theme-color"], meta[name^="apple-mobile-web-app"]'
+    ).forEach(function(el) { el.remove(); });
 
-    // Remove any existing icons/manifest injected by Streamlit or us
-    head.querySelectorAll('link[rel*="icon"], link[rel="manifest"], link[rel="mask-icon"], meta[name="theme-color"], meta[name="apple-mobile-web-app"]').forEach(function(el) { el.remove(); });
-
-    var links = [
+    [
       {rel:'icon', type:'image/x-icon', href:FAVICON_ICO},
       {rel:'icon', type:'image/png', sizes:'32x32', href:FAVICON_32},
       {rel:'icon', type:'image/png', sizes:'16x16', href:FAVICON_16},
       {rel:'apple-touch-icon', sizes:'180x180', href:ICON_URL},
       {rel:'mask-icon', href:MASK_URL, color:'#7C3AED'},
       {rel:'manifest', href:MANIFEST_URL}
-    ];
-    links.forEach(function(attrs) {
+    ].forEach(function(attrs) {
       var el = document.createElement('link');
       Object.keys(attrs).forEach(function(k) { el.setAttribute(k, attrs[k]); });
       head.appendChild(el);
     });
 
-    var metas = [
+    [
       {name:'theme-color', content:'#7C3AED'},
       {name:'apple-mobile-web-app-capable', content:'yes'},
       {name:'apple-mobile-web-app-status-bar-style', content:'black-translucent'},
       {name:'apple-mobile-web-app-title', content:'ObsiRAG'}
-    ];
-    metas.forEach(function(attrs) {
+    ].forEach(function(attrs) {
       var el = document.createElement('meta');
       Object.keys(attrs).forEach(function(k) { el.setAttribute(k, attrs[k]); });
       head.appendChild(el);
@@ -82,24 +81,31 @@ div[data-testid="stMainBlockContainer"] {
   // Apply immediately
   applyHeadTags();
 
-  // Watch for Streamlit overwriting our tags and re-apply
+  // MutationObserver: re-apply whenever Streamlit modifies <head>
   var _applying = false;
   var observer = new MutationObserver(function(mutations) {
     if (_applying) return;
     var relevant = mutations.some(function(m) {
-      return Array.from(m.addedNodes).some(function(n) {
-        return n.nodeName === 'LINK' || n.nodeName === 'META';
-      }) || Array.from(m.removedNodes).some(function(n) {
+      return Array.from(m.addedNodes).concat(Array.from(m.removedNodes)).some(function(n) {
         return n.nodeName === 'LINK' || n.nodeName === 'META';
       });
     });
     if (relevant) {
       _applying = true;
       applyHeadTags();
-      setTimeout(function() { _applying = false; }, 100);
+      setTimeout(function() { _applying = false; }, 200);
     }
   });
   observer.observe(document.head, {childList: true});
+
+  // Interval fallback: keep re-applying for the first 15s after page load
+  // This catches Streamlit's React hydration which happens after our script
+  var _elapsed = 0;
+  var interval = setInterval(function() {
+    _elapsed += 500;
+    applyHeadTags();
+    if (_elapsed >= 15000) clearInterval(interval);
+  }, 500);
 })();
 </script>
 """
