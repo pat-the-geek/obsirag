@@ -67,12 +67,13 @@ with st.sidebar:
     st.metric("Notes indexées", len(notes))
     st.metric("Chunks vectorisés", svc.chroma.count())
 
-    # Compteur auto-learner
+    # Compteur auto-learner (exclut les notes générées par ObsiRAG)
     import json
     from src.config import settings as _s
     _pf = _s.processed_notes_file
     _processed = len(json.loads(_pf.read_text(encoding="utf-8"))) if _pf.exists() else 0
-    _total = len(notes)
+    _user_notes = [n for n in notes if "/obsirag/" not in n["file_path"].replace("\\", "/") and not n["file_path"].replace("\\", "/").startswith("obsirag/")]
+    _total = len(_user_notes)
     _insights = len(list(_s.insights_dir.rglob("*.md"))) if _s.insights_dir.exists() else 0
     if _processed < _total:
         st.progress(_processed / _total if _total else 0,

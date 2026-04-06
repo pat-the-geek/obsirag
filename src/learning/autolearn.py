@@ -221,16 +221,27 @@ class AutoLearner:
     def _clear_status(self) -> None:
         self.processing_status.update({"active": False, "note": "", "step": ""})
 
+    @staticmethod
+    def _is_obsirag_generated(file_path: str) -> bool:
+        """Retourne True si la note est générée par ObsiRAG (insights, synthesis, synapses).
+        Ces notes ne doivent pas être retraitées par l'auto-learner pour éviter les boucles."""
+        p = file_path.replace("\\", "/")
+        return "/obsirag/" in p or p.startswith("obsirag/")
+
     def _run_cycle(self) -> None:
         logger.info("Auto-learner : début du cycle")
         try:
             processed_count = 0
             processed_map = self._load_processed()
 
-            # Pass 1 — notes récemment modifiées
+            # Pass 1 — notes récemment modifiées (hors notes générées par ObsiRAG)
             since = datetime.utcnow() - timedelta(hours=settings.autolearn_lookback_hours)
             recent = self._chroma.get_recently_modified(since)
-            for note_meta in recent[: settings.autolearn_max_notes_per_run]:
+            recent_filtered = [
+                n for n in recent
+                if not self._is_obsirag_generated(n["file_path"])
+            ]
+            for note_meta in recent_filtered[: settings.autolearn_max_notes_per_run]:
                 self._wait_for_idle(note_meta.get("title", ""))
                 try:
                     self._process_note(note_meta)
@@ -250,14 +261,18 @@ class AutoLearner:
             min_reprocess_delta = timedelta(days=settings.autolearn_min_reprocess_days)
             cutoff_iso = (datetime.utcnow() - min_reprocess_delta).isoformat()
 
+            processed_in_pass1 = {n["file_path"] for n in recent_filtered[: settings.autolearn_max_notes_per_run]}
             pending = sorted(all_notes, key=_sort_key)
             quota = settings.autolearn_fullscan_per_run
             for note_meta in pending:
                 if quota <= 0:
                     break
                 fp = note_meta["file_path"]
+                # Sauter les notes générées par ObsiRAG
+                if self._is_obsirag_generated(fp):
+                    continue
                 # Sauter les notes déjà traitées dans ce cycle (pass 1)
-                if fp in {n["file_path"] for n in recent[: settings.autolearn_max_notes_per_run]}:
+                if fp in processed_in_pass1:
                     continue
                 # Sauter si traitée récemment (< N jours)
                 last_processed = processed_map.get(fp, "")
