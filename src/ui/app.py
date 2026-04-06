@@ -38,8 +38,6 @@ with st.sidebar:
         st.progress(_processed / _total if _total else 0,
                     text=f"🧠 Insights {_processed}/{_total} notes")
         st.caption(f"💡 {_insights} insight(s) générés")
-        time.sleep(10)
-        st.rerun()
     else:
         st.caption(f"🧠 {_processed}/{_total} notes · 💡 {_insights} insights")
 
@@ -52,8 +50,6 @@ with st.sidebar:
         st.progress(processed / total if total else 0, text=f"⏳ Indexation {processed}/{total}")
         if current:
             st.caption(f"…{current[-40:]}" if len(current) > 40 else current)
-        time.sleep(1)
-        st.rerun()
 
     llm_ok = svc.llm.is_available()
     st.markdown(f"**LM Studio** : {'🟢 Connecté' if llm_ok else '🔴 Non disponible'}")
