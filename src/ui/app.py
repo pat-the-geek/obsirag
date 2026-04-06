@@ -111,12 +111,6 @@ with st.sidebar:
         )
         st.rerun()
 
-    st.divider()
-    st.page_link("app.py", label="💬 Chat", icon="💬")
-    st.page_link("pages/1_Brain.py", label="Cerveau", icon="🧠")
-    st.page_link("pages/2_Insights.py", label="Insights", icon="💡")
-    st.page_link("pages/3_Settings.py", label="Paramètres", icon="⚙️")
-
 # ---- Zone de chat ----
 st.title("💬 Chat avec votre coffre")
 
