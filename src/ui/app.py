@@ -13,7 +13,7 @@ from src.ui.services_cache import get_services
 
 # ---- Configuration de la page ----
 _icon = str(Path(__file__).parent / "static" / "favicon-32x32.png")
-_icon_b64 = base64.b64encode((Path(__file__).parent / "static" / "favicon-32x32.png").read_bytes()).decode()
+_icon_b64 = base64.b64encode((Path(__file__).parent / "static" / "android-chrome-512x512.png").read_bytes()).decode()
 st.set_page_config(
     page_title="ObsiRAG",
     page_icon=_icon,

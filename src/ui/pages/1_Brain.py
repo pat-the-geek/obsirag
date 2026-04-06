@@ -11,7 +11,7 @@ from src.ui.services_cache import get_services
 from src.ui.components.note_bridge_component import note_bridge as _note_bridge
 
 _icon = str(Path(__file__).parent.parent / "static" / "favicon-32x32.png")
-_icon_b64 = base64.b64encode((Path(__file__).parent.parent / "static" / "favicon-32x32.png").read_bytes()).decode()
+_icon_b64 = base64.b64encode((Path(__file__).parent.parent / "static" / "android-chrome-512x512.png").read_bytes()).decode()
 st.set_page_config(page_title="Cerveau — ObsiRAG", page_icon=_icon, layout="wide")
 
 svc = get_services()
