@@ -119,6 +119,13 @@ class AutoLearner:
         self._indexer = indexer
         self._last_user_activity: float = 0.0  # timestamp epoch
         self._activity_lock = threading.Lock()
+        # Statut lisible depuis l'UI (thread-safe via dict atomique Python)
+        self.processing_status: dict = {
+            "active": False,
+            "note": "",
+            "step": "",
+            "log": [],  # liste de str (derniers messages)
+        }
         self._scheduler = BackgroundScheduler(
             job_defaults={"coalesce": True, "max_instances": 1},
             timezone="UTC",
@@ -202,6 +209,18 @@ class AutoLearner:
 
     # ---- Cycle principal ----
 
+    def _set_status(self, note: str = "", step: str = "", active: bool = True) -> None:
+        """Met à jour le statut de traitement (thread-safe)."""
+        log = self.processing_status["log"]
+        if step:
+            log.append(f"{datetime.utcnow().strftime('%H:%M:%S')} — {step}")
+            if len(log) > 20:  # garder les 20 derniers messages
+                log.pop(0)
+        self.processing_status.update({"active": active, "note": note, "step": step})
+
+    def _clear_status(self) -> None:
+        self.processing_status.update({"active": False, "note": "", "step": ""})
+
     def _run_cycle(self) -> None:
         logger.info("Auto-learner : début du cycle")
         try:
@@ -249,34 +268,44 @@ class AutoLearner:
             logger.info(f"Auto-learner : {processed_count} note(s) traitée(s)")
 
             # Pass 3 — découverte de synapses (connexions implicites)
+            self._set_status(note="Synapses", step="Découverte de connexions implicites…")
             self._discover_synapses(all_notes)
 
         except Exception as exc:
             logger.error(f"Auto-learner cycle error : {exc}")
+        finally:
+            self._clear_status()
 
     def _process_note(self, note_meta: dict) -> None:
         title = note_meta.get("title", note_meta["file_path"])
         logger.info(f"Auto-learner : traitement de '{title}'")
+        self._set_status(note=title, step="Récupération des chunks…")
 
         chunks = self._chroma.search(title, top_k=5)
         if not chunks:
             logger.warning(f"Auto-learner : aucun chunk trouvé pour '{title}'")
+            self._set_status(note=title, step="⚠️ Aucun chunk trouvé, note ignorée")
             return
 
         content_preview = "\n\n".join(c["text"] for c in chunks[:3])
+        self._set_status(note=title, step="Extraction du champ sémantique…")
         semantic_field = self._extract_semantic_field(content_preview)
         time.sleep(5)
+        self._set_status(note=title, step="Génération des questions…")
         questions = self._generate_questions(content_preview, semantic_field)
         if not questions:
             logger.warning(f"Auto-learner : aucune question générée pour '{title}'")
+            self._set_status(note=title, step="⚠️ Aucune question générée")
             return
 
         logger.info(f"Auto-learner : {len(questions)} question(s) générée(s) pour '{title}'")
         qa_pairs: list[dict] = []
-        for question in questions:
+        for i, question in enumerate(questions, 1):
+            self._set_status(note=title, step=f"Question {i}/{len(questions)} : recherche web + RAG…")
             time.sleep(self._SLEEP_BETWEEN_QUESTIONS)
             try:
                 # 1. Web en premier — source principale de connaissance nouvelle
+                self._set_status(note=title, step=f"Q{i} — Recherche web : {question[:60]}…")
                 web_results = self._web_search(question)
                 web_snippets = [r["body"] for r in web_results if r.get("body")]
 
@@ -316,6 +345,7 @@ class AutoLearner:
 
                 # Rejeter les réponses faibles ou génériques
                 if self._is_weak_answer(answer):
+                    self._set_status(note=title, step=f"Q{i} — Réponse insuffisante, ignorée")
                     logger.debug(f"Réponse faible ignorée pour '{question[:60]}'")
                     continue
 
@@ -330,8 +360,11 @@ class AutoLearner:
                 logger.warning(f"Auto-learner QA failed pour '{title}' : {exc}")
 
         if qa_pairs:
+            self._set_status(note=title, step=f"Sauvegarde de l'insight ({len(qa_pairs)} Q&A)…")
             self._save_knowledge_artifact(title, note_meta, qa_pairs)
+            self._set_status(note=title, step=f"✅ Insight sauvegardé ({len(qa_pairs)} Q&A)")
         else:
+            self._set_status(note=title, step="⚠️ Aucune réponse QA valide, insight non créé")
             logger.warning(f"Auto-learner : aucune réponse QA pour '{title}', artefact non créé")
 
     def _is_weak_answer(self, answer: str) -> bool:

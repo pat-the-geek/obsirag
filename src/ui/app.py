@@ -41,6 +41,20 @@ with st.sidebar:
     else:
         st.caption(f"🧠 {_processed}/{_total} notes · 💡 {_insights} insights")
 
+    # Statut en temps réel de l'auto-learner
+    @st.fragment(run_every=5)
+    def _autolearn_live_status():
+        ps = svc.learner.processing_status
+        if ps.get("active"):
+            note = ps.get("note", "")
+            step = ps.get("step", "")
+            st.info(f"⚙️ **Traitement en cours**\n\n📄 *{note}*\n\n`{step}`")
+            log_entries = ps.get("log", [])
+            if log_entries:
+                with st.expander("📋 Journal de traitement", expanded=True):
+                    st.code("\n".join(log_entries[-10:]), language=None)
+    _autolearn_live_status()
+
     # Progression de l'indexation initiale (thread background)
     idx = svc.indexing_status
     if idx.get("running"):
