@@ -22,6 +22,7 @@ services:
       PYTHONPATH: /app
       TRANSFORMERS_CACHE: /app/.cache/transformers
       HF_HOME: /app/.cache/huggingface
+      TZ: Europe/Zurich
     extra_hosts:
       - "host.docker.internal:host-gateway"
     restart: unless-stopped

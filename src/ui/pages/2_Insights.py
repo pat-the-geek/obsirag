@@ -73,10 +73,14 @@ with st.expander("⏱️ Progression & estimation du temps restant", expanded=Tr
     # Prochaine exécution du cycle
     if hasattr(svc, "learner") and svc.learner is not None:
         try:
+            import os
+            from zoneinfo import ZoneInfo
             job = svc.learner._scheduler.get_job("autolearn_cycle")
             if job and job.next_run_time:
-                next_run = job.next_run_time.strftime("%H:%M:%S")
-                st.caption(f"Prochain cycle auto-learner : **{next_run} UTC**")
+                tz = ZoneInfo(os.environ.get("TZ", "UTC"))
+                next_run = job.next_run_time.astimezone(tz).strftime("%H:%M:%S")
+                tz_label = os.environ.get("TZ", "UTC")
+                st.caption(f"Prochain cycle auto-learner : **{next_run}** ({tz_label})")
         except Exception:
             pass
 
