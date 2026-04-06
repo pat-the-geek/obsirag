@@ -3,8 +3,8 @@ services:
     build: .
     container_name: obsirag
     image: obsirag:latest
-    ports:
-      - "8501:8501"
+    expose:
+      - "8501"
     volumes:
       # Coffre Obsidian — ObsiRAG écrit UNIQUEMENT dans obsirag/insights/ et obsirag/synthesis/
       - ${VAULT_PATH}:/vault
@@ -32,6 +32,18 @@ services:
       timeout: 10s
       retries: 3
       start_period: 60s
+
+  nginx:
+    image: nginx:alpine
+    container_name: obsirag-nginx
+    ports:
+      - "8501:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./src/ui/static:/static:ro
+    depends_on:
+      - obsirag
+    restart: unless-stopped
 
 volumes:
   obsirag-app-data:
