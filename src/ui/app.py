@@ -11,7 +11,7 @@ import streamlit as st
 from src.ui.services_cache import get_services
 
 # ---- Configuration de la page ----
-_icon = (Path(__file__).parent / "static" / "obsirag_icon.svg").read_bytes()
+_icon = str(Path(__file__).parent / "static" / "favicon-32x32.png")
 st.set_page_config(
     page_title="ObsiRAG",
     page_icon=_icon,
