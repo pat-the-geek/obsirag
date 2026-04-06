@@ -17,19 +17,18 @@ st.set_page_config(
 
 svc = get_services()
 
-# ---- Statut auto-learner (fragment sidebar, défini hors du with pour éviter le re-run hors contexte) ----
+# ---- Statut auto-learner (fragment appelé depuis sidebar) ----
 @st.fragment(run_every=5)
 def _autolearn_live_status():
     ps = svc.learner.processing_status
     if ps.get("active"):
         note = ps.get("note", "")
         step = ps.get("step", "")
-        with st.sidebar:
-            st.info(f"⚙️ **Traitement en cours**\n\n📄 *{note}*\n\n`{step}`")
-            log_entries = ps.get("log", [])
-            if log_entries:
-                with st.expander("📋 Journal de traitement", expanded=True):
-                    st.code("\n".join(log_entries[-10:]), language=None)
+        st.info(f"⚙️ **Traitement en cours**\n\n📄 *{note}*\n\n`{step}`")
+        log_entries = ps.get("log", [])
+        if log_entries:
+            with st.expander("📋 Journal de traitement", expanded=True):
+                st.code("\n".join(log_entries[-10:]), language=None)
 
 # ---- Sidebar ----
 with st.sidebar:
