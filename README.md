@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="https://raw.githubusercontent.com/pat-the-geek/obsirag/main/src/ui/static/android-chrome-512x512.png" alt="ObsiRAG" width="120" />
+</p>
+
 # ObsiRAG
 
 Un système RAG (Retrieval-Augmented Generation) local pour votre coffre Obsidian, tournant en Python dans Docker et utilisant l'API de LM Studio comme moteur IA.
