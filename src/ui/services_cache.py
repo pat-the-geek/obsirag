@@ -37,16 +37,40 @@ div[data-testid="stMainBlockContainer"] {
     padding-bottom: 1rem !important;
 }
 </style>
-<link rel="icon" type="image/x-icon" href="/app/static/favicon.ico">
-<link rel="icon" type="image/png" sizes="32x32" href="/app/static/favicon-32x32.png">
-<link rel="icon" type="image/png" sizes="16x16" href="/app/static/favicon-16x16.png">
-<link rel="apple-touch-icon" sizes="180x180" href="/app/static/apple-touch-icon.png">
-<link rel="mask-icon" href="/app/static/safari-pinned-tab.svg" color="#7C3AED">
-<link rel="manifest" href="/app/static/site.webmanifest">
-<meta name="theme-color" content="#7C3AED">
-<meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="ObsiRAG">
+<script>
+(function() {
+  if (document.getElementById('obsirag-head-tags')) return;
+  var head = document.head;
+  var links = [
+    {rel:'icon', type:'image/x-icon', href:'/app/static/favicon.ico'},
+    {rel:'icon', type:'image/png', sizes:'32x32', href:'/app/static/favicon-32x32.png'},
+    {rel:'icon', type:'image/png', sizes:'16x16', href:'/app/static/favicon-16x16.png'},
+    {rel:'apple-touch-icon', sizes:'180x180', href:'/app/static/apple-touch-icon.png'},
+    {rel:'mask-icon', href:'/app/static/safari-pinned-tab.svg', color:'#7C3AED'},
+    {rel:'manifest', href:'/app/static/site.webmanifest'}
+  ];
+  links.forEach(function(attrs) {
+    var el = document.createElement('link');
+    Object.keys(attrs).forEach(function(k) { el.setAttribute(k, attrs[k]); });
+    head.appendChild(el);
+  });
+  var metas = [
+    {name:'theme-color', content:'#7C3AED'},
+    {name:'apple-mobile-web-app-capable', content:'yes'},
+    {name:'apple-mobile-web-app-status-bar-style', content:'black-translucent'},
+    {name:'apple-mobile-web-app-title', content:'ObsiRAG'}
+  ];
+  metas.forEach(function(attrs) {
+    var el = document.createElement('meta');
+    Object.keys(attrs).forEach(function(k) { el.setAttribute(k, attrs[k]); });
+    head.appendChild(el);
+  });
+  var sentinel = document.createElement('span');
+  sentinel.id = 'obsirag-head-tags';
+  sentinel.style.display = 'none';
+  document.body.appendChild(sentinel);
+})();
+</script>
 """
 
 
