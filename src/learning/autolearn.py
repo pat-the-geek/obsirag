@@ -63,6 +63,30 @@ _WEAK_ANSWER_PATTERNS = re.compile(
 )
 _MIN_ANSWER_LENGTH = 150  # réponse trop courte = insuffisante
 
+# Mapping type WUDD.ai → préfixe de tag Obsidian
+_WUDDAI_TYPE_TO_PREFIX: dict[str, str] = {
+    "PERSON":  "personne",
+    "ORG":     "org",
+    "GPE":     "lieu",
+    "LOC":     "lieu",
+    "PRODUCT": "produit",
+    "EVENT":   "event",
+    "NORP":    "groupe",
+    "FAC":     "lieu",
+}
+
+# Types affichés dans la galerie d'images des insights (ordre de priorité)
+_WUDDAI_IMAGE_TYPES = ["PERSON", "ORG", "GPE", "PRODUCT"]
+
+
+def _normalize_entity_name(text: str) -> str:
+    """Normalise un nom d'entité pour la comparaison (minuscules, sans accents)."""
+    text = text.lower().strip()
+    text = unicodedata.normalize("NFD", text)
+    text = "".join(c for c in text if unicodedata.category(c) != "Mn")
+    text = re.sub(r"[^\w\s]", "", text)
+    return re.sub(r"\s+", " ", text).strip()
+
 
 _SEMANTIC_FIELD_PROMPT = """<contenu>
 {content}
@@ -581,9 +605,121 @@ class AutoLearner:
             logger.debug(f"Génération de questions échouée : {exc}")
             return []
 
+    def _load_wuddai_entities(self) -> list[dict]:
+        """Retourne la liste des entités officielles WUDD.ai (cache disque 24h)."""
+        cache_file = settings.data_dir / "wuddai_entities_cache.json"
+        if cache_file.exists():
+            try:
+                cached = json.loads(cache_file.read_text(encoding="utf-8"))
+                fetched_at = datetime.fromisoformat(cached.get("fetched_at", "2000-01-01"))
+                if datetime.utcnow() - fetched_at < timedelta(hours=24):
+                    return cached["entities"]
+            except Exception:
+                pass
+        try:
+            import urllib.request
+            url = f"{settings.wuddai_entities_url}/api/entities/export?limit=5000&images=true"
+            req = urllib.request.Request(url, headers={"User-Agent": "ObsiRAG/1.0"})
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+            entities = [
+                {
+                    "type":             e["type"],
+                    "value":            e["value"],
+                    "value_normalized": _normalize_entity_name(e["value"]),
+                    "mentions":         e.get("mentions", 0),
+                    "image_url":        e.get("image", {}).get("url") if e.get("image") else None,
+                }
+                for e in data.get("entities", [])
+            ]
+            cache_file.parent.mkdir(parents=True, exist_ok=True)
+            cache_file.write_text(
+                json.dumps({"fetched_at": datetime.utcnow().isoformat(), "entities": entities},
+                           ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+            logger.info(f"WUDD.ai entities cache rafraîchi : {len(entities)} entités")
+            return entities
+        except Exception as exc:
+            logger.warning(f"Impossible de charger les entités WUDD.ai : {exc}")
+            return []
+
+    def _extract_validated_entities(self, text: str) -> tuple[list[str], list[dict]]:
+        """
+        Valide les entités NER du texte contre la liste officielle WUDD.ai.
+        Seules les entités présentes dans WUDD.ai sont retenues.
+        Retourne (tags, entity_images) où entity_images = [{type, value, image_url, mentions}].
+        """
+        wuddai_entities = self._load_wuddai_entities()
+        if not wuddai_entities:
+            # Fallback : extraction spaCy seule sans validation
+            return self._entities_to_tags_spacy(text), []
+
+        # Index par valeur normalisée
+        wuddai_index: dict[str, dict] = {e["value_normalized"]: e for e in wuddai_entities}
+
+        # Extraction spaCy (candidats bruts)
+        try:
+            from src.vault.parser import get_nlp
+            nlp = get_nlp()
+            doc = nlp(text[:10_000])
+            candidates = [(ent.text.strip(), ent.label_) for ent in doc.ents if len(ent.text.strip()) >= 3]
+        except Exception:
+            candidates = []
+
+        tags: list[str] = []
+        entity_images: list[dict] = []
+        seen_tags: set[str] = set()
+        seen_values: set[str] = set()
+
+        for raw_value, _spacy_label in candidates:
+            normalized = _normalize_entity_name(raw_value)
+            if not normalized:
+                continue
+            # Recherche exacte dans l'index WUDD.ai
+            match = wuddai_index.get(normalized)
+            if not match:
+                # Recherche partielle (ex : "OpenAI" ↔ "OpenAI Inc.")
+                for key, entity in wuddai_index.items():
+                    if (normalized in key or key in normalized) and abs(len(normalized) - len(key)) <= 5:
+                        match = entity
+                        break
+            if not match:
+                continue  # entité non officielle : ignorée
+
+            official_value = match["value"]
+            official_type  = match["type"]
+            prefix = _WUDDAI_TYPE_TO_PREFIX.get(official_type)
+            if not prefix:
+                continue
+
+            slug = re.sub(r"[^\w\s-]", "", _normalize_entity_name(official_value))
+            slug = re.sub(r"[\s_]+", "-", slug)
+            tag  = f"{prefix}/{slug}"
+            if tag not in seen_tags:
+                seen_tags.add(tag)
+                tags.append(tag)
+
+            # Collecter l'image pour les types prioritaires
+            if official_type in _WUDDAI_IMAGE_TYPES and match.get("image_url") and official_value not in seen_values:
+                seen_values.add(official_value)
+                entity_images.append({
+                    "type":      official_type,
+                    "value":     official_value,
+                    "image_url": match["image_url"],
+                    "mentions":  match.get("mentions", 0),
+                })
+
+        # Tri : ordre de priorité des types, puis mentions décroissantes
+        entity_images.sort(key=lambda e: (
+            _WUDDAI_IMAGE_TYPES.index(e["type"]) if e["type"] in _WUDDAI_IMAGE_TYPES else 99,
+            -e["mentions"],
+        ))
+        return tags[:20], entity_images
+
     @staticmethod
-    def _entities_to_tags(text: str) -> list[str]:
-        """Extrait les entités NER du texte et les convertit en tags Obsidian."""
+    def _entities_to_tags_spacy(text: str) -> list[str]:
+        """Extraction NER spaCy seule (fallback si WUDD.ai inaccessible)."""
         try:
             from src.vault.parser import get_nlp
             nlp = get_nlp()
@@ -602,8 +738,7 @@ class AutoLearner:
                 elif label in ("LOC", "GPE"):
                     prefix = "lieu"
                 else:
-                    continue  # ignorer les entités MISC pour les tags
-                # Normalise : minuscules, supprime accents, remplace espaces par -
+                    continue
                 slug = unicodedata.normalize("NFD", value.lower())
                 slug = "".join(c for c in slug if unicodedata.category(c) != "Mn")
                 slug = re.sub(r"[^\w\s-]", "", slug).strip()
@@ -615,6 +750,27 @@ class AutoLearner:
             return tags[:20]
         except Exception:
             return []
+
+    @staticmethod
+    def _build_entity_image_gallery(entity_images: list[dict]) -> str:
+        """
+        Construit une table Markdown avec les images des entités principales.
+        Top 1 par type prioritaire (PERSON, ORG, GPE, PRODUCT).
+        """
+        if not entity_images:
+            return ""
+        # Top 1 par type (déjà triées par priorité + mentions)
+        by_type: dict[str, dict] = {}
+        for e in entity_images:
+            if e["type"] not in by_type:
+                by_type[e["type"]] = e
+        selected = [by_type[t] for t in _WUDDAI_IMAGE_TYPES if t in by_type]
+        if not selected:
+            return ""
+        header = " | ".join(f"![{e['value']}]({e['image_url']})" for e in selected)
+        labels = " | ".join(f"**{e['value']}**"                           for e in selected)
+        sep    = " | ".join(":---:"                                        for _ in selected)
+        return f"| {header} |\n| {sep} |\n| {labels} |\n"
 
     # ---- Helpers frontmatter ----
 
@@ -639,6 +795,64 @@ class AutoLearner:
                 elif line.strip() and not line.startswith(" "):
                     in_tags = False
         return tags
+
+    def _fetch_gpe_coordinates(self, entity_name: str) -> tuple[float, float] | None:
+        """Retourne (lat, lng) pour une entité GPE/LOC via Wikipedia, avec cache disque."""
+        cache_file = settings.data_dir / "geocode_cache.json"
+        try:
+            cache: dict = json.loads(cache_file.read_text(encoding="utf-8")) if cache_file.exists() else {}
+        except Exception:
+            cache = {}
+
+        key = _normalize_entity_name(entity_name)
+        if key in cache:
+            return tuple(cache[key]) if cache[key] else None  # type: ignore[return-value]
+
+        coords = None
+        for lang in ("fr", "en"):
+            try:
+                import urllib.request, urllib.parse
+                params = urllib.parse.urlencode({
+                    "action": "query", "prop": "coordinates",
+                    "titles": entity_name, "format": "json", "redirects": "1",
+                })
+                url = f"https://{lang}.wikipedia.org/w/api.php?{params}"
+                req = urllib.request.Request(url, headers={"User-Agent": "ObsiRAG/1.0"})
+                with urllib.request.urlopen(req, timeout=5) as resp:
+                    data = json.loads(resp.read().decode("utf-8"))
+                pages = data.get("query", {}).get("pages", {})
+                for page in pages.values():
+                    c = page.get("coordinates", [])
+                    if c:
+                        coords = (c[0]["lat"], c[0]["lon"])
+                        break
+                if coords:
+                    break
+            except Exception:
+                pass
+
+        cache[key] = list(coords) if coords else None
+        try:
+            cache_file.parent.mkdir(parents=True, exist_ok=True)
+            cache_file.write_text(json.dumps(cache, ensure_ascii=False, indent=2), encoding="utf-8")
+        except Exception:
+            pass
+        return coords
+
+    @staticmethod
+    def _add_location_to_frontmatter(content: str, lat: float, lng: float) -> str:
+        """Ajoute ou remplace le champ `location` dans le frontmatter YAML (format Obsidian Map View)."""
+        location_line = f"location: [{lat:.6f}, {lng:.6f}]"
+        if not content.startswith("---"):
+            return f"---\n{location_line}\n---\n" + content
+        end = content.find("---", 3)
+        if end == -1:
+            return content
+        yaml_block = content[3:end]
+        # Supprimer une éventuelle ligne location existante
+        yaml_lines = [l for l in yaml_block.splitlines() if not l.startswith("location:")]
+        yaml_lines.append(location_line)
+        return "---\n" + "\n".join(yaml_lines) + "\n---" + content[end + 3:]
 
     @staticmethod
     def _merge_frontmatter_tags(content: str, new_tags: list[str]) -> str:
@@ -707,6 +921,7 @@ class AutoLearner:
         qa_pairs: list[dict],
         ner_tags: list[str],
         provenance: str,
+        entity_images: list[dict] | None = None,
     ) -> None:
         """Appende de nouveaux Q&A à un artefact existant et met à jour ses tags NER."""
         content = path.read_text(encoding="utf-8")
@@ -717,12 +932,41 @@ class AutoLearner:
         # Fusionner les nouveaux tags NER dans le frontmatter
         content = self._merge_frontmatter_tags(content, ner_tags)
 
+        # Ajouter la géolocalisation si pas encore présente dans le frontmatter
+        if entity_images and "location:" not in content[:content.find("---", 3) + 3]:
+            gpe_entities = [e for e in entity_images if e["type"] in ("GPE", "LOC")]
+            if gpe_entities:
+                coords = self._fetch_gpe_coordinates(gpe_entities[0]["value"])
+                if coords:
+                    content = self._add_location_to_frontmatter(content, coords[0], coords[1])
+
         # Mettre à jour la ligne "Générée le" → "Mise à jour le"
         content = re.sub(
             r"\*\*(Générée|Mise à jour) le :\*\*.*",
             f"**Mise à jour le :** {datetime.utcnow().strftime('%Y-%m-%d %H:%M')} UTC  ",
             content,
         )
+
+        # Mettre à jour ou insérer la galerie d'images
+        if entity_images:
+            gallery_md = self._build_entity_image_gallery(entity_images)
+            if gallery_md:
+                gallery_block = f"## Entités clés\n\n{gallery_md}\n"
+                if "## Entités clés" in content:
+                    content = re.sub(
+                        r"## Entités clés\n.*?(?=\n---\n|\n## )",
+                        f"## Entités clés\n\n{gallery_md}\n",
+                        content,
+                        flags=re.DOTALL,
+                    )
+                else:
+                    # Insérer avant le premier ## Question
+                    content = re.sub(
+                        r"(## Question 1\b)",
+                        gallery_block + "\n---\n\n" + r"\1",
+                        content,
+                        count=1,
+                    )
 
         def _wikilink(fp: str) -> str:
             return f"[[{fp.removesuffix('.md')}]]"
@@ -783,15 +1027,15 @@ class AutoLearner:
         def _wikilink(fp: str) -> str:
             return f"[[{fp.removesuffix('.md')}]]"
 
-        # Extraction NER sur le contenu QA
+        # Extraction NER sur le contenu QA — validée contre WUDD.ai
         qa_text = " ".join(qa["question"] + " " + qa["answer"] for qa in qa_pairs)
-        ner_tags = self._entities_to_tags(qa_text)
+        ner_tags, entity_images = self._extract_validated_entities(qa_text)
         source_tags = [t for t in note_meta.get("tags", []) if t]
 
         # ---- Vérifier si un artefact existant peut être complété ----
         existing = self._find_existing_insight(note_title, ner_tags)
         if existing:
-            self._append_to_insight(existing, qa_pairs, ner_tags, global_provenance)
+            self._append_to_insight(existing, qa_pairs, ner_tags, global_provenance, entity_images)
             return
 
         # ---- Création d'un nouvel artefact ----
@@ -804,7 +1048,15 @@ class AutoLearner:
 
         all_tags = ["insight"] + source_tags + ner_tags
         fm_tags = "\n".join(f"  - {t}" for t in all_tags)
-        frontmatter = f"---\ntags:\n{fm_tags}\n---\n"
+
+        # Géolocalisation : top entité GPE/LOC par mentions
+        gpe_entities = [e for e in entity_images if e["type"] in ("GPE", "LOC")]
+        coords = None
+        if gpe_entities:
+            coords = self._fetch_gpe_coordinates(gpe_entities[0]["value"])
+
+        fm_location = f"\nlocation: [{coords[0]:.6f}, {coords[1]:.6f}]" if coords else ""
+        frontmatter = f"---\ntags:\n{fm_tags}{fm_location}\n---\n"
 
         source_link = _wikilink(note_meta["file_path"])
         lines = [
@@ -816,6 +1068,18 @@ class AutoLearner:
             f"**Tags source :** {source_tags}  ",
             f"**Provenance :** {global_provenance}",
             "",
+        ]
+
+        # Galerie d'images des entités principales
+        gallery_md = self._build_entity_image_gallery(entity_images)
+        if gallery_md:
+            lines += [
+                "## Entités clés",
+                "",
+                gallery_md,
+            ]
+
+        lines += [
             "---",
             "",
         ]

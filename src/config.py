@@ -23,6 +23,9 @@ class Settings(BaseSettings):
     # NER
     ner_model: str = "xx_ent_wiki_sm"
 
+    # WUDD.ai — entités NER officielles
+    wuddai_entities_url: str = "http://100.72.122.51:5050"
+
     # ChromaDB
     chroma_collection: str = "vault_chunks"
 
