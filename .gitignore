@@ -30,8 +30,8 @@ src/ui/pages/__pycache__/
 
 # Claude / IDE
 .claude/
-*.svg
-src/ui/static/
+# src/ui/static/ is tracked (favicons)
+# obsirag_icon.svg is tracked (source icon)
 
 # Streamlit
 .streamlit/secrets.toml

@@ -1,0 +1,11 @@
+{
+  "name": "ObsiRAG",
+  "short_name": "ObsiRAG",
+  "icons": [
+    { "src": "/app/static/android-chrome-192x192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/app/static/android-chrome-512x512.png", "sizes": "512x512", "type": "image/png" }
+  ],
+  "theme_color": "#7C3AED",
+  "background_color": "#0F0F1A",
+  "display": "standalone"
+}

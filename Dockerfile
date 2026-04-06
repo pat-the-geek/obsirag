@@ -25,6 +25,7 @@ RUN python -m spacy download xx_ent_wiki_sm
 # Code applicatif
 COPY src/ src/
 COPY .streamlit/ .streamlit/
+COPY obsirag_icon.svg obsirag_icon.svg
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
