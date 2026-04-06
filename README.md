@@ -63,6 +63,24 @@ Avant de générer des questions, l'auto-learner extrait le champ sémantique de
 
 Ce champ est injecté comme contrainte explicite dans le prompt de génération, garantissant que les questions — et donc les insights produits — restent dans le même univers thématique que la note source. Une note sur la *finance comportementale* génère des questions sur les biais cognitifs et non sur un sujet adjacent que le LLM pourrait dériver.
 
+#### Entités nommées (NER) — validation WUDD.ai
+
+Chaque insight généré est enrichi avec des **entités nommées validées** (personnes, organisations, pays, produits) issues de la liste officielle [WUDD.ai](http://100.72.122.51:5050). Le processus :
+
+1. Extrait les entités candidates par analyse spaCy du texte Q&A
+2. Valide chaque entité contre la liste officielle WUDD.ai (top 5 000 entités, triées par fréquence de mention) — les entités non reconnues sont ignorées
+3. Génère les **tags Obsidian** (`personne/`, `org/`, `lieu/`, `produit/`…) en utilisant le nom canonique officiel
+4. Insère une **galerie d'images** (table Markdown) avec la photo/logo de l'entité principale par type (PERSON, ORG, GPE, PRODUCT), depuis le cache Wikimedia de WUDD.ai
+5. Injecte **`location: [lat, lng]`** dans le frontmatter YAML pour la géolocalisation Obsidian Map View (coordonnées Wikipedia)
+
+> **Dépendance externe :** WUDD.ai doit être accessible sur `WUDDAI_ENTITIES_URL` (configurable dans `.env`). En cas d'indisponibilité, l'extraction spaCy seule est utilisée en fallback — les insights sont créés mais sans validation officielle. La liste est mise en cache localement pendant 24h.
+
+Pour migrer les insights existants (tags + géolocalisation + galeries) :
+```bash
+docker exec obsirag python3 /app/scripts/migrate_insight_tags.py --dry-run  # simulation
+docker exec obsirag python3 /app/scripts/migrate_insight_tags.py              # application
+```
+
 ### Page Insights
 
 Consultation des artefacts, synapses et synthèses générés, avec :
@@ -145,6 +163,8 @@ Les embeddings sont gérés **localement** par `sentence-transformers` (`paraphr
 | Interface          | Streamlit                                                          |
 | Graphe             | NetworkX + Pyvis                                                   |
 | Recherche web      | DuckDuckGo Search (sources fiables)                                |
+| Entités NER        | spaCy + validation [WUDD.ai](http://100.72.122.51:5050) (top 5 000 entités officielles) |
+| Géolocalisation    | Wikipedia Coordinates API → frontmatter `location:` (Obsidian Map View) |
 | Coffre             | Obsidian (lecture seule)                                           |
 | Artefacts générés  | `obsirag/insights/`, `obsirag/synthesis/`, `obsirag/synapses/`     |
 
