@@ -237,7 +237,7 @@ class AutoLearner:
         """Met à jour le statut de traitement (thread-safe)."""
         log = self.processing_status["log"]
         if step:
-            log.append(f"{datetime.utcnow().strftime('%H:%M:%S')} — {step}")
+            log.append(f"{datetime.now().strftime('%H:%M:%S')} — {step}")
             if len(log) > 20:  # garder les 20 derniers messages
                 log.pop(0)
         self.processing_status.update({"active": active, "note": note, "step": step})
@@ -951,7 +951,7 @@ class AutoLearner:
         # Mettre à jour la ligne "Générée le" → "Mise à jour le"
         content = re.sub(
             r"\*\*(Générée|Mise à jour) le :\*\*.*",
-            f"**Mise à jour le :** {datetime.utcnow().strftime('%Y-%m-%d %H:%M')} UTC  ",
+            f"**Mise à jour le :** {datetime.now().strftime('%Y-%m-%d %H:%M')}  ",
             content,
         )
 
@@ -1047,12 +1047,12 @@ class AutoLearner:
             return
 
         # ---- Création d'un nouvel artefact ----
-        date_str = datetime.utcnow().strftime("%Y-%m")
+        date_str = datetime.now().strftime("%Y-%m")
         artifact_dir = settings.insights_dir / date_str
         artifact_dir.mkdir(parents=True, exist_ok=True)
 
         safe_name = re.sub(r"[^\w\s-]", "", note_title).strip().replace(" ", "_")[:60]
-        artifact_path = artifact_dir / f"{safe_name}_{datetime.utcnow().strftime('%Y%m%d')}.md"
+        artifact_path = artifact_dir / f"{safe_name}_{datetime.now().strftime('%Y%m%d')}.md"
 
         all_tags = ["insight"] + source_tags + ner_tags
         fm_tags = "\n".join(f"  - {t}" for t in all_tags)
