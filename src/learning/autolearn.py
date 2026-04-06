@@ -29,6 +29,11 @@ _WEAK_ANSWER_PATTERNS = re.compile(
     r"je ne sais pas|pas d.information|pas mentionné|pas trouvé|"
     r"aucune information|impossible de répondre|don't know|no information|"
     r"not found|cannot answer|"
+    # Variantes "je ne peux pas répondre"
+    r"je ne peux pas (répondre|traiter|aborder|analyser|fournir|donner)|"
+    r"il m.est (impossible|difficile) de (répondre|déterminer|évaluer|analyser)|"
+    r"en me basant (uniquement |)sur (les extraits|les notes|le contexte|les documents)|"
+    r"uniquement (sur|à partir d[eu]) (les |ces )?(extraits|notes|documents|informations) (fourni|disponible|présent)|"
     r"aucune? (critique|mention|référence|donnée|détail|élément|source|réponse|note|information|résultat|contenu|extrait|passage|texte|document|analyse|explication|précision|contexte|indice|lien|connexion|rapport|étude|exemple|preuve|argument|base|fondement|indication|trace|occurrence|cas|fait|observation|constat|insight|réponse spécifique)|"
     r"n.a pas (été|pu|trouvé|mentionné|abordé|traité|évoqué|discuté|inclus|précisé|détaillé|expliqué|analysé)|"
     r"les (extraits?|notes?|documents?|textes?) (ne |n.)(contiennent?|mentionnent?|incluent?|précisent?|détaillent?|abordent?|traitent?|évoquent?|discutent?|fournissent?|donnent?|parlent?|font? (pas )?mention)|"
@@ -46,11 +51,23 @@ _WEAK_ANSWER_PATTERNS = re.compile(
 _MIN_ANSWER_LENGTH = 150  # réponse trop courte = insuffisante
 
 
-_QUESTION_PROMPT = """<contenu>
+_SEMANTIC_FIELD_PROMPT = """<contenu>
 {content}
 </contenu>
 
-En te basant EXACTEMENT sur le sujet de ce contenu, génère 3 questions en français qui permettent d'approfondir CE SUJET PRÉCIS avec des données externes récentes : chiffres du marché, études scientifiques, comparaisons, impacts mesurables, évolutions récentes. Les questions doivent rester dans le même domaine que le contenu. Une par ligne, rien d'autre.
+Identifie le champ sémantique de ce contenu. Réponds UNIQUEMENT avec cette ligne au format exact :
+"Domaine: [domaine principal] | Concepts: [concept1, concept2, concept3] | Angle: [angle spécifique traité]"
+Rien d'autre."""
+
+_QUESTION_PROMPT = """<champ_semantique>
+{semantic_field}
+</champ_semantique>
+
+<contenu>
+{content}
+</contenu>
+
+En te basant STRICTEMENT sur ce champ sémantique et ce contenu, génère 3 questions en français pour approfondir CE SUJET PRÉCIS avec des données externes récentes (chiffres, études, comparaisons, impacts mesurables, évolutions). Chaque question doit rester alignée avec le domaine et les concepts identifiés dans le champ sémantique. Une par ligne, rien d'autre.
 Q1:
 Q2:
 Q3:"""
@@ -208,7 +225,9 @@ class AutoLearner:
             return
 
         content_preview = "\n\n".join(c["text"] for c in chunks[:3])
-        questions = self._generate_questions(content_preview)
+        semantic_field = self._extract_semantic_field(content_preview)
+        time.sleep(5)
+        questions = self._generate_questions(content_preview, semantic_field)
         if not questions:
             logger.warning(f"Auto-learner : aucune question générée pour '{title}'")
             return
@@ -255,8 +274,11 @@ class AutoLearner:
                     answer, sources = self._rag.query(question)
                     web_results = []
                     provenance = "Coffre"
-                    if self._is_weak_answer(answer):
-                        logger.debug(f"Réponse faible sans web pour '{question[:60]}'")
+
+                # Rejeter les réponses faibles ou génériques
+                if self._is_weak_answer(answer):
+                    logger.debug(f"Réponse faible ignorée pour '{question[:60]}'")
+                    continue
 
                 qa_pairs.append({
                     "question": question,
@@ -421,9 +443,29 @@ class AutoLearner:
             logger.debug(f"Enrichissement web échoué : {exc}")
             return rag_answer
 
-    def _generate_questions(self, content: str) -> list[str]:
+    def _extract_semantic_field(self, content: str) -> str:
+        """Détermine le champ sémantique du contenu pour contraindre la génération de questions."""
         try:
-            prompt = _QUESTION_PROMPT.format(content=content[:3000])
+            prompt = _SEMANTIC_FIELD_PROMPT.format(content=content[:2000])
+            result = self._rag._llm.chat(
+                [{"role": "user", "content": prompt}],
+                temperature=0.1,
+                max_tokens=150,
+                operation="autolearn_semantic_field",
+            )
+            field = result.strip().strip('"')
+            logger.debug(f"Champ sémantique détecté : {field[:120]}")
+            return field
+        except Exception as exc:
+            logger.debug(f"Extraction du champ sémantique échouée : {exc}")
+            return ""
+
+    def _generate_questions(self, content: str, semantic_field: str = "") -> list[str]:
+        try:
+            prompt = _QUESTION_PROMPT.format(
+                content=content[:3000],
+                semantic_field=semantic_field or "Non déterminé",
+            )
             answer = self._rag._llm.chat(
                 [{"role": "user", "content": prompt}],
                 temperature=0.7,

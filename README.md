@@ -49,6 +49,8 @@ Un processus léger tourne en arrière-plan et :
 
 > Les artefacts générés sont indexés et deviennent eux-mêmes interrogeables dans le chat.
 
+Le système est conçu pour fonctionner **sans pénaliser l'utilisation normale de la machine** : les appels LLM sont espacés (pause configurable entre chaque note et chaque question), le nombre de notes traitées par cycle est limité, et tout tourne dans un thread d'arrière-plan isolé dans Docker. La machine reste pleinement disponible pendant le traitement.
+
 ### Page Insights
 
 Consultation des artefacts, synapses et synthèses générés, avec historique des requêtes posées dans le chat.
@@ -76,6 +78,7 @@ Une note génère un insight lorsque :
 4. La réponse n'est pas détectée comme vide ou générique (filtres anti-réponse-creuse)
 
 L'insight est sauvegardé dans `obsirag/insights/YYYY-MM/` avec :
+
 - Les questions générées et leurs réponses
 - La provenance (Web, Coffre, ou Web+Coffre)
 - Une synthèse des sources web lorsque des URLs ont été récupérées et analysées
