@@ -45,7 +45,19 @@ _WEAK_ANSWER_PATTERNS = re.compile(
     r"il n.y a (pas|aucun)|"
     r"je ne trouve (pas|aucune?)|"
     r"context(e)? ne (fournit|donne|contient|précise|inclut|mentionne)|"
-    r"notes (consultées|fournis) (indiquent|précisent|mentionnent).{0,80}(aucun|pas|ne )",
+    r"notes (consultées|fournis) (indiquent|précisent|mentionnent).{0,80}(aucun|pas|ne )|"
+    # Variantes "extraits/notes fournis ne contiennent pas/aucune information"
+    r"(extraits?|notes?) (de notes? )?fourni[se]? ne contiennent? (pas|aucune?)|"
+    r"(extraits?|notes?) fourni[se]? ne contiennent? pas (d.études?|de données?|d.informations?)|"
+    # "je ne peux pas répondre de manière exhaustive"
+    r"je ne peux pas (répondre|traiter|aborder|analyser|fournir) de manière exhaustive|"
+    r"de manière exhaustive (à votre question|car)|"
+    # "ni de données précises" / "ni d'études récentes"
+    r"ni de (données? précises?|études? récentes?|informations? (précises?|suffisantes?))|"
+    # "ne contiennent pas d'études/données"
+    r"ne contiennent? pas (d.études?|de données? (précises?|récentes?|comparatives?)|d.informations? (sur|concernant|relatives?))|"
+    # "répondre de façon exhaustive / complète"
+    r"(répondre|traiter|aborder).{0,30}(de façon|de manière) (exhaustive|complète|précise) (à |sur )?(cette|votre|la )?question",
     re.IGNORECASE,
 )
 _MIN_ANSWER_LENGTH = 150  # réponse trop courte = insuffisante
