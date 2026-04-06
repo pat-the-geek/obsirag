@@ -29,6 +29,23 @@ def _autolearn_live_status():
         if log_entries:
             st.caption("📋 **Journal de traitement**")
             st.code("\n".join(log_entries), language=None)
+    else:
+        log_entries = ps.get("log", [])
+        if log_entries:
+            st.success("✅ **Dernier traitement terminé**")
+            st.caption("📋 **Journal**")
+            st.code("\n".join(log_entries), language=None)
+        else:
+            try:
+                job = svc.learner._scheduler.get_job("autolearn_cycle")
+                if job and job.next_run_time:
+                    from zoneinfo import ZoneInfo
+                    import os
+                    tz = ZoneInfo(os.environ.get("TZ", "UTC"))
+                    next_run = job.next_run_time.astimezone(tz).strftime("%H:%M:%S")
+                    st.caption(f"⏳ Prochain cycle : **{next_run}**")
+            except Exception:
+                pass
 
 # ---- Sidebar ----
 with st.sidebar:
