@@ -39,36 +39,67 @@ div[data-testid="stMainBlockContainer"] {
 </style>
 <script>
 (function() {
-  if (document.getElementById('obsirag-head-tags')) return;
-  var head = document.head;
-  var links = [
-    {rel:'icon', type:'image/x-icon', href:'/app/static/favicon.ico'},
-    {rel:'icon', type:'image/png', sizes:'32x32', href:'/app/static/favicon-32x32.png'},
-    {rel:'icon', type:'image/png', sizes:'16x16', href:'/app/static/favicon-16x16.png'},
-    {rel:'apple-touch-icon', sizes:'180x180', href:'/app/static/apple-touch-icon.png'},
-    {rel:'mask-icon', href:'/app/static/safari-pinned-tab.svg', color:'#7C3AED'},
-    {rel:'manifest', href:'/app/static/site.webmanifest'}
-  ];
-  links.forEach(function(attrs) {
-    var el = document.createElement('link');
-    Object.keys(attrs).forEach(function(k) { el.setAttribute(k, attrs[k]); });
-    head.appendChild(el);
+  var ICON_URL = '/app/static/apple-touch-icon.png';
+  var MANIFEST_URL = '/app/static/site.webmanifest';
+  var MASK_URL = '/app/static/safari-pinned-tab.svg';
+  var FAVICON_ICO = '/app/static/favicon.ico';
+  var FAVICON_32 = '/app/static/favicon-32x32.png';
+  var FAVICON_16 = '/app/static/favicon-16x16.png';
+
+  function applyHeadTags() {
+    var head = document.head;
+
+    // Remove any existing icons/manifest injected by Streamlit or us
+    head.querySelectorAll('link[rel*="icon"], link[rel="manifest"], link[rel="mask-icon"], meta[name="theme-color"], meta[name="apple-mobile-web-app"]').forEach(function(el) { el.remove(); });
+
+    var links = [
+      {rel:'icon', type:'image/x-icon', href:FAVICON_ICO},
+      {rel:'icon', type:'image/png', sizes:'32x32', href:FAVICON_32},
+      {rel:'icon', type:'image/png', sizes:'16x16', href:FAVICON_16},
+      {rel:'apple-touch-icon', sizes:'180x180', href:ICON_URL},
+      {rel:'mask-icon', href:MASK_URL, color:'#7C3AED'},
+      {rel:'manifest', href:MANIFEST_URL}
+    ];
+    links.forEach(function(attrs) {
+      var el = document.createElement('link');
+      Object.keys(attrs).forEach(function(k) { el.setAttribute(k, attrs[k]); });
+      head.appendChild(el);
+    });
+
+    var metas = [
+      {name:'theme-color', content:'#7C3AED'},
+      {name:'apple-mobile-web-app-capable', content:'yes'},
+      {name:'apple-mobile-web-app-status-bar-style', content:'black-translucent'},
+      {name:'apple-mobile-web-app-title', content:'ObsiRAG'}
+    ];
+    metas.forEach(function(attrs) {
+      var el = document.createElement('meta');
+      Object.keys(attrs).forEach(function(k) { el.setAttribute(k, attrs[k]); });
+      head.appendChild(el);
+    });
+  }
+
+  // Apply immediately
+  applyHeadTags();
+
+  // Watch for Streamlit overwriting our tags and re-apply
+  var _applying = false;
+  var observer = new MutationObserver(function(mutations) {
+    if (_applying) return;
+    var relevant = mutations.some(function(m) {
+      return Array.from(m.addedNodes).some(function(n) {
+        return n.nodeName === 'LINK' || n.nodeName === 'META';
+      }) || Array.from(m.removedNodes).some(function(n) {
+        return n.nodeName === 'LINK' || n.nodeName === 'META';
+      });
+    });
+    if (relevant) {
+      _applying = true;
+      applyHeadTags();
+      setTimeout(function() { _applying = false; }, 100);
+    }
   });
-  var metas = [
-    {name:'theme-color', content:'#7C3AED'},
-    {name:'apple-mobile-web-app-capable', content:'yes'},
-    {name:'apple-mobile-web-app-status-bar-style', content:'black-translucent'},
-    {name:'apple-mobile-web-app-title', content:'ObsiRAG'}
-  ];
-  metas.forEach(function(attrs) {
-    var el = document.createElement('meta');
-    Object.keys(attrs).forEach(function(k) { el.setAttribute(k, attrs[k]); });
-    head.appendChild(el);
-  });
-  var sentinel = document.createElement('span');
-  sentinel.id = 'obsirag-head-tags';
-  sentinel.style.display = 'none';
-  document.body.appendChild(sentinel);
+  observer.observe(document.head, {childList: true});
 })();
 </script>
 """
