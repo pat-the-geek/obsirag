@@ -41,19 +41,29 @@ Visualisation interactive des connexions entre vos notes (wikilinks et similarit
 Un processus léger tourne en arrière-plan et :
 
 1. Détecte les notes récemment modifiées dans le coffre
-2. Génère automatiquement des questions perspicaces sur le contenu
-3. Répond via RAG sur le coffre — et **complète avec le web** si la réponse est insuffisante
-4. N'utilise que des **sources fiables** (Wikipédia, presse de référence, institutions, revues scientifiques…)
-5. Sauvegarde les insights en Markdown dans `obsirag/insights/` avec indication de provenance et **références citées**
-6. Génère une **synthèse hebdomadaire** le dimanche dans `obsirag/synthesis/`
+2. **Détermine le champ sémantique** de chaque note (domaine, concepts-clés, angle traité) pour ancrer la génération dans le bon univers lexical
+3. Génère des questions perspicaces **strictement alignées avec ce champ sémantique**
+4. Répond via RAG sur le coffre — et **complète avec le web** si la réponse est insuffisante
+5. N'utilise que des **sources fiables** (Wikipédia, presse de référence, institutions, revues scientifiques…)
+6. Sauvegarde les insights en Markdown dans `obsirag/insights/` avec indication de provenance et **références citées**
+7. Génère une **synthèse hebdomadaire** le dimanche dans `obsirag/synthesis/`
 
 > Les artefacts générés sont indexés et deviennent eux-mêmes interrogeables dans le chat.
 
 Le système est conçu pour fonctionner **sans pénaliser l'utilisation normale de la machine** : les appels LLM sont espacés (pause configurable entre chaque note et chaque question), le nombre de notes traitées par cycle est limité, et tout tourne dans un thread d'arrière-plan isolé dans Docker. La machine reste pleinement disponible pendant le traitement.
 
+#### Alignement sémantique des questions
+
+Avant de générer des questions, l'auto-learner extrait le champ sémantique de la note :
+> `Domaine: [domaine principal] | Concepts: [concept1, concept2, concept3] | Angle: [angle spécifique]`
+
+Ce champ est injecté comme contrainte explicite dans le prompt de génération, garantissant que les questions — et donc les insights produits — restent dans le même univers thématique que la note source. Une note sur la *finance comportementale* génère des questions sur les biais cognitifs et non sur un sujet adjacent que le LLM pourrait dériver.
+
 ### Page Insights
 
-Consultation des artefacts, synapses et synthèses générés, avec historique des requêtes posées dans le chat.
+Consultation des artefacts, synapses et synthèses générés, avec :
+- **Progression & estimation du temps restant** : widget affichant le nombre de notes traitées, restantes, et une estimation de la durée nécessaire pour compléter le traitement — avec heure du prochain cycle en heure locale
+- Historique des requêtes posées dans le chat
 
 ---
 
@@ -108,7 +118,7 @@ ObsiRAG utilise LM Studio comme serveur IA local (API compatible OpenAI). Trois 
 | Usage                       | Opération                                    | Exigences minimales                              |
 | --------------------------- | -------------------------------------------- | ------------------------------------------------ |
 | **Chat / RAG**              | Réponses aux questions sur le coffre         | 7–8B instruct (ex. Llama 3.1 8B, Gemma 4)        |
-| **Génération de questions** | Auto-learner — questions sur chaque note     | Même modèle que le chat                          |
+| **Génération de questions** | Auto-learner — questions ancrées dans le champ sémantique de chaque note | Même modèle que le chat                          |
 | **Synapses & synthèses**    | Connexions implicites, synthèse hebdomadaire | Même modèle que le chat                          |
 
 > Un seul modèle de chat suffit pour tout. Configurer `LMSTUDIO_CHAT_MODEL` dans `.env` avec le nom exact du modèle chargé dans LM Studio.
