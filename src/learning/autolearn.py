@@ -775,16 +775,29 @@ class AutoLearner:
     # ---- Helpers frontmatter ----
 
     @staticmethod
+    def _fm_end(content: str) -> int:
+        """Position du 1er caractère après la ligne de fermeture --- du frontmatter.
+        Utilise ^---$ (début de ligne) pour éviter les faux positifs. Retourne -1 si absent."""
+        if not content.startswith("---"):
+            return -1
+        matches = list(re.finditer(r"^---[ \t]*$", content, re.MULTILINE))
+        if len(matches) < 2:
+            return -1
+        end = matches[1].end()
+        if end < len(content) and content[end] == "\n":
+            end += 1
+        return end
+
+    @staticmethod
     def _read_frontmatter_tags(content: str) -> list[str]:
         """Extrait les tags du frontmatter YAML d'un fichier Markdown."""
-        if not content.startswith("---"):
-            return []
-        end = content.find("---", 3)
+        end = AutoLearner._fm_end(content)
         if end == -1:
             return []
+        yaml_block = content[3:end]
         tags: list[str] = []
         in_tags = False
-        for line in content[3:end].splitlines():
+        for line in yaml_block.splitlines():
             if re.match(r"^tags\s*:", line):
                 in_tags = True
                 continue
@@ -843,16 +856,14 @@ class AutoLearner:
     def _add_location_to_frontmatter(content: str, lat: float, lng: float) -> str:
         """Ajoute ou remplace le champ `location` dans le frontmatter YAML (format Obsidian Map View)."""
         location_line = f"location: [{lat:.6f}, {lng:.6f}]"
-        if not content.startswith("---"):
-            return f"---\n{location_line}\n---\n" + content
-        end = content.find("---", 3)
+        end = AutoLearner._fm_end(content)
         if end == -1:
-            return content
+            return f"---\n{location_line}\n---\n" + content
         yaml_block = content[3:end]
-        # Supprimer une éventuelle ligne location existante
         yaml_lines = [l for l in yaml_block.splitlines() if not l.startswith("location:")]
         yaml_lines.append(location_line)
-        return "---\n" + "\n".join(yaml_lines) + "\n---" + content[end + 3:]
+        body = content[end:]
+        return "---\n" + "\n".join(yaml_lines) + "\n---\n" + body
 
     @staticmethod
     def _merge_frontmatter_tags(content: str, new_tags: list[str]) -> str:
@@ -862,14 +873,11 @@ class AutoLearner:
         for t in new_tags:
             if t not in merged:
                 merged.append(t)
-        if not content.startswith("---"):
-            fm = "---\ntags:\n" + "\n".join(f"  - {t}" for t in merged) + "\n---\n"
-            return fm + content
-        end = content.find("---", 3)
+        fm = "---\ntags:\n" + "\n".join(f"  - {t}" for t in merged) + "\n---\n"
+        end = AutoLearner._fm_end(content)
         if end == -1:
-            return content
-        fm = "---\ntags:\n" + "\n".join(f"  - {t}" for t in merged) + "\n---"
-        return fm + content[end + 3:]
+            return fm + content
+        return fm + content[end:]
 
     # ---- Recherche et mise à jour d'artefacts existants ----
 

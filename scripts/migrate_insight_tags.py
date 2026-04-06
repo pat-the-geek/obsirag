@@ -152,15 +152,33 @@ def fetch_coordinates(entity_name: str) -> tuple[float, float] | None:
 
 
 # ── Frontmatter helpers ────────────────────────────────────────────────────────
+def _fm_end(content: str) -> int:
+    """
+    Retourne la position du premier caractère APRÈS la ligne de fermeture ---
+    du frontmatter YAML. Retourne -1 si pas de frontmatter valide.
+    Utilise ^---$ (start-of-line) pour éviter les faux positifs dans le contenu.
+    """
+    if not content.startswith("---"):
+        return -1
+    matches = list(re.finditer(r"^---[ \t]*$", content, re.MULTILINE))
+    if len(matches) < 2:
+        return -1
+    # matches[0] = ouverture, matches[1] = fermeture
+    end = matches[1].end()
+    if end < len(content) and content[end] == "\n":
+        end += 1
+    return end
+
 def read_frontmatter_tags(content: str) -> list[str]:
     if not content.startswith("---"):
         return []
-    end = content.find("---", 3)
+    end = _fm_end(content)
     if end == -1:
         return []
+    yaml_block = content[3:end]  # entre opening --- et fin du FM
     tags: list[str] = []
     in_tags = False
-    for line in content[3:end].splitlines():
+    for line in yaml_block.splitlines():
         if re.match(r"^tags\s*:", line):
             in_tags = True
             continue
@@ -179,13 +197,17 @@ def rewrite_frontmatter(content: str, new_tags: list[str],
     fm_tags = "\n".join(f"  - {t}" for t in new_tags)
     location_line = (f"\nlocation: [{coords[0]:.6f}, {coords[1]:.6f}]"
                      if coords else "")
-    new_fm = f"---\ntags:\n{fm_tags}{location_line}\n---"
-    if not content.startswith("---"):
-        return new_fm + "\n" + content
-    end = content.find("---", 3)
+    new_fm = f"---\ntags:\n{fm_tags}{location_line}\n---\n"
+    end = _fm_end(content)
     if end == -1:
-        return new_fm + "\n" + content
-    return new_fm + content[end + 3:]
+        return new_fm + content
+    # content[end:] = tout ce qui suit la ligne --- de fermeture
+    body = content[end:]
+    # Supprimer une éventuelle section ## Entités clés au début du body
+    # (vestige d'une migration précédente corrompue)
+    body = re.sub(r"^\s*## Entités clés.*?(?=\n#|\n---\n|\Z)", "", body,
+                  flags=re.DOTALL)
+    return new_fm + body.lstrip("\n")
 
 
 # ── Galerie d'images ───────────────────────────────────────────────────────────
@@ -206,24 +228,22 @@ def build_gallery(entity_images: list[dict]) -> str:
 
 
 def inject_gallery(content: str, gallery_md: str) -> str:
-    """Insère ou remplace la section ## Entités clés dans le fichier."""
+    """Insère ou remplace la section ## Entités clés APRÈS le frontmatter."""
     if not gallery_md:
         return content
     gallery_block = f"## Entités clés\n\n{gallery_md}\n"
     if "## Entités clés" in content:
         return re.sub(
-            r"## Entités clés\n.*?(?=\n---\n|\n## )",
+            r"## Entités clés\n.*?(?=\n#|\n---\n|\Z)",
             f"## Entités clés\n\n{gallery_md}\n",
             content,
             flags=re.DOTALL,
         )
-    # Insérer après le header H1 et les méta (avant le premier ---)
-    return re.sub(
-        r"(\n---\n)",
-        f"\n{gallery_block}---\n",
-        content,
-        count=1,
-    )
+    # Insérer APRÈS la fermeture --- du frontmatter
+    end = _fm_end(content)
+    if end != -1:
+        return content[:end] + gallery_block + "\n" + content[end:]
+    return gallery_block + "\n" + content
 
 
 # ── Migration d'un fichier ─────────────────────────────────────────────────────
