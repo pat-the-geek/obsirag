@@ -71,16 +71,19 @@ with st.sidebar:
     import json
     from src.config import settings as _s
     _pf = _s.processed_notes_file
-    _processed = len(json.loads(_pf.read_text(encoding="utf-8"))) if _pf.exists() else 0
+    _processed_map = json.loads(_pf.read_text(encoding="utf-8")) if _pf.exists() else {}
     _user_notes = [n for n in notes if "/obsirag/" not in n["file_path"].replace("\\", "/") and not n["file_path"].replace("\\", "/").startswith("obsirag/")]
+    _user_fps = {n["file_path"] for n in _user_notes}
     _total = len(_user_notes)
+    _processed = len([fp for fp in _processed_map if fp in _user_fps])
     _insights = len(list(_s.insights_dir.rglob("*.md"))) if _s.insights_dir.exists() else 0
+    _synapses = len(list(_s.synapses_dir.rglob("*.md"))) if _s.synapses_dir.exists() else 0
     if _processed < _total:
         st.progress(_processed / _total if _total else 0,
                     text=f"Insights {_processed}/{_total} notes")
-        st.caption(f"💡 {_insights} insight(s) générés")
+        st.caption(f"💡 {_insights} insight(s) · ⚡ {_synapses} synapse(s)")
     else:
-        st.caption(f"{_processed}/{_total} notes · 💡 {_insights} insights")
+        st.caption(f"{_processed}/{_total} notes · 💡 {_insights} insights · ⚡ {_synapses} synapses")
 
     # Statut en temps réel de l'auto-learner (rendu par le fragment ci-dessus)
     _autolearn_live_status()
