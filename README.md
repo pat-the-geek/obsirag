@@ -1,4 +1,4 @@
-<p align="center">
+<p align="left">
   <img src="https://raw.githubusercontent.com/pat-the-geek/obsirag/main/src/ui/static/android-chrome-512x512.png" alt="ObsiRAG" width="120" />
 </p>
 
