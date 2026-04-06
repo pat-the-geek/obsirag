@@ -29,8 +29,16 @@ with st.expander("⏱️ Progression & estimation du temps restant", expanded=Tr
         except Exception:
             processed_map = {}
 
-    total_notes = len(svc.chroma.list_notes()) if hasattr(svc, "chroma") else 0
-    processed_count = len(processed_map)
+    total_notes_raw = svc.chroma.list_notes() if hasattr(svc, "chroma") else []
+    # Exclure les notes générées par ObsiRAG (insights, synthesis, synapses)
+    user_notes = [
+        n for n in total_notes_raw
+        if "/obsirag/" not in n["file_path"].replace("\\", "/")
+        and not n["file_path"].replace("\\", "/").startswith("obsirag/")
+    ]
+    total_notes = len(user_notes)
+    user_fps = {n["file_path"] for n in user_notes}
+    processed_count = len([fp for fp in processed_map if fp in user_fps])
     remaining = max(0, total_notes - processed_count)
 
     # Paramètres de vitesse (secondes par note)
