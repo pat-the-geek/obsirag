@@ -1,6 +1,7 @@
 """
 ObsiRAG — Page principale : Chat
 """
+import base64
 import time
 from datetime import datetime
 
@@ -12,6 +13,7 @@ from src.ui.services_cache import get_services
 
 # ---- Configuration de la page ----
 _icon = str(Path(__file__).parent / "static" / "favicon-32x32.png")
+_icon_b64 = base64.b64encode((Path(__file__).parent / "static" / "favicon-32x32.png").read_bytes()).decode()
 st.set_page_config(
     page_title="ObsiRAG",
     page_icon=_icon,
@@ -52,7 +54,12 @@ def _autolearn_live_status():
 
 # ---- Sidebar ----
 with st.sidebar:
-    st.markdown("## 🧠 ObsiRAG")
+    st.markdown(
+        f'<h2 style="display:flex;align-items:center;gap:10px;margin:0">'
+        f'<img src="data:image/png;base64,{_icon_b64}" width="28" style="border-radius:4px">'
+        f'ObsiRAG</h2>',
+        unsafe_allow_html=True,
+    )
     st.caption("Votre coffre Obsidian, augmenté par l'IA locale")
     st.divider()
 
@@ -69,10 +76,10 @@ with st.sidebar:
     _insights = len(list(_s.insights_dir.rglob("*.md"))) if _s.insights_dir.exists() else 0
     if _processed < _total:
         st.progress(_processed / _total if _total else 0,
-                    text=f"🧠 Insights {_processed}/{_total} notes")
+                    text=f"Insights {_processed}/{_total} notes")
         st.caption(f"💡 {_insights} insight(s) générés")
     else:
-        st.caption(f"🧠 {_processed}/{_total} notes · 💡 {_insights} insights")
+        st.caption(f"{_processed}/{_total} notes · 💡 {_insights} insights")
 
     # Statut en temps réel de l'auto-learner (rendu par le fragment ci-dessus)
     _autolearn_live_status()
