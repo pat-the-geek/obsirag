@@ -28,6 +28,11 @@ src/ui/pages/__pycache__/
 # Docker
 .dockerignore
 
+# Claude / IDE
+.claude/
+*.svg
+src/ui/static/
+
 # Streamlit
 .streamlit/secrets.toml
 
