@@ -22,9 +22,31 @@ st.set_page_config(
 
 svc = get_services()
 
-# ---- Statut auto-learner (fragment appelé depuis sidebar) ----
+# ---- Statut auto-learner (fragment auto-rafraîchi toutes les 5s) ----
 @st.fragment(run_every=5)
 def _autolearn_live_status():
+    import json as _json
+    from src.config import settings as _s
+
+    # Compteur notes (recalculé à chaque refresh)
+    _notes = svc.chroma.list_notes()
+    _user_notes = [n for n in _notes if "/obsirag/" not in n["file_path"].replace("\\", "/") and not n["file_path"].replace("\\", "/").startswith("obsirag/")]
+    _user_fps = {n["file_path"] for n in _user_notes}
+    _total = len(_user_notes)
+    _pf = _s.processed_notes_file
+    _processed_map = _json.loads(_pf.read_text(encoding="utf-8")) if _pf.exists() else {}
+    _processed = len([fp for fp in _processed_map if fp in _user_fps])
+    _insights = len(list(_s.insights_dir.rglob("*.md"))) if _s.insights_dir.exists() else 0
+    _synapses = len(list(_s.synapses_dir.rglob("*.md"))) if _s.synapses_dir.exists() else 0
+
+    if _processed < _total:
+        st.progress(_processed / _total if _total else 0,
+                    text=f"Insights {_processed}/{_total} notes")
+        st.caption(f"💡 {_insights} insight(s) · ⚡ {_synapses} synapse(s)")
+    else:
+        st.caption(f"{_processed}/{_total} notes · 💡 {_insights} insights · ⚡ {_synapses} synapses")
+
+    # Statut traitement en cours
     ps = svc.learner.processing_status
     if ps.get("active"):
         note = ps.get("note", "")
@@ -67,25 +89,7 @@ with st.sidebar:
     st.metric("Notes indexées", len(notes))
     st.metric("Chunks vectorisés", svc.chroma.count())
 
-    # Compteur auto-learner (exclut les notes générées par ObsiRAG)
-    import json
-    from src.config import settings as _s
-    _pf = _s.processed_notes_file
-    _processed_map = json.loads(_pf.read_text(encoding="utf-8")) if _pf.exists() else {}
-    _user_notes = [n for n in notes if "/obsirag/" not in n["file_path"].replace("\\", "/") and not n["file_path"].replace("\\", "/").startswith("obsirag/")]
-    _user_fps = {n["file_path"] for n in _user_notes}
-    _total = len(_user_notes)
-    _processed = len([fp for fp in _processed_map if fp in _user_fps])
-    _insights = len(list(_s.insights_dir.rglob("*.md"))) if _s.insights_dir.exists() else 0
-    _synapses = len(list(_s.synapses_dir.rglob("*.md"))) if _s.synapses_dir.exists() else 0
-    if _processed < _total:
-        st.progress(_processed / _total if _total else 0,
-                    text=f"Insights {_processed}/{_total} notes")
-        st.caption(f"💡 {_insights} insight(s) · ⚡ {_synapses} synapse(s)")
-    else:
-        st.caption(f"{_processed}/{_total} notes · 💡 {_insights} insights · ⚡ {_synapses} synapses")
-
-    # Statut en temps réel de l'auto-learner (rendu par le fragment ci-dessus)
+    # Compteur + statut auto-learner (auto-rafraîchi toutes les 5s)
     _autolearn_live_status()
 
     # Progression de l'indexation initiale (thread background)
