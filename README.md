@@ -119,6 +119,35 @@ L'insight est sauvegardé dans `obsirag/insights/YYYY-MM/` avec :
 
 ---
 
+## Comment fonctionne la recherche sémantique
+
+### 1. Découpage en chunks
+
+Une note Obsidian peut être longue et couvrir plusieurs sujets. Pour permettre une recherche précise, chaque note est découpée en **morceaux (chunks)** d'environ 300 mots, avec un léger chevauchement entre chaque morceau pour préserver le contexte aux jonctions.
+
+Le découpage respecte la structure de la note : d'abord par section (`## Titre`), puis par paragraphe, puis par mots si nécessaire. Chaque chunk hérite des métadonnées de la note (titre, tags, dates, wikilinks, entités NER…).
+
+### 2. Vectorisation (embedding)
+
+Chaque chunk est transformé en un **vecteur numérique** — une liste de ~768 nombres — par le modèle `paraphrase-multilingual-MiniLM-L12-v2` (sentence-transformers, exécuté localement). Ce vecteur encode le *sens* du texte : deux passages sémantiquement proches produisent des vecteurs proches dans l'espace mathématique, même s'ils n'ont aucun mot en commun.
+
+### 3. Stockage dans ChromaDB
+
+Les vecteurs et leurs métadonnées sont stockés dans **ChromaDB**, une base vectorielle locale. L'indexation est incrémentale : seules les notes nouvelles ou modifiées sont retraitées.
+
+### 4. Recherche à la requête
+
+Quand vous posez une question dans le chat :
+
+1. La question est elle-même vectorisée
+2. ChromaDB identifie les chunks dont le vecteur est le plus proche → **similarité cosinus**
+3. Ces chunks (vos notes) sont injectés comme contexte dans le prompt envoyé à LM Studio
+4. LM Studio génère une réponse ancrée dans **votre coffre**, pas dans ses seules connaissances pré-entraînées
+
+> C'est ce mécanisme qui permet de retrouver une note sur "les effets des écrans sur le sommeil" en posant la question "comment la lumière bleue affecte-t-elle le repos ?" — sans que ces mots exacts apparaissent dans la note.
+
+---
+
 ## Défi principal : les coffres de grande taille
 
 - Index vectoriel incrémental (mise à jour uniquement des notes nouvelles/modifiées)
