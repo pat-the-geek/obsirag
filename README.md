@@ -119,6 +119,25 @@ L'insight est sauvegardé dans `obsirag/insights/YYYY-MM/` avec :
 
 ---
 
+## Synapses — connexions implicites entre notes
+
+### Pourquoi "synapse" ?
+
+En neurologie, une **synapse** est la jonction entre deux neurones : elle transmet un signal d'un neurone à l'autre, créant une connexion qui n'existait pas de façon anatomique directe. Le terme est utilisé ici par analogie : deux notes de votre coffre sont des "neurones", et ObsiRAG découvre une connexion implicite entre elles — une connexion qui n'a jamais été formalisée par un wikilink.
+
+### Comment ça fonctionne
+
+1. **Détection de paires** : à chaque cycle, ObsiRAG tire aléatoirement des notes du coffre et cherche dans ChromaDB les notes sémantiquement proches (similarité cosinus au-dessus d'un seuil configurable), en excluant celles qui ont déjà un wikilink entre elles
+2. **Mémoire des paires** : chaque paire `Note A ↔ Note B` est mémorisée dans `data/synapse_index.json` — elle ne sera jamais retraitée deux fois
+3. **Génération du texte** : le LLM reçoit un extrait des deux notes et explique en 3 à 5 phrases la connexion implicite qui les unit, ainsi qu'une question à approfondir
+4. **Fichier résultat** : une note Markdown est créée dans `obsirag/synapses/` nommée `{NoteA}__{NoteB}_{date}.md`, avec le score de similarité, la connexion expliquée et les extraits des deux notes sources
+
+### Ce que vous voyez dans Obsidian
+
+Les fichiers synapses contiennent des wikilinks vers chacune des deux notes sources, ce qui les intègre automatiquement dans le **graphe de connaissances** — révélant visuellement des ponts thématiques entre des notes que vous n'auriez peut-être pas rapprochées vous-même.
+
+---
+
 ## Nom et structure des fichiers insights
 
 ### Nom du fichier
