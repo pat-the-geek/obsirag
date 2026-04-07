@@ -22,13 +22,13 @@ tab_config, tab_tokens, tab_index, tab_danger = st.tabs(
 
 # ---- Configuration ----
 with tab_config:
-    st.markdown("### Connexion LM Studio")
+    st.markdown("### Connexion Ollama")
     c1, c2 = st.columns(2)
     c1.text_input("URL de l'API", value=settings.lmstudio_base_url, disabled=True)
     c2.text_input("Modèle de chat", value=settings.lmstudio_chat_model or "(auto)", disabled=True)
 
     llm_ok = svc.llm.is_available()
-    st.markdown(f"**Statut :** {'🟢 LM Studio accessible' if llm_ok else '🔴 LM Studio non accessible'}")
+    st.markdown(f"**Statut :** {'🟢 Ollama accessible' if llm_ok else '🔴 Ollama non accessible'}")
 
     st.divider()
     st.markdown("### Chemins")

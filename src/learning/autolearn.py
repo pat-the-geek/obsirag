@@ -258,12 +258,19 @@ class AutoLearner:
             processed_count = 0
             processed_map = self._load_processed()
 
+            # Seuil commun aux deux passes : ne pas retraiter avant N jours
+            min_reprocess_delta = timedelta(days=settings.autolearn_min_reprocess_days)
+            cutoff_iso = (datetime.utcnow() - min_reprocess_delta).isoformat()
+
             # Pass 1 — notes récemment modifiées (hors notes générées par ObsiRAG)
             since = datetime.utcnow() - timedelta(hours=settings.autolearn_lookback_hours)
             recent = self._chroma.get_recently_modified(since)
             recent_filtered = [
                 n for n in recent
                 if not self._is_obsirag_generated(n["file_path"])
+                and not (
+                    processed_map.get(n["file_path"], "") > cutoff_iso
+                )
             ]
             for note_meta in recent_filtered[: settings.autolearn_max_notes_per_run]:
                 self._wait_for_idle(note_meta.get("title", ""))
@@ -280,10 +287,6 @@ class AutoLearner:
             # Trie : jamais traitées d'abord, puis par date de traitement croissante
             def _sort_key(n: dict) -> str:
                 return processed_map.get(n["file_path"], "")  # "" < toute date ISO
-
-            # Seuil : ne retraiter une note que si elle n'a pas été traitée depuis N jours
-            min_reprocess_delta = timedelta(days=settings.autolearn_min_reprocess_days)
-            cutoff_iso = (datetime.utcnow() - min_reprocess_delta).isoformat()
 
             processed_in_pass1 = {n["file_path"] for n in recent_filtered[: settings.autolearn_max_notes_per_run]}
             pending = sorted(all_notes, key=_sort_key)

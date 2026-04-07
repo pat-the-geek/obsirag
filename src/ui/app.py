@@ -103,7 +103,7 @@ with st.sidebar:
             st.caption(f"…{current[-40:]}" if len(current) > 40 else current)
 
     llm_ok = svc.llm.is_available()
-    st.markdown(f"**LM Studio** : {'🟢 Connecté' if llm_ok else '🔴 Non disponible'}")
+    st.markdown(f"**Ollama** : {'🟢 Connecté' if llm_ok else '🔴 Non disponible'}")
 
     # Dernières stats de génération
     if st.session_state.get("last_gen_stats"):
@@ -134,8 +134,8 @@ st.title("💬 Chat avec votre coffre")
 
 if not llm_ok:
     st.warning(
-        "⚠️ LM Studio n'est pas accessible. "
-        "Vérifiez que le serveur est démarré et que l'URL est correcte dans `.env`."
+        "⚠️ Ollama n'est pas accessible. "
+        "Vérifiez qu'Ollama est démarré et que l'URL est correcte dans `.env`."
     )
 
 if "messages" not in st.session_state:
@@ -193,7 +193,7 @@ user_input = st.chat_input("Posez une question sur votre coffre…") or pending
 
 if user_input:
     if not llm_ok:
-        st.error("LM Studio n'est pas disponible.")
+        st.error("Ollama n'est pas disponible.")
         st.stop()
 
     svc.learner.log_user_query(user_input)
@@ -235,11 +235,11 @@ if user_input:
                 status.markdown(f"📄 *Note {i} sur {len(seen)} — {note}*")
                 time.sleep(0.12)
 
-            # Phase 2 — génération LM Studio
+            # Phase 2 — génération Ollama
             ctx_chars = sum(len(s.get("text", "")) for s in sources)
             ctx_notes = len(seen)
             status.markdown(
-                f"⏳ *LM Studio charge le contexte… "
+                f"⏳ *Ollama charge le contexte… "
                 f"{ctx_notes} note{'s' if ctx_notes > 1 else ''} · "
                 f"~{ctx_chars:,} caractères*"
             )
