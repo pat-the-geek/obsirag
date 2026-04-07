@@ -256,6 +256,20 @@ Les embeddings sont gérés **localement** par `sentence-transformers` (`paraphr
 
 ---
 
+## Fréquence et comportement de l'auto-learner
+
+| Paramètre `.env` | Valeur par défaut | Rôle |
+|---|---|---|
+| `AUTOLEARN_INTERVAL_MINUTES` | **60 min** | Fréquence du cycle — l'auto-learner se réveille toutes les heures |
+| `AUTOLEARN_LOOKBACK_HOURS` | **24 h** | Fenêtre de détection — seules les notes modifiées dans les dernières 24h sont candidates |
+| `AUTOLEARN_MIN_REPROCESS_DAYS` | **7 jours** | Délai de grâce — une note déjà traitée ne sera pas retraitée avant 7 jours |
+
+Le premier cycle démarre **5 minutes après le lancement du container**, pour laisser le temps à LM Studio d'être prêt.
+
+> Ces trois paramètres permettent d'adapter le comportement selon l'usage : un intervalle plus court (ex. 30 min) pour un coffre très actif, un lookback plus large (ex. 48h) pour rattraper des notes modifiées en dehors des heures habituelles, et un `MIN_REPROCESS_DAYS` plus court si vous souhaitez qu'une note soit ré-enrichie plus fréquemment.
+
+---
+
 ## Installation
 
 ```bash
