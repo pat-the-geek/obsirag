@@ -119,6 +119,63 @@ L'insight est sauvegardé dans `obsirag/insights/YYYY-MM/` avec :
 
 ---
 
+## Nom et structure des fichiers insights
+
+### Nom du fichier
+
+Le fichier est nommé automatiquement à partir du titre de la note source :
+
+```
+obsirag/insights/YYYY-MM/{titre_note}_{YYYYMMDD}.md
+```
+
+- Les caractères spéciaux sont supprimés, les espaces remplacés par `_`, le tout tronqué à 60 caractères
+- La date du jour (heure locale) est ajoutée en suffixe
+- Les fichiers sont regroupés par mois dans un sous-dossier `YYYY-MM/`
+
+**Exemple :** une note intitulée "La vitesse des LLMs", traitée le 7 avril 2026, produit :
+`obsirag/insights/2026-04/La_vitesse_des_LLMs_20260407.md`
+
+### Mise à jour vs. création
+
+À chaque cycle, avant de créer un nouveau fichier, ObsiRAG cherche un insight existant pouvant être complété, selon deux critères :
+
+1. **Même note source** : le nom du fichier correspond au titre de la note (priorité maximale)
+2. **Même thématique** : au moins 2 tags entités NER en commun dans le frontmatter
+
+Si un fichier correspondant est trouvé, les nouveaux Q&A sont **ajoutés à la suite** (numérotation continue `## Question N`), la date "Mise à jour le" est rafraîchie, les tags NER sont fusionnés et la galerie d'images mise à jour. Sinon, un nouveau fichier est créé.
+
+### Structure du contenu
+
+```
+---                          ← Frontmatter YAML
+tags:
+  - insight
+  - {tags de la note source}
+  - {entités NER : personne/, org/, lieu/…}
+location: [lat, lng]         ← optionnel, si entité géolocalisable
+---
+
+# Insights : {titre de la note}
+
+**Note source :** [[lien wikilink]]
+**Générée le / Mise à jour le :** {date heure locale}
+**Provenance :** Web | Coffre | Coffre et Web
+
+## Entités clés          ← galerie d'images des entités principales (WUDD.ai)
+
+## Question 1
+> {question générée}
+{réponse LLM}
+*Provenance / Notes consultées / Références web*
+
+## Question 2 …
+
+## Synthèse des sources web   ← si des pages web ont été analysées
+```
+
+---
+
 ## Comment fonctionne la recherche sémantique
 
 ### 1. Découpage en chunks
