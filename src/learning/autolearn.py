@@ -364,17 +364,20 @@ class AutoLearner:
 
                 # 3. Synthèse : web + contexte coffre
                 if web_snippets and self._snippets_relevant(question, web_snippets):
-                    web_context = "\n\n".join(web_snippets[:3])
+                    fitted_rag, fitted_web = self._fit_context(
+                        rag_context,
+                        "\n\n".join(web_snippets[:3]),
+                    )
                     prompt = _WEB_ANSWER_PROMPT.format(
                         question=question,
-                        rag_context=rag_context[:800],
-                        web_context=web_context,
+                        rag_context=fitted_rag,
+                        web_context=fitted_web,
                     )
                     try:
                         answer = self._rag._llm.chat(
                             [{"role": "user", "content": prompt}],
                             temperature=0.3,
-                            max_tokens=4096,
+                            max_tokens=self._MAX_TOKENS_RESPONSE,
                             operation="autolearn_enrich",
                         )
                         provenance = "Web + Coffre" if sources else "Web"
@@ -416,6 +419,42 @@ class AutoLearner:
 
     def _is_weak_answer(self, answer: str) -> bool:
         return len(answer.strip()) < _MIN_ANSWER_LENGTH or bool(_WEAK_ANSWER_PATTERNS.search(answer))
+
+    # Budget de contexte — évite les erreurs "Context size exceeded"
+    _PROMPT_OVERHEAD_CHARS = 400   # overhead fixe du template (question + labels + ponctuation)
+    _MAX_TOKENS_RESPONSE   = 1500  # tokens réservés pour la réponse du modèle
+
+    def _fit_context(
+        self,
+        rag_ctx: str,
+        web_ctx: str,
+        overhead: int = _PROMPT_OVERHEAD_CHARS,
+    ) -> tuple[str, str]:
+        """
+        Tronque rag_ctx et web_ctx pour que le prompt complet respecte la fenêtre
+        de contexte du modèle (settings.lmstudio_context_size).
+
+        Budget = (n_ctx - max_tokens_réponse) × 4 chars/token − overhead
+        Allocation : 30 % pour rag_ctx, 70 % pour web_ctx.
+        """
+        chars_per_token = 4
+        total_budget = (
+            settings.lmstudio_context_size - self._MAX_TOKENS_RESPONSE
+        ) * chars_per_token - overhead
+        total_budget = max(total_budget, 800)  # plancher de sécurité
+
+        rag_budget = int(total_budget * 0.30)
+        web_budget = total_budget - rag_budget
+
+        fitted_rag = rag_ctx[:rag_budget]
+        fitted_web = web_ctx[:web_budget]
+        if len(rag_ctx) > rag_budget or len(web_ctx) > web_budget:
+            logger.debug(
+                f"fit_context : rag {len(rag_ctx)}→{len(fitted_rag)} chars, "
+                f"web {len(web_ctx)}→{len(fitted_web)} chars "
+                f"(budget={total_budget}, n_ctx={settings.lmstudio_context_size})"
+            )
+        return fitted_rag, fitted_web
 
     # Domaines considérés comme fiables
     _TRUSTED_DOMAINS = {
@@ -489,11 +528,12 @@ class AutoLearner:
         if not fetched:
             return ""
 
-        combined = "\n\n".join(fetched)
+        # Budget : tout alloué au contenu web (pas de rag_ctx ici)
+        _, combined_fitted = self._fit_context("", "\n\n".join(fetched), overhead=300)
         prompt = (
             f"Sujet : {note_title}\n\n"
             f"Voici le contenu de {len(fetched)} source(s) web citées dans les insights :\n\n"
-            f"{combined}\n\n"
+            f"{combined_fitted}\n\n"
             f"Rédige une synthèse structurée en français (max 400 mots) qui extrait "
             f"les informations clés, faits importants et apports de connaissance de ces sources. "
             f"Format : paragraphes courts avec sous-titres Markdown si pertinent."
@@ -502,7 +542,7 @@ class AutoLearner:
             return self._rag._llm.chat(
                 [{"role": "user", "content": prompt}],
                 temperature=0.3,
-                max_tokens=2048,
+                max_tokens=self._MAX_TOKENS_RESPONSE,
                 operation="autolearn_web_synthesis",
             )
         except Exception as exc:
@@ -543,10 +583,10 @@ class AutoLearner:
             logger.debug(f"Sources web hors sujet pour : {question[:60]}")
             return rag_answer
 
-        context = "\n\n".join(web_snippets[:3])
+        _, context_fitted = self._fit_context("", "\n\n".join(web_snippets[:3]), overhead=300)
         prompt = (
             f"Question : {question}\n\n"
-            f"Sources web :\n{context}\n\n"
+            f"Sources web :\n{context_fitted}\n\n"
             f"Rédige une réponse structurée et informative en français, en t'appuyant principalement "
             f"sur les sources web ci-dessus. Apporte des faits concrets, des chiffres, des exemples "
             f"et du contexte qui enrichissent la compréhension du sujet. Sois précis et complet."
@@ -555,7 +595,7 @@ class AutoLearner:
             return self._rag._llm.chat(
                 [{"role": "user", "content": prompt}],
                 temperature=0.3,
-                max_tokens=4096,
+                max_tokens=self._MAX_TOKENS_RESPONSE,
                 operation="autolearn_enrich",
             )
         except Exception as exc:

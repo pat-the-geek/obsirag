@@ -1,20 +1,52 @@
 """
 Couche d'accès ChromaDB.
 - Persistance sur disque dans obsirag/data/chroma
-- Embedding via sentence-transformers (local, multilingue)
+- Embedding via LM Studio (Metal/ANE) si LMSTUDIO_EMBED_MODEL est défini,
+  sinon via sentence-transformers en local (CPU Docker, fallback)
 - Recherche sémantique, par date, par entité NER, par tags
 """
 from __future__ import annotations
 
+import time
 from datetime import datetime
 from typing import Any
 
 import chromadb
-from chromadb.utils.embedding_functions import SentenceTransformerEmbeddingFunction
+from chromadb.utils.embedding_functions import EmbeddingFunction
 from loguru import logger
 
 from src.config import settings
 from src.indexer.chunker import Chunk
+
+
+def _build_embedding_function() -> EmbeddingFunction:
+    """
+    Choisit la fonction d'embedding selon la configuration :
+    - LMSTUDIO_EMBED_MODEL défini  → OpenAI-compatible via LM Studio (Metal/ANE)
+    - sinon                        → SentenceTransformers local (CPU Docker, fallback)
+
+    IMPORTANT : changer de backend change la dimension des vecteurs.
+    Si vous basculez d'un mode à l'autre sur une collection existante,
+    supprimez le dossier data/chroma et relancez une indexation complète.
+    """
+    if settings.lmstudio_embed_model:
+        from chromadb.utils.embedding_functions import OpenAIEmbeddingFunction
+        logger.info(
+            f"Embedding via LM Studio ({settings.lmstudio_base_url}) : "
+            f"{settings.lmstudio_embed_model}"
+        )
+        return OpenAIEmbeddingFunction(
+            api_key="lm-studio",
+            api_base=settings.lmstudio_base_url,
+            model_name=settings.lmstudio_embed_model,
+        )
+
+    from chromadb.utils.embedding_functions import SentenceTransformerEmbeddingFunction
+    logger.info(f"Embedding local CPU : {settings.embedding_model}")
+    return SentenceTransformerEmbeddingFunction(
+        model_name=settings.embedding_model,
+        device="cpu",
+    )
 
 
 class ChromaStore:
@@ -24,11 +56,7 @@ class ChromaStore:
 
         self._client = chromadb.PersistentClient(path=persist_dir)
 
-        embed_fn = SentenceTransformerEmbeddingFunction(
-            model_name=settings.embedding_model,
-            device="cpu",
-        )
-        logger.info(f"Modèle d'embedding chargé : {settings.embedding_model}")
+        embed_fn = _build_embedding_function()
 
         self._collection = self._client.get_or_create_collection(
             name=settings.chroma_collection,
@@ -46,12 +74,18 @@ class ChromaStore:
     def add_chunks(self, chunks: list[Chunk]) -> None:
         if not chunks:
             return
+        t0 = time.perf_counter()
         self._collection.upsert(
             ids=[c.chunk_id for c in chunks],
             documents=[c.text for c in chunks],
             metadatas=[c.as_metadata() for c in chunks],
         )
-        logger.debug(f"Upsert de {len(chunks)} chunk(s)")
+        elapsed = time.perf_counter() - t0
+        backend = settings.lmstudio_embed_model or settings.embedding_model
+        logger.info(
+            f"embed:add {len(chunks)} chunk(s) — {elapsed:.2f}s "
+            f"({elapsed / len(chunks):.3f}s/chunk) backend={backend}"
+        )
 
     def delete_by_file(self, rel_path: str) -> None:
         try:
@@ -79,7 +113,13 @@ class ChromaStore:
         if where:
             kwargs["where"] = where
 
+        t0 = time.perf_counter()
         results = self._collection.query(**kwargs)
+        elapsed = time.perf_counter() - t0
+        backend = settings.lmstudio_embed_model or settings.embedding_model
+        logger.debug(
+            f"embed:search {elapsed:.3f}s backend={backend} top_k={top_k}"
+        )
         return self._format_results(results)
 
     def search_by_date_range(

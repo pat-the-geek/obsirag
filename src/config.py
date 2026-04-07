@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     lmstudio_base_url: str = "http://host.docker.internal:1234/v1"
     lmstudio_chat_model: str = ""
     lmstudio_embed_model: Optional[str] = None
+    lmstudio_context_size: int = 4096  # n_ctx du modèle chargé dans LM Studio
 
     # Embeddings locaux
     embedding_model: str = "paraphrase-multilingual-MiniLM-L12-v2"

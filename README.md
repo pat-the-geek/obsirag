@@ -4,7 +4,7 @@
 
 # ObsiRAG
 
-Un système RAG (Retrieval-Augmented Generation) local pour votre coffre Obsidian, tournant en Python dans Docker et utilisant l'API de LM Studio comme moteur IA.
+Un système RAG (Retrieval-Augmented Generation) local pour votre coffre Obsidian, tournant en Python dans Docker et utilisant **Ollama** comme moteur IA local.
 
 ---
 
@@ -34,7 +34,7 @@ Exemples de requêtes :
 
 ### Chat avec le coffre
 
-Interface conversationnelle connectée à LM Studio (via son API OpenAI-compatible) et au moteur de recherche du coffre. Les requêtes sont traitées en combinant récupération sémantique et synthèse par l'IA.
+Interface conversationnelle connectée à **Ollama** (via son API OpenAI-compatible) et au moteur de recherche du coffre. Les requêtes sont traitées en combinant récupération sémantique et synthèse par l'IA.
 
 ### Cerveau — graphe de connaissances
 
@@ -113,7 +113,7 @@ Toutes les notes ne donnent pas lieu à un insight. Voici les cas où une note e
 | --- | --- | --- |
 | **Note trop courte / mal indexée** | Aucun chunk trouvé dans ChromaDB | La note n'est pas dans l'index vectoriel ; elle sera ignorée jusqu'à la prochaine réindexation |
 | **Aucune question générée** | Le LLM n'a pas suivi le format attendu, ou le contenu est trop pauvre pour formuler une question | L'étape de génération de questions est sautée |
-| **Toutes les réponses QA ont échoué** | Erreur LM Studio (contexte dépassé, modèle non disponible…) pour les 3 questions | L'insight n'est pas sauvegardé |
+| **Toutes les réponses QA ont échoué** | Erreur Ollama (contexte dépassé, modèle non disponible…) pour les 3 questions | L'insight n'est pas sauvegardé |
 | **Note mal parsée (YAML invalide)** | Le frontmatter Obsidian contient des caractères illégaux ou est mal formé | La note n'est pas indexée du tout |
 
 ### Notes qui produisent un insight
@@ -131,7 +131,7 @@ L'insight est sauvegardé dans `obsirag/insights/YYYY-MM/` avec :
 - La provenance (Web, Coffre, ou Web+Coffre)
 - Une synthèse des sources web lorsque des URLs ont été récupérées et analysées
 
-> **Astuce** : Si une note attendue ne produit pas d'insight, vérifiez qu'elle est bien indexée (bouton "Re-indexer le coffre" dans le chat) et que le LLM est disponible dans LM Studio.
+> **Astuce** : Si une note attendue ne produit pas d'insight, vérifiez qu'elle est bien indexée (bouton "Re-indexer le coffre" dans le chat) et que le LLM est disponible dans Ollama (`ollama list`).
 
 ---
 
@@ -233,8 +233,8 @@ Quand vous posez une question dans le chat :
 
 1. La question est elle-même vectorisée
 2. ChromaDB identifie les chunks dont le vecteur est le plus proche → **similarité cosinus**
-3. Ces chunks (vos notes) sont injectés comme contexte dans le prompt envoyé à LM Studio
-4. LM Studio génère une réponse ancrée dans **votre coffre**, pas dans ses seules connaissances pré-entraînées
+3. Ces chunks (vos notes) sont injectés comme contexte dans le prompt envoyé à Ollama
+4. Ollama génère une réponse ancrée dans **votre coffre**, pas dans ses seules connaissances pré-entraînées
 
 > C'est ce mécanisme qui permet de retrouver une note sur "les effets des écrans sur le sommeil" en posant la question "comment la lumière bleue affecte-t-elle le repos ?" — sans que ces mots exacts apparaissent dans la note.
 
@@ -252,7 +252,7 @@ Quand vous posez une question dans le chat :
 
 ObsiRAG est conçu pour fonctionner **en tâche de fond sur un MacBook Air M5 16 Go** — la machine de référence du projet. L'ensemble du traitement (indexation, génération d'insights, synapses) tourne de façon transparente sans perturber l'utilisation normale : navigation web, rédaction dans Obsidian, appels visio.
 
-**Temps d'amorçage initial :** pour un coffre d'environ 200 notes, comptez **2 à 3 jours** pour que l'ensemble des insights soit généré. Ce délai s'explique par les pauses intentionnelles entre chaque note et chaque appel LLM, qui permettent de ménager le CPU et de ne pas bloquer LM Studio.
+**Temps d'amorçage initial :** pour un coffre d'environ 200 notes, comptez **2 à 3 jours** pour que l'ensemble des insights soit généré. Ce délai s'explique par les pauses intentionnelles entre chaque note et chaque appel LLM, qui permettent de ménager le CPU et de ne pas bloquer Ollama.
 
 Une fois l'amorçage terminé, seules les notes nouvelles ou récemment modifiées sont retraitées à chaque cycle — le fonctionnement courant est quasi-instantané.
 
@@ -260,21 +260,22 @@ Pour les détails de débit, temps de traitement par note et choix du modèle : 
 
 ---
 
-## Modèles IA utilisés via LM Studio
+## Modèles IA utilisés via Ollama
 
-ObsiRAG utilise LM Studio comme serveur IA local (API compatible OpenAI). Trois types d'appels sont effectués :
+ObsiRAG utilise **Ollama** comme serveur IA local (API compatible OpenAI). Deux modèles sont nécessaires :
 
-| Usage                       | Opération                                    | Exigences minimales                              |
+| Usage                       | Opération                                    | Modèle configuré                                 |
 | --------------------------- | -------------------------------------------- | ------------------------------------------------ |
-| **Chat / RAG**              | Réponses aux questions sur le coffre         | 7–8B instruct (ex. Llama 3.1 8B, Gemma 4)        |
+| **Chat / RAG**              | Réponses aux questions sur le coffre         | `LMSTUDIO_CHAT_MODEL` (ex. `gemma3:4b`)          |
 | **Génération de questions** | Auto-learner — questions ancrées dans le champ sémantique de chaque note | Même modèle que le chat                          |
 | **Synapses & synthèses**    | Connexions implicites, synthèse hebdomadaire | Même modèle que le chat                          |
+| **Embeddings**              | Vectorisation des notes et des requêtes      | `LMSTUDIO_EMBED_MODEL` (ex. `nomic-embed-text`)  |
 
-> Un seul modèle de chat suffit pour tout. Configurer `LMSTUDIO_CHAT_MODEL` dans `.env` avec le nom exact du modèle chargé dans LM Studio.
+> Un seul modèle de chat suffit pour tout. Configurer `LMSTUDIO_CHAT_MODEL` dans `.env` avec le nom exact du modèle Ollama.
 
-Le modèle doit avoir une fenêtre de contexte d'au moins **4096 tokens**. 8192+ est recommandé pour les coffres volumineux.
+Le modèle doit avoir une fenêtre de contexte d'au moins **4096 tokens**. 8192+ est recommandé pour les coffres volumineux. Ajuster `LMSTUDIO_CONTEXT_SIZE` en conséquence.
 
-Les embeddings sont gérés **localement** par `sentence-transformers` (`paraphrase-multilingual-MiniLM-L12-v2`) — aucun appel LM Studio n'est nécessaire pour l'indexation.
+Les embeddings sont gérés par Ollama via `LMSTUDIO_EMBED_MODEL` (`nomic-embed-text` par défaut, 768 dimensions) — les calculs s'effectuent sur le GPU/ANE du Mac, sans charge CPU dans Docker.
 
 ---
 
@@ -284,9 +285,9 @@ Les embeddings sont gérés **localement** par `sentence-transformers` (`paraphr
 | ------------------ | ------------------------------------------------------------------ |
 | Langage            | Python 3.11                                                        |
 | Déploiement        | Docker / Docker Compose                                            |
-| IA                 | LM Studio (API locale, compatible OpenAI)                          |
+| IA                 | Ollama (API locale, compatible OpenAI)                             |
 | Base vectorielle   | ChromaDB                                                           |
-| Embeddings         | sentence-transformers (multilingue)                                |
+| Embeddings         | Ollama — `nomic-embed-text` (768 dimensions, Metal/ANE)            |
 | Interface          | Streamlit                                                          |
 | Graphe             | NetworkX + Pyvis                                                   |
 | Recherche web      | DuckDuckGo Search (sources fiables)                                |
@@ -305,7 +306,7 @@ Les embeddings sont gérés **localement** par `sentence-transformers` (`paraphr
 | `AUTOLEARN_LOOKBACK_HOURS` | **24 h** | Fenêtre de détection — seules les notes modifiées dans les dernières 24h sont candidates |
 | `AUTOLEARN_MIN_REPROCESS_DAYS` | **7 jours** | Délai de grâce — une note déjà traitée ne sera pas retraitée avant 7 jours |
 
-Le premier cycle démarre **5 minutes après le lancement du container**, pour laisser le temps à LM Studio d'être prêt.
+Le premier cycle démarre **5 minutes après le lancement du container**, pour laisser le temps à Ollama d'être prêt.
 
 > Ces trois paramètres permettent d'adapter le comportement selon l'usage : un intervalle plus court (ex. 30 min) pour un coffre très actif, un lookback plus large (ex. 48h) pour rattraper des notes modifiées en dehors des heures habituelles, et un `MIN_REPROCESS_DAYS` plus court si vous souhaitez qu'une note soit ré-enrichie plus fréquemment.
 
@@ -314,13 +315,20 @@ Le premier cycle démarre **5 minutes après le lancement du container**, pour l
 ## Installation
 
 ```bash
+# Installer Ollama (si ce n'est pas déjà fait)
+curl -fsSL https://ollama.com/install.sh | sh
+
+# Télécharger les modèles nécessaires
+ollama pull gemma3:4b          # modèle chat (~3.3 GB)
+ollama pull nomic-embed-text   # modèle embedding (~274 MB)
+
 # Cloner le dépôt
 git clone https://github.com/PatrickOstertagCH/obsirag.git
 cd obsirag
 
 # Configurer l'environnement
 cp .env.example .env
-# Éditer .env : renseigner VAULT_PATH et LMSTUDIO_BASE_URL
+# Éditer .env : renseigner VAULT_PATH (LMSTUDIO_BASE_URL pointe déjà sur Ollama par défaut)
 
 # Lancer
 docker compose up -d
