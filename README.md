@@ -38,7 +38,23 @@ Interface conversationnelle connectée à LM Studio (via son API OpenAI-compatib
 
 ### Cerveau — graphe de connaissances
 
-Visualisation interactive des connexions entre vos notes (wikilinks et similarité sémantique). Navigation par dossiers et tags, zoom sur les nœuds les plus connectés.
+Visualisation interactive du réseau de vos notes sous forme de graphe interactif (rendu Pyvis sur fond sombre). Chaque nœud est une note, chaque arête une connexion.
+
+**Ce qui est affiché :**
+
+- **Nœuds** : chaque note du coffre est un nœud coloré selon son dossier d'appartenance (palette de 8 couleurs distinctes). La taille du nœud est proportionnelle à son nombre de connexions — les notes les plus référencées apparaissent plus grandes
+- **Arêtes (connexions)** : les `[[wikilinks]]` entre notes forment les arêtes du graphe
+- **Tooltip au survol** : titre, date de modification, tags et deux boutons d'action — ouvrir la note dans le visualiseur intégré ou directement dans Obsidian
+- **Métriques en en-tête** : nombre de nœuds, connexions, densité du graphe et nombre de notes filtrées
+- **Top 5 nœuds les plus connectés** : liste sous le graphe avec leur score de centralité, avec bouton d'ouverture directe
+
+**Filtres disponibles (barre latérale) :**
+
+- Par **dossier** (tous ou sélection multiple)
+- Par **tag** Obsidian (sélection multiple)
+- Sélecteur de note alphabétique pour ouvrir directement une note dans le visualiseur
+
+Le graphe est mis en cache 5 minutes et recalculé à la demande via le bouton 🔄. Il est également exporté en JSON (`data/graph/knowledge_graph.json`) pour un usage externe éventuel.
 
 ### Auto-apprentissage (background learner)
 
