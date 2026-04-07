@@ -215,7 +215,13 @@ Quand vous posez une question dans le chat :
 
 ## Performances et recommandations matérielles
 
-Temps de traitement, débit du scan, et choix du Mac Apple Silicon : voir [docs/performances.md](docs/performances.md).
+ObsiRAG est conçu pour fonctionner **en tâche de fond sur un MacBook Air M5 16 Go** — la machine de référence du projet. L'ensemble du traitement (indexation, génération d'insights, synapses) tourne de façon transparente sans perturber l'utilisation normale : navigation web, rédaction dans Obsidian, appels visio.
+
+**Temps d'amorçage initial :** pour un coffre d'environ 200 notes, comptez **2 à 3 jours** pour que l'ensemble des insights soit généré. Ce délai s'explique par les pauses intentionnelles entre chaque note et chaque appel LLM, qui permettent de ménager le CPU et de ne pas bloquer LM Studio.
+
+Une fois l'amorçage terminé, seules les notes nouvelles ou récemment modifiées sont retraitées à chaque cycle — le fonctionnement courant est quasi-instantané.
+
+Pour les détails de débit, temps de traitement par note et choix du modèle : voir [docs/performances.md](docs/performances.md).
 
 ---
 
