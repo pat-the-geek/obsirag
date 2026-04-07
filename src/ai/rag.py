@@ -12,6 +12,7 @@ from __future__ import annotations
 import re
 from collections.abc import Iterator
 from datetime import datetime, timedelta
+from itertools import chain
 from typing import Any
 
 from loguru import logger
@@ -76,8 +77,14 @@ class RAGPipeline:
             context = self._build_context(chunks, char_budget=budget)
             messages = self._build_messages(user_query, context, history)
             try:
-                stream = self._llm.stream(messages, operation="rag_query")
-                return stream, chunks
+                raw_stream = self._llm.stream(messages, operation="rag_query")
+                # Force l'exécution du générateur jusqu'au premier token pour déclencher
+                # immédiatement toute BadRequestError (contexte trop grand) AVANT de
+                # rendre la main à l'appelant, sinon l'erreur échappe au retry.
+                first = next(raw_stream, None)
+                if first is None:
+                    return iter([]), chunks
+                return chain([first], raw_stream), chunks
             except BadRequestError as exc:
                 if self._is_context_error(exc):
                     logger.warning(f"Contexte trop grand (budget={budget}), réduction…")
