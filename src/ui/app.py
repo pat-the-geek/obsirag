@@ -481,7 +481,7 @@ if user_input:
             # Progression des notes dans le contexte
             seen: list[str] = []
             for src in sources:
-                title = src.get("metadata", {}).get("note_title", "")
+                title = (src.get("metadata") or {}).get("note_title", "")
                 if title and title not in seen:
                     seen.append(title)
             for i, note in enumerate(seen, 1):
@@ -544,7 +544,7 @@ if user_input:
         if sources:
             with st.expander(f"📚 {len(sources)} source(s)", expanded=False):
                 for i, src in enumerate(sources[:8]):
-                    _m = src.get("metadata", {})
+                    _m = src.get("metadata") or {}
                     title = _m.get("note_title", _m.get("file_path", ""))
                     fp = _m.get("file_path", "")
                     col_info, col_btn = st.columns([8, 1])

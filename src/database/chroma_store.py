@@ -317,7 +317,7 @@ class ChromaStore:
             out.append({
                 "chunk_id": chunk_id,
                 "text": doc,
-                "metadata": meta,
+                "metadata": meta or {},
                 "score": round(1 - dist, 4),  # cosine distance → similarity
             })
         return out
