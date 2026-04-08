@@ -49,7 +49,16 @@ def _clean_mermaid(code: str) -> str:
         # Supprimer tout caractère non imprimable non ASCII (hors tab/espace)
         ascii_line = re.sub(r"[^\x09\x20-\x7E]", "", ascii_line)
         lines.append(ascii_line)
-    return "\n".join(lines)
+    code = "\n".join(lines)
+    # Wrapper en guillemets les labels de nœuds contenant des parenthèses ou accolades
+    # Ex: A[Titre (sous-titre)] --> A["Titre (sous-titre)"]
+    # On ne touche pas les labels déjà entre guillemets
+    code = re.sub(
+        r'\[([^"\]\[]*[(){][^"\]\[]*)\]',
+        lambda m: '["' + m.group(1).replace('"', "'") + '"]',
+        code,
+    )
+    return code
 
 
 _NER_COLORS = {
