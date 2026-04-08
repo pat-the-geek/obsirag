@@ -168,11 +168,25 @@ wikilinks = note_meta.get("wikilinks", [])
 date_mod = note_meta.get("date_modified", "")[:10]
 date_cre = note_meta.get("date_created", "")[:10]
 
+# Lien Obsidian deep-link
+_vault_name = settings.obsidian_vault
+_file_encoded = selected_fp.replace("%", "%25").replace(" ", "%20")
+_obsidian_url = f"obsidian://open?vault={_vault_name}&file={_file_encoded}"
+
 # En-tête
 col_title, col_meta = st.columns([3, 1])
 with col_title:
     st.title(note_meta.get("title", note_abs.stem))
     st.caption(f"`{selected_fp}`")
+    st.markdown(
+        f'<a href="{_obsidian_url}" target="_blank" style="'
+        'display:inline-flex;align-items:center;gap:6px;'
+        'background:#7C3AED;color:#fff;border-radius:6px;'
+        'padding:4px 12px;font-size:13px;font-weight:600;'
+        'text-decoration:none;">'
+        '🟣 Ouvrir dans Obsidian</a>',
+        unsafe_allow_html=True,
+    )
 with col_meta:
     st.caption(f"📅 Créé : {date_cre}")
     st.caption(f"✏️ Modifié : {date_mod}")

@@ -52,13 +52,14 @@ def _clean_mermaid(code: str) -> str:
 
 
 _NER_COLORS = {
-    "PERSON":  ("#d4e8ff", "#1a4a7a"),   # bleu
-    "ORG":     ("#d4f5e8", "#1a5c3a"),   # vert
-    "GPE":     ("#fff3d4", "#7a5200"),   # orange (pays/ville)
-    "LOC":     ("#fff3d4", "#7a5200"),   # orange (lieu)
-    "PRODUCT": ("#f0d4ff", "#5a1a7a"),   # violet
-    "EVENT":   ("#ffd4d4", "#7a1a1a"),   # rouge
-    "NORP":    ("#d4fff0", "#1a5a3a"),   # vert clair
+    "PERSON":  ("#eef5ff", "#3b6ea8"),   # bleu pâle
+    "ORG":     ("#edfaf3", "#2e7d55"),   # vert pâle
+    "GPE":     ("#fefce8", "#a16207"),   # jaune très pâle (pays/ville)
+    "LOC":     ("#fff7ed", "#b45309"),   # orange très pâle (lieu)
+    "PRODUCT": ("#f5f3ff", "#6d4fa0"),   # violet pâle
+    "EVENT":   ("#fff1f1", "#b94040"),   # rouge pâle
+    "NORP":    ("#f0fdf9", "#2a7a6a"),   # turquoise pâle
+    "FAC":     ("#fdf2f8", "#a8417a"),   # rose pâle
 }
 
 _WUDDAI_TYPE_TO_CAT = {
