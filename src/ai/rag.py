@@ -224,6 +224,65 @@ class RAGPipeline:
             fp = c["metadata"].get("file_path", "")
             seen_notes.setdefault(fp, []).append(c)
 
+        # Enrichissement : ajouter les notes liées (wikilinks) des notes trouvées
+        # Les wikilinks sont des titres — construire un index titre→file_path
+        title_to_fp: dict[str, str] = {}
+        for fp, note_chunks in seen_notes.items():
+            title = note_chunks[0]["metadata"].get("note_title", "")
+            if title:
+                title_to_fp[title.lower()] = fp
+                # préfixe 30 chars comme fallback
+                title_to_fp[title.lower()[:30]] = fp
+
+        linked_fps: set[str] = set()
+        for fp, note_chunks in seen_notes.items():
+            wikilinks_raw = note_chunks[0]["metadata"].get("wikilinks", "")
+            for wl in (wikilinks_raw or "").split(","):
+                wl = wl.strip()
+                if not wl:
+                    continue
+                wl_lower = wl.lower()
+                resolved = title_to_fp.get(wl_lower) or title_to_fp.get(wl_lower[:30])
+                if resolved and resolved not in seen_notes:
+                    linked_fps.add(resolved)
+                elif not resolved:
+                    # Stocker le titre brut pour une recherche ChromaDB par note_title
+                    linked_fps.add(f"__title__:{wl}")
+
+        if linked_fps:
+            # Chercher les chunks des notes liées (2 chunks max par note liée)
+            linked_budget = max(1, settings.max_context_chunks // 2)
+            for linked_fp in list(linked_fps)[:linked_budget]:
+                try:
+                    if linked_fp.startswith("__title__:"):
+                        # Résolution par titre via ChromaDB
+                        title_query = linked_fp[len("__title__:"):]
+                        raw = self._chroma._collection.get(
+                            where={"note_title": title_query},
+                            limit=2,
+                            include=["documents", "metadatas"],
+                        )
+                    else:
+                        raw = self._chroma._collection.get(
+                            where={"file_path": linked_fp},
+                            limit=2,
+                            include=["documents", "metadatas"],
+                        )
+                    for doc, meta in zip(
+                        raw.get("documents") or [],
+                        raw.get("metadatas") or [],
+                    ):
+                        fp2 = meta.get("file_path", linked_fp)
+                        if fp2 not in seen_notes:
+                            seen_notes[fp2] = [{
+                                "chunk_id": f"linked_{fp2}",
+                                "text": doc,
+                                "metadata": meta,
+                                "score": 0.0,
+                            }]
+                except Exception:
+                    pass
+
         parts: list[str] = []
         budget = char_budget if char_budget is not None else settings.max_context_chars
 

@@ -370,18 +370,46 @@ def _copy_button_html(text: str) -> str:
 </body></html>"""
 
 
-def _render_text_segment(segment: str) -> None:
-    """Rend un segment texte avec liens + NER.
-    Utilise components.html() si HTML présent (onclick préservé, pas de sanitisation)."""
-    if not segment.strip():
-        return
-    processed = _highlight_ner(_linkify_wikilinks(segment))
-    if '<a ' not in processed and '<span ' not in processed:
-        st.markdown(processed, unsafe_allow_html=True)
-        return
-    # Estimation hauteur : on démarre petit, le JS auto-resize ajuste
-    height = 10
-    components.html(f"""<!DOCTYPE html><html><head><meta charset="utf-8">
+
+
+def _render_chat_response(text: str) -> None:
+    """Rend la réponse dans Streamlit : une seule iframe pour le texte + iframes Mermaid séparées."""
+    # Cleanup accents/émojis dans les blocs Mermaid
+    def _clean_block(m: re.Match) -> str:
+        return f"```mermaid\n{_clean_mermaid(m.group(1))}\n```"
+    text = _MERMAID_SPLIT_RE.sub(_clean_block, text)
+
+    # Découper : indices pairs = texte, indices impairs = code Mermaid
+    segments = _MERMAID_SPLIT_RE.split(text)
+
+    # Regrouper tous les segments texte consécutifs et les Mermaid en blocs ordonnés
+    blocks: list[tuple[str, str]] = []  # (type, content)
+    text_accum: list[str] = []
+    mermaid_idx = 0
+    for i, segment in enumerate(segments):
+        if i % 2 == 0:
+            # Segment texte : on accumule
+            text_accum.append(segment)
+        else:
+            # Bloc Mermaid : vider l'accumulateur texte d'abord
+            if text_accum:
+                blocks.append(("text", "\n".join(text_accum)))
+                text_accum = []
+            blocks.append(("mermaid", segment.strip()))
+
+    if text_accum:
+        blocks.append(("text", "\n".join(text_accum)))
+
+    for btype, content in blocks:
+        if btype == "text":
+            if not content.strip():
+                continue
+            # Appliquer NER + liens sur tout le bloc texte d'un coup
+            processed = _highlight_ner(_linkify_wikilinks(content))
+            if '<a ' not in processed and '<span ' not in processed:
+                st.markdown(processed, unsafe_allow_html=True)
+            else:
+                components.html(f"""<!DOCTYPE html><html><head><meta charset="utf-8">
 <script src="https://cdn.jsdelivr.net/npm/marked@9/marked.min.js"></script>
 <style>
 :root{{--txt:#262730;--code-bg:#f0f2f6;--code-txt:#1a1a2e;--quote-c:#6b7280;--quote-b:#d1d5db;--link:#7c3aed;}}
@@ -390,6 +418,7 @@ body{{margin:0;padding:4px 0;font-family:ui-sans-serif,system-ui,-apple-system,s
      font-size:16px;line-height:1.7;color:var(--txt);background:transparent;
      word-wrap:break-word;overflow-x:hidden;}}
 p{{margin:0 0 .7em;}}ul,ol{{margin:0 0 .7em 1.4em;padding:0;}}
+li{{margin-bottom:.3em;}}
 h1,h2,h3{{margin:.8em 0 .4em;color:var(--txt);}}h4,h5,h6{{margin:.6em 0 .3em;color:var(--txt);}}
 code{{background:var(--code-bg);color:var(--code-txt);padding:1px 4px;border-radius:3px;font-size:14px;font-family:monospace;}}
 pre{{background:var(--code-bg);color:var(--code-txt);padding:10px;border-radius:6px;overflow-x:auto;}}
@@ -399,49 +428,26 @@ a{{color:var(--link);text-decoration:none;font-weight:600;border-bottom:1px dott
 span[title]{{border-radius:3px;padding:1px 4px;}}
 </style></head><body id="bd">
 <script>
-// Détecter le thème Streamlit en lisant la couleur de fond du parent
-(function(){{
-  try {{
-    var bg = window.parent.getComputedStyle(window.parent.document.body).backgroundColor;
-    var m = bg.match(/\\d+/g);
-    if (m) {{
-      var lum = 0.299*+m[0] + 0.587*+m[1] + 0.114*+m[2];
-      if (lum < 128) document.documentElement.setAttribute('data-dark','1');
-    }}
-  }} catch(e) {{}}
-}})();
+(function(){{try{{var bg=window.parent.getComputedStyle(window.parent.document.body).backgroundColor;
+var m=bg.match(/\\d+/g);if(m){{var l=0.299*+m[0]+0.587*+m[1]+0.114*+m[2];
+if(l<128)document.documentElement.setAttribute('data-dark','1');}}}}catch(e){{}}}}
+)();
 marked.use({{breaks:true,gfm:true}});
-const raw={json.dumps(processed)};
-document.getElementById('bd').innerHTML=marked.parse(raw);
-function resize(){{try{{const h=document.body.scrollHeight;
-        const f=window.frameElement;
-        if(f){{f.style.height=(h+12)+'px';f.style.minHeight=(h+12)+'px';}}
-        }}catch(e){{}}}}
-setTimeout(resize,20);setTimeout(resize,100);setTimeout(resize,400);
+// marked.parse() conserve les balises HTML inline (<a>, <span>) et interprète le Markdown
+document.getElementById('bd').innerHTML=marked.parse({json.dumps(processed)});
+function resize(){{try{{const h=document.body.scrollHeight;const f=window.frameElement;
+if(f){{f.style.height=(h+12)+'px';f.style.minHeight='0';}}}}catch(e){{}}}}
+setTimeout(resize,20);setTimeout(resize,150);setTimeout(resize,500);
 window.addEventListener('load',resize);
-</script></body></html>""", height=height, scrolling=False)
-
-
-def _render_chat_response(text: str) -> None:
-    """Rend la réponse dans Streamlit : texte NER-highlighté + blocs Mermaid visuels."""
-    # Cleanup accents/émojis dans les blocs Mermaid
-    def _clean_block(m: re.Match) -> str:
-        return f"```mermaid\n{_clean_mermaid(m.group(1))}\n```"
-    text = _MERMAID_SPLIT_RE.sub(_clean_block, text)
-
-    # Découper : indices pairs = texte, indices impairs = code Mermaid
-    segments = _MERMAID_SPLIT_RE.split(text)
-    mermaid_idx = 0
-    for i, segment in enumerate(segments):
-        if i % 2 == 0:
-            _render_text_segment(segment)
+</script></body></html>""", height=10, scrolling=False)
         else:
-            lines = segment.strip().splitlines()
+            lines = content.splitlines()
             height = max(220, min(600, 120 + len(lines) * 22))
             st.caption("📊 Diagramme Mermaid")
-            components.html(_mermaid_html_chat(segment.strip(), mermaid_idx),
+            components.html(_mermaid_html_chat(content, mermaid_idx),
                             height=height, scrolling=False)
             mermaid_idx += 1
+
     # Bouton copier le texte brut (sans HTML)
     components.html(_copy_button_html(text), height=36, scrolling=False)
 
