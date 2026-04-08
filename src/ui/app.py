@@ -372,34 +372,20 @@ def _copy_button_html(text: str) -> str:
 
 
 
-def _estimate_height(raw: str) -> int:
-    """Estime la hauteur (px) nécessaire pour rendre raw_text dans l'iframe."""
-    h = 0
-    for line in raw.split("\n"):
-        s = line.lstrip()
-        if not s:
-            h += 10
-        elif s.startswith("# "):
-            h += 44
-        elif s.startswith("## "):
-            h += 38
-        elif s.startswith("### "):
-            h += 32
-        else:
-            # wrap ~80 chars/line à 27px
-            h += max(27, (len(s) // 80 + 1) * 27)
-    return max(60, h + 32)
 
 
-# JS réutilisé : envoie setFrameHeight à Streamlit (redimensionne le wrapper)
+# JS réutilisé : envoie setFrameHeight à Streamlit via le protocole interne (isStreamlitMessage requis)
 _IFRAME_RESIZE_JS = """
 function stResize(){
   var h=document.body.scrollHeight;
-  try{window.parent.postMessage({type:'streamlit:setFrameHeight',height:h+8},'*');}catch(e){}
+  try{window.parent.postMessage(
+    {isStreamlitMessage:true,type:'streamlit:setFrameHeight',height:h+8},'*'
+  );}catch(e){}
   try{var f=window.frameElement;if(f){f.style.height=(h+8)+'px';}}catch(e){}
 }
-setTimeout(stResize,0);setTimeout(stResize,80);setTimeout(stResize,300);
+setTimeout(stResize,20);setTimeout(stResize,150);setTimeout(stResize,500);
 window.addEventListener('load',stResize);
+if(window.ResizeObserver){new ResizeObserver(stResize).observe(document.body);}
 """
 
 _IFRAME_THEME_JS = """
@@ -462,7 +448,6 @@ def _render_chat_response(text: str) -> None:
             if not needs_iframe:
                 st.markdown(processed, unsafe_allow_html=True)
             else:
-                est_h = _estimate_height(content)
                 components.html(
                     f"""<!DOCTYPE html><html><head><meta charset="utf-8">
 <script src="https://cdn.jsdelivr.net/npm/marked@9/marked.min.js"></script>
@@ -473,7 +458,7 @@ marked.use({{breaks:true,gfm:true}});
 document.getElementById('bd').innerHTML=marked.parse({json.dumps(processed)});
 {_IFRAME_RESIZE_JS}
 </script></body></html>""",
-                    height=est_h,
+                    height=10,
                     scrolling=False,
                 )
         else:
