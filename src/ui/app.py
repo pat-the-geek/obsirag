@@ -372,74 +372,110 @@ def _copy_button_html(text: str) -> str:
 
 
 
+def _estimate_height(raw: str) -> int:
+    """Estime la hauteur (px) nécessaire pour rendre raw_text dans l'iframe."""
+    h = 0
+    for line in raw.split("\n"):
+        s = line.lstrip()
+        if not s:
+            h += 10
+        elif s.startswith("# "):
+            h += 44
+        elif s.startswith("## "):
+            h += 38
+        elif s.startswith("### "):
+            h += 32
+        else:
+            # wrap ~80 chars/line à 27px
+            h += max(27, (len(s) // 80 + 1) * 27)
+    return max(60, h + 32)
+
+
+# JS réutilisé : envoie setFrameHeight à Streamlit (redimensionne le wrapper)
+_IFRAME_RESIZE_JS = """
+function stResize(){
+  var h=document.body.scrollHeight;
+  try{window.parent.postMessage({type:'streamlit:setFrameHeight',height:h+8},'*');}catch(e){}
+  try{var f=window.frameElement;if(f){f.style.height=(h+8)+'px';}}catch(e){}
+}
+setTimeout(stResize,0);setTimeout(stResize,80);setTimeout(stResize,300);
+window.addEventListener('load',stResize);
+"""
+
+_IFRAME_THEME_JS = """
+(function(){try{
+  var bg=window.parent.getComputedStyle(window.parent.document.body).backgroundColor;
+  var m=bg.match(/\\d+/g);
+  if(m){var l=0.299*+m[0]+0.587*+m[1]+0.114*+m[2];
+    if(l<128)document.documentElement.setAttribute('data-dark','1');}
+}catch(e){}})();
+"""
+
+_IFRAME_CSS = """
+:root{--txt:#262730;--code-bg:#f0f2f6;--code-txt:#1a1a2e;--quote-c:#6b7280;--quote-b:#d1d5db;--link:#7c3aed;}
+[data-dark]{--txt:#fafafa;--code-bg:#2d2d3a;--code-txt:#e8e8f0;--quote-c:#a0a0b0;--quote-b:#4a4a5a;--link:#a78bfa;}
+body{margin:0;padding:4px 0;font-family:ui-sans-serif,system-ui,-apple-system,sans-serif;
+     font-size:16px;line-height:1.7;color:var(--txt);background:transparent;
+     word-wrap:break-word;overflow-x:hidden;}
+p{margin:0 0 .7em;}ul,ol{margin:0 0 .7em 1.4em;padding:0;}
+li{margin-bottom:.3em;}
+h1,h2,h3{margin:.8em 0 .4em;color:var(--txt);}h4,h5,h6{margin:.6em 0 .3em;color:var(--txt);}
+code{background:var(--code-bg);color:var(--code-txt);padding:1px 4px;border-radius:3px;font-size:14px;font-family:monospace;}
+pre{background:var(--code-bg);color:var(--code-txt);padding:10px;border-radius:6px;overflow-x:auto;}
+blockquote{margin:0 0 .7em;padding:0 0 0 1em;border-left:3px solid var(--quote-b);color:var(--quote-c);}
+strong{font-weight:700;}em{font-style:italic;}
+a{color:var(--link);text-decoration:none;font-weight:600;border-bottom:1px dotted var(--link);cursor:pointer;}
+span[title]{border-radius:3px;padding:1px 4px;}
+"""
+
+
 def _render_chat_response(text: str) -> None:
-    """Rend la réponse dans Streamlit : une seule iframe pour le texte + iframes Mermaid séparées."""
-    # Cleanup accents/émojis dans les blocs Mermaid
+    """Rend la réponse : une seule iframe texte + iframes Mermaid séparées."""
+    # Cleanup Mermaid
     def _clean_block(m: re.Match) -> str:
         return f"```mermaid\n{_clean_mermaid(m.group(1))}\n```"
     text = _MERMAID_SPLIT_RE.sub(_clean_block, text)
 
-    # Découper : indices pairs = texte, indices impairs = code Mermaid
     segments = _MERMAID_SPLIT_RE.split(text)
 
-    # Regrouper tous les segments texte consécutifs et les Mermaid en blocs ordonnés
-    blocks: list[tuple[str, str]] = []  # (type, content)
+    # Construire la liste ordonnée (text, mermaid)
+    blocks: list[tuple[str, str]] = []
     text_accum: list[str] = []
-    mermaid_idx = 0
     for i, segment in enumerate(segments):
         if i % 2 == 0:
-            # Segment texte : on accumule
             text_accum.append(segment)
         else:
-            # Bloc Mermaid : vider l'accumulateur texte d'abord
             if text_accum:
                 blocks.append(("text", "\n".join(text_accum)))
                 text_accum = []
             blocks.append(("mermaid", segment.strip()))
-
     if text_accum:
         blocks.append(("text", "\n".join(text_accum)))
 
+    mermaid_idx = 0
     for btype, content in blocks:
         if btype == "text":
             if not content.strip():
                 continue
-            # Appliquer NER + liens sur tout le bloc texte d'un coup
             processed = _highlight_ner(_linkify_wikilinks(content))
-            if '<a ' not in processed and '<span ' not in processed:
+            needs_iframe = '<a ' in processed or '<span ' in processed
+            if not needs_iframe:
                 st.markdown(processed, unsafe_allow_html=True)
             else:
-                components.html(f"""<!DOCTYPE html><html><head><meta charset="utf-8">
+                est_h = _estimate_height(content)
+                components.html(
+                    f"""<!DOCTYPE html><html><head><meta charset="utf-8">
 <script src="https://cdn.jsdelivr.net/npm/marked@9/marked.min.js"></script>
-<style>
-:root{{--txt:#262730;--code-bg:#f0f2f6;--code-txt:#1a1a2e;--quote-c:#6b7280;--quote-b:#d1d5db;--link:#7c3aed;}}
-[data-dark]{{--txt:#fafafa;--code-bg:#2d2d3a;--code-txt:#e8e8f0;--quote-c:#a0a0b0;--quote-b:#4a4a5a;--link:#a78bfa;}}
-body{{margin:0;padding:4px 0;font-family:ui-sans-serif,system-ui,-apple-system,sans-serif;
-     font-size:16px;line-height:1.7;color:var(--txt);background:transparent;
-     word-wrap:break-word;overflow-x:hidden;}}
-p{{margin:0 0 .7em;}}ul,ol{{margin:0 0 .7em 1.4em;padding:0;}}
-li{{margin-bottom:.3em;}}
-h1,h2,h3{{margin:.8em 0 .4em;color:var(--txt);}}h4,h5,h6{{margin:.6em 0 .3em;color:var(--txt);}}
-code{{background:var(--code-bg);color:var(--code-txt);padding:1px 4px;border-radius:3px;font-size:14px;font-family:monospace;}}
-pre{{background:var(--code-bg);color:var(--code-txt);padding:10px;border-radius:6px;overflow-x:auto;}}
-blockquote{{margin:0 0 .7em;padding:0 0 0 1em;border-left:3px solid var(--quote-b);color:var(--quote-c);}}
-strong{{font-weight:700;}}em{{font-style:italic;}}
-a{{color:var(--link);text-decoration:none;font-weight:600;border-bottom:1px dotted var(--link);cursor:pointer;}}
-span[title]{{border-radius:3px;padding:1px 4px;}}
-</style></head><body id="bd">
+<style>{_IFRAME_CSS}</style></head><body id="bd">
 <script>
-(function(){{try{{var bg=window.parent.getComputedStyle(window.parent.document.body).backgroundColor;
-var m=bg.match(/\\d+/g);if(m){{var l=0.299*+m[0]+0.587*+m[1]+0.114*+m[2];
-if(l<128)document.documentElement.setAttribute('data-dark','1');}}}}catch(e){{}}}}
-)();
+{_IFRAME_THEME_JS}
 marked.use({{breaks:true,gfm:true}});
-// marked.parse() conserve les balises HTML inline (<a>, <span>) et interprète le Markdown
 document.getElementById('bd').innerHTML=marked.parse({json.dumps(processed)});
-function resize(){{try{{const h=document.body.scrollHeight;const f=window.frameElement;
-if(f){{f.style.height=(h+12)+'px';f.style.minHeight='0';}}}}catch(e){{}}}}
-setTimeout(resize,20);setTimeout(resize,150);setTimeout(resize,500);
-window.addEventListener('load',resize);
-</script></body></html>""", height=10, scrolling=False)
+{_IFRAME_RESIZE_JS}
+</script></body></html>""",
+                    height=est_h,
+                    scrolling=False,
+                )
         else:
             lines = content.splitlines()
             height = max(220, min(600, 120 + len(lines) * 22))
@@ -448,8 +484,8 @@ window.addEventListener('load',resize);
                             height=height, scrolling=False)
             mermaid_idx += 1
 
-    # Bouton copier le texte brut (sans HTML)
-    components.html(_copy_button_html(text), height=36, scrolling=False)
+    # Bouton copier
+    components.html(_copy_button_html(text), height=44, scrolling=False)
 
 
 def _render_response(text: str, sources: list[dict] = []) -> str:
