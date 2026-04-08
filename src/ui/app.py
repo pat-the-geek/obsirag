@@ -382,26 +382,32 @@ def _render_text_segment(segment: str) -> None:
     components.html(f"""<!DOCTYPE html><html><head><meta charset="utf-8">
 <script src="https://cdn.jsdelivr.net/npm/marked@9/marked.min.js"></script>
 <style>
-:root{{
-  --txt:#262730; --bg:transparent;
-  --code-bg:#f0f2f6; --quote-color:#6b7280; --quote-border:#d1d5db;
-}}
-@media(prefers-color-scheme:dark){{
-  :root{{--txt:#fafafa; --code-bg:#2d2d3a; --quote-color:#a0a0b0; --quote-border:#4a4a5a;}}
-}}
+:root{{--txt:#262730;--code-bg:#f0f2f6;--code-txt:#1a1a2e;--quote-c:#6b7280;--quote-b:#d1d5db;--link:#7c3aed;}}
+[data-dark]{{--txt:#fafafa;--code-bg:#2d2d3a;--code-txt:#e8e8f0;--quote-c:#a0a0b0;--quote-b:#4a4a5a;--link:#a78bfa;}}
 body{{margin:0;padding:4px 0;font-family:ui-sans-serif,system-ui,-apple-system,sans-serif;
-     font-size:16px;line-height:1.7;color:var(--txt);background:var(--bg);
+     font-size:16px;line-height:1.7;color:var(--txt);background:transparent;
      word-wrap:break-word;overflow-x:hidden;}}
 p{{margin:0 0 .7em;}}ul,ol{{margin:0 0 .7em 1.4em;padding:0;}}
 h1,h2,h3{{margin:.8em 0 .4em;color:var(--txt);}}h4,h5,h6{{margin:.6em 0 .3em;color:var(--txt);}}
-code{{background:var(--code-bg);padding:1px 4px;border-radius:3px;font-size:14px;font-family:monospace;color:var(--txt);}}
-pre{{background:var(--code-bg);padding:10px;border-radius:6px;overflow-x:auto;color:var(--txt);}}
-blockquote{{margin:0 0 .7em;padding:0 0 0 1em;border-left:3px solid var(--quote-border);color:var(--quote-color);}}
+code{{background:var(--code-bg);color:var(--code-txt);padding:1px 4px;border-radius:3px;font-size:14px;font-family:monospace;}}
+pre{{background:var(--code-bg);color:var(--code-txt);padding:10px;border-radius:6px;overflow-x:auto;}}
+blockquote{{margin:0 0 .7em;padding:0 0 0 1em;border-left:3px solid var(--quote-b);color:var(--quote-c);}}
 strong{{font-weight:700;}}em{{font-style:italic;}}
-a{{color:#a78bfa;text-decoration:none;font-weight:600;border-bottom:1px dotted #a78bfa;cursor:pointer;}}
+a{{color:var(--link);text-decoration:none;font-weight:600;border-bottom:1px dotted var(--link);cursor:pointer;}}
 span[title]{{border-radius:3px;padding:1px 4px;}}
 </style></head><body id="bd">
 <script>
+// Détecter le thème Streamlit en lisant la couleur de fond du parent
+(function(){{
+  try {{
+    var bg = window.parent.getComputedStyle(window.parent.document.body).backgroundColor;
+    var m = bg.match(/\\d+/g);
+    if (m) {{
+      var lum = 0.299*+m[0] + 0.587*+m[1] + 0.114*+m[2];
+      if (lum < 128) document.documentElement.setAttribute('data-dark','1');
+    }}
+  }} catch(e) {{}}
+}})();
 marked.use({{breaks:true,gfm:true}});
 const raw={json.dumps(processed)};
 document.getElementById('bd').innerHTML=marked.parse(raw);
