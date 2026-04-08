@@ -9,10 +9,12 @@ import streamlit.components.v1 as components
 
 from src.ui.services_cache import get_services
 from src.ui.components.note_bridge_component import note_bridge as _note_bridge
+from src.ui.theme import inject_theme, render_theme_toggle
 
 _icon = str(Path(__file__).parent.parent / "static" / "favicon-32x32.png")
 _icon_b64 = base64.b64encode((Path(__file__).parent.parent / "static" / "android-chrome-512x512.png").read_bytes()).decode()
 st.set_page_config(page_title="Cerveau — ObsiRAG", page_icon=_icon, layout="wide")
+inject_theme()
 
 svc = get_services()
 
@@ -65,6 +67,7 @@ with st.sidebar:
         st.session_state.viewing_note = note_opts[selected_note_title]
         st.switch_page("pages/4_Note.py")
 
+    render_theme_toggle()
     rebuild = False
 
 # ---- Filtrage ----

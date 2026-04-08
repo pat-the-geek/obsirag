@@ -9,11 +9,14 @@ import streamlit as st
 
 from src.config import settings
 from src.ui.services_cache import get_services
+from src.ui.theme import inject_theme, render_theme_toggle
 
 _icon = str(Path(__file__).parent.parent / "static" / "favicon-32x32.png")
 st.set_page_config(page_title="Paramètres — ObsiRAG", page_icon=_icon, layout="wide")
+inject_theme()
 svc = get_services()
 
+render_theme_toggle()
 st.title("⚙️ Paramètres & Statistiques")
 
 tab_config, tab_tokens, tab_index, tab_danger = st.tabs(

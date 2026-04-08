@@ -13,6 +13,7 @@ import streamlit.components.v1 as components
 
 from src.ui.services_cache import get_services
 from src.ui.components.note_bridge_component import note_bridge as _note_bridge
+from src.ui.theme import inject_theme, render_theme_toggle
 
 # ---- Configuration de la page ----
 _icon = str(Path(__file__).parent / "static" / "favicon-32x32.png")
@@ -22,6 +23,7 @@ st.set_page_config(
     page_icon=_icon,
     layout="wide",
 )
+inject_theme()
 
 svc = get_services()
 
@@ -75,120 +77,231 @@ def _open_note_cb(fp: str) -> None:
     st.session_state._goto_note = True
 
 
-def _mermaid_html_chat(code: str, idx: int) -> str:
-    """HTML autonome pour rendu Mermaid dans le chat — clic = plein écran scrollable."""
+def _render_user_bubble(text: str) -> None:
+    """Rendu d'un message user : bulle alignée à droite, avatar cerveau violet ObsiRAG."""
+    escaped = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    _brain_svg = (
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="64" height="64">'
+        '<g fill="none" stroke-linecap="round" stroke-linejoin="round">'
+        '<path d="M 200 310 C 175 310 155 295 148 272 C 138 265 130 252 130 237 C 130 222 138 210 150 203 C 150 185 160 170 175 163 C 175 148 185 136 200 132 C 210 128 220 128 230 132 C 238 120 252 114 265 116 L 265 310 Z" fill="#7c3aed" opacity="0.95"/>'
+        '<path d="M 312 310 C 337 310 357 295 364 272 C 374 265 382 252 382 237 C 382 222 374 210 362 203 C 362 185 352 170 337 163 C 337 148 327 136 312 132 C 302 128 292 128 282 132 C 274 120 260 114 247 116 L 247 310 Z" fill="#6d28d9" opacity="0.95"/>'
+        '<line x1="256" y1="116" x2="256" y2="310" stroke-width="4" stroke="rgba(0,0,0,0.3)"/>'
+        '<path d="M 220 310 C 220 330 230 342 256 345 C 282 342 292 330 292 310" fill="#7c3aed"/>'
+        '<path d="M 175 175 C 165 185 162 200 168 212" stroke="#a78bfa" stroke-width="5"/>'
+        '<path d="M 155 220 C 150 235 155 250 165 258" stroke="#a78bfa" stroke-width="5"/>'
+        '<path d="M 165 270 C 162 282 168 295 180 300" stroke="#a78bfa" stroke-width="5"/>'
+        '<path d="M 200 148 C 192 158 190 172 196 182" stroke="#a78bfa" stroke-width="5"/>'
+        '<path d="M 215 132 C 210 145 212 160 220 168" stroke="#c4b5fd" stroke-width="4"/>'
+        '<path d="M 195 210 C 185 222 185 238 192 248" stroke="#a78bfa" stroke-width="5"/>'
+        '<path d="M 198 268 C 190 278 190 292 198 300" stroke="#a78bfa" stroke-width="4"/>'
+        '<path d="M 337 175 C 347 185 350 200 344 212" stroke="#a78bfa" stroke-width="5"/>'
+        '<path d="M 357 220 C 362 235 357 250 347 258" stroke="#a78bfa" stroke-width="5"/>'
+        '<path d="M 347 270 C 350 282 344 295 332 300" stroke="#a78bfa" stroke-width="5"/>'
+        '<path d="M 312 148 C 320 158 322 172 316 182" stroke="#a78bfa" stroke-width="5"/>'
+        '<path d="M 297 132 C 302 145 300 160 292 168" stroke="#c4b5fd" stroke-width="4"/>'
+        '<path d="M 317 210 C 327 222 327 238 320 248" stroke="#a78bfa" stroke-width="5"/>'
+        '<path d="M 314 268 C 322 278 322 292 314 300" stroke="#a78bfa" stroke-width="4"/>'
+        '<ellipse cx="210" cy="158" rx="18" ry="10" fill="#c4b5fd" opacity="0.25" transform="rotate(-30 210 158)"/>'
+        '<ellipse cx="302" cy="158" rx="18" ry="10" fill="#c4b5fd" opacity="0.15" transform="rotate(30 302 158)"/>'
+        '</g>'
+        '<ellipse cx="256" cy="225" rx="130" ry="110" fill="none" stroke="#7c3aed" stroke-width="1.5" opacity="0.3"/>'
+        '</svg>'
+    )
+    st.markdown(
+        f'<div style="display:flex;justify-content:flex-end;align-items:flex-start;'
+        f'gap:8px;margin:6px 0;padding:0 2px;width:100%">'
+        f'<div style="max-width:75%;'
+        f'background:var(--user-bubble-bg,#264f78);'
+        f'border:1px solid var(--user-bubble-border,#569cd6);'
+        f'border-radius:14px 4px 14px 14px;'
+        f'padding:10px 14px;'
+        f'color:var(--text-color,#d4d4d4);'
+        f'font-size:0.95rem;line-height:1.5;word-break:break-word">'
+        f'{escaped}</div>'
+        f'<div style="flex-shrink:0;margin-top:1px;filter:drop-shadow(0 1px 3px rgba(124,58,237,0.4))">'
+        f'{_brain_svg}</div>'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
+
+
+def _mermaid_fullscreen_html(code: str, idx: int) -> str:
+    """Page HTML autonome plein-écran : zoom/pan, thème auto dark/light."""
     code_json = json.dumps(code)
     return f"""<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>Diagramme — ObsiRAG</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/svg-pan-zoom@3.6.1/dist/svg-pan-zoom.min.js"></script>
+<style>
+  *,*::before,*::after{{box-sizing:border-box;margin:0;padding:0}}
+  html,body{{width:100%;height:100%;overflow:hidden;background:#1e1e1e;color:#d4d4d4}}
+  @media(prefers-color-scheme:light){{html,body{{background:#ffffff;color:#1a1a1a}}}}
+  #toolbar{{
+    position:fixed;top:0;left:0;right:0;z-index:100;
+    display:flex;align-items:center;gap:8px;padding:7px 16px;
+    background:rgba(37,37,38,0.95);border-bottom:1px solid #3e3e42;
+    font-family:'Consolas','Menlo',monospace;font-size:12px;color:#d4d4d4;
+  }}
+  @media(prefers-color-scheme:light){{
+    #toolbar{{background:rgba(247,247,247,0.97);border-color:#e2e2e2;color:#1a1a1a}}
+  }}
+  #toolbar .logo{{font-weight:700;color:#569cd6;margin-right:4px}}
+  @media(prefers-color-scheme:light){{#toolbar .logo{{color:#0066b8}}}}
+  #toolbar .hint{{opacity:0.45;font-size:10px;margin-left:auto}}
+  #container{{position:absolute;inset:0;top:40px}}
+  #container svg{{position:absolute;inset:0;width:100%;height:100%;display:block}}
+  #err{{position:fixed;top:50px;left:50%;transform:translateX(-50%);
+        color:#f87171;font-size:12px;z-index:30;text-align:center}}
+  #loading{{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;
+            background:#1e1e1e;z-index:50;font-size:13px;opacity:0.7}}
+  @media(prefers-color-scheme:light){{#loading{{background:#ffffff}}}}
+</style>
+</head>
+<body>
+<div id="toolbar">
+  <span class="logo">ObsiRAG</span>
+  <span style="opacity:.35">—</span>
+  <span>Diagramme</span>
+  <span class="hint">🖱 molette = zoom &nbsp;·&nbsp; glisser = déplacer &nbsp;·&nbsp; dbl-clic = ajuster</span>
+</div>
+<div id="loading">Rendu en cours…</div>
+<div id="container"></div>
+<div id="err"></div>
+<script>
+(function(){{
+  'use strict';
+  var CODE={code_json};
+  var isDark=!window.matchMedia('(prefers-color-scheme:light)').matches;
+  var TV_LIGHT={{
+    fontFamily:"system-ui,-apple-system,'Segoe UI',Helvetica,Arial,sans-serif",fontSize:'14px',
+    background:'#ffffff',
+    primaryColor:'#dbeafe',primaryTextColor:'#1a1a1a',
+    primaryBorderColor:'#0066b8',lineColor:'#0066b8',
+    secondaryColor:'#ffedd5',tertiaryColor:'#ede9fe',
+    mainBkg:'#dbeafe',nodeBorder:'#0066b8',
+    clusterBkg:'#f0f4ff',clusterBorder:'#d97706',
+    titleColor:'#7c3aed',
+    edgeLabelBackground:'#ffffff'
+  }};
+  var TV_DARK={{
+    fontFamily:"system-ui,-apple-system,'Segoe UI',Helvetica,Arial,sans-serif",fontSize:'14px',
+    background:'#0d1117',
+    primaryColor:'#1f3a5f',primaryTextColor:'#e6edf3',
+    primaryBorderColor:'#58a6ff',lineColor:'#58a6ff',
+    secondaryColor:'#431407',tertiaryColor:'#2d1b52',
+    mainBkg:'#1f3a5f',nodeBorder:'#58a6ff',
+    clusterBkg:'#161b22',clusterBorder:'#a371f7',
+    titleColor:'#a371f7',
+    edgeLabelBackground:'#0d1117'
+  }};
+
+  mermaid.initialize({{
+    startOnLoad:false,securityLevel:'loose',theme:'base',
+    themeVariables:isDark?TV_DARK:TV_LIGHT
+  }});
+
+  mermaid.render('diag_{idx}',CODE).then(function(r){{
+    var loading=document.getElementById('loading');
+    if(loading)loading.remove();
+    var container=document.getElementById('container');
+    container.innerHTML=r.svg;
+    var svgEl=container.querySelector('svg');
+    if(!svgEl)return;
+    if(!svgEl.getAttribute('viewBox'))
+      svgEl.setAttribute('viewBox','0 0 '+(parseFloat(svgEl.getAttribute('width'))||800)+' '+(parseFloat(svgEl.getAttribute('height'))||600));
+    svgEl.removeAttribute('width');svgEl.removeAttribute('height');
+    svgEl.style.cssText='position:absolute;inset:0;width:100%;height:100%;display:block;';
+    setTimeout(function(){{
+      var pz=svgPanZoom(svgEl,{{
+        zoomEnabled:true,panEnabled:true,controlIconsEnabled:true,
+        fit:true,center:true,minZoom:0.02,maxZoom:80,zoomScaleSensitivity:0.3,dblClickZoomEnabled:false
+      }});
+      pz.resize();pz.fit();pz.center();
+      window.addEventListener('resize',function(){{pz.resize();pz.fit();pz.center();}});
+      document.addEventListener('dblclick',function(e){{if(!e.target.closest('#toolbar')){{pz.resize();pz.fit();pz.center();}}}})
+    }},120);
+  }}).catch(function(e){{
+    var loading=document.getElementById('loading');
+    if(loading)loading.remove();
+    document.getElementById('err').textContent='\u26a0 '+e.message;
+  }});
+}})();
+</script>
+</body>
+</html>"""
+
+
+def _mermaid_html_chat(code: str, idx: int) -> str:
+    """Preview Mermaid inline dans le chat — thème auto, clic = plein écran via postMessage."""
+    code_json = json.dumps(code)
+    # HTML de la page fullscreen encodé en base64 pour contourner les restrictions CSP sur blob:
+    import base64
+    fullscreen_b64 = base64.b64encode(
+        _mermaid_fullscreen_html(code, idx).encode("utf-8")
+    ).decode("ascii")
+    return f"""<!DOCTYPE html>
 <html><head><meta charset="utf-8">
-  <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
-  <style>
-    * {{ box-sizing:border-box; margin:0; padding:0; }}
-    body {{ background:transparent; padding:8px 0; }}
-    #out {{ display:flex; justify-content:center; cursor:zoom-in; }}
-    #out svg {{ max-width:100%; height:auto; }}
-    #err {{ color:#F87171; font-family:monospace; font-size:12px; white-space:pre-wrap; padding:8px; }}
-
-    /* Overlay plein écran */
-    #overlay {{
-      display:none; position:fixed; inset:0; z-index:9999;
-      background:rgba(0,0,0,0.82); overflow:auto;
-      cursor:zoom-out;
-    }}
-    #overlay.open {{ display:block; }}
-    #overlay-inner {{
-      min-width:100%; min-height:100%;
-      display:flex; align-items:flex-start; justify-content:center;
-      padding:40px 20px;
-    }}
-    #overlay-inner svg {{
-      max-width:none !important; width:auto; height:auto;
-      background:#fff; border-radius:8px; padding:24px;
-      box-shadow:0 8px 40px rgba(0,0,0,0.5);
-    }}
-    #close-btn {{
-      position:fixed; top:16px; right:24px; z-index:10000;
-      background:#fff; color:#111; border:none; border-radius:50%;
-      width:36px; height:36px; font-size:20px; cursor:pointer;
-      display:none; align-items:center; justify-content:center;
-      box-shadow:0 2px 8px rgba(0,0,0,0.4);
-    }}
-    #overlay.open ~ #close-btn {{ display:flex; }}
-    #hint {{
-      font-size:11px; color:#888; text-align:center; margin-top:4px;
-      font-family:ui-sans-serif,system-ui,sans-serif;
-    }}
-  </style>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<style>
+  *,*::before,*::after{{box-sizing:border-box;margin:0;padding:0}}
+  body{{background:transparent;padding:2px 0}}
+  #out{{display:flex;justify-content:center;cursor:zoom-in;border-radius:6px;overflow:hidden}}
+  #out svg{{max-width:100%;height:auto;border-radius:6px}}
+  #err{{color:#F87171;font-family:monospace;font-size:11px;white-space:pre-wrap;padding:4px}}
+  #hint{{font-size:10px;text-align:center;margin-top:4px;opacity:0.45;
+         font-family:'Consolas','Courier New',monospace}}
+</style>
 </head><body>
-  <div id="out"></div>
-  <div id="hint">🔍 Cliquer pour agrandir</div>
-  <div id="err"></div>
-  <div id="overlay"><div id="overlay-inner"></div></div>
-  <button id="close-btn" title="Fermer">✕</button>
-  <script>
-    (async function() {{
-      const code = {code_json};
-      try {{
-        mermaid.initialize({{ startOnLoad:false, theme:'neutral', securityLevel:'loose',
-                              fontFamily:'ui-sans-serif,system-ui,sans-serif', fontSize:13 }});
-        const {{ svg }} = await mermaid.render('mc{idx}', code);
-        document.getElementById('out').innerHTML = svg;
-
-        // Rendu haute résolution pour l'overlay (même SVG, taille libre)
-        const {{ svg: svgFull }} = await mermaid.render('mc{idx}f', code);
-
-        const overlay = document.getElementById('overlay');
-        const inner   = document.getElementById('overlay-inner');
-        const closeBtn = document.getElementById('close-btn');
-
-        function openOverlay() {{
-          inner.innerHTML = svgFull;
-          overlay.classList.add('open');
-          closeBtn.style.display = 'flex';
-          // Agrandir l'iframe Streamlit pour couvrir l'écran
-          try {{
-            const frame = window.frameElement;
-            if (frame) {{
-              frame._origHeight = frame.style.height;
-              frame.style.cssText = 'position:fixed;inset:0;width:100vw;height:100vh;z-index:9998;border:none;';
-            }}
-          }} catch(e) {{}}
-        }}
-        function closeOverlay() {{
-          overlay.classList.remove('open');
-          closeBtn.style.display = 'none';
-          try {{
-            const frame = window.frameElement;
-            if (frame && frame._origHeight !== undefined) {{
-              frame.style.cssText = '';
-              frame.style.height = frame._origHeight || '';
-            }}
-          }} catch(e) {{}}
-        }}
-
-        document.getElementById('out').addEventListener('click', openOverlay);
-        overlay.addEventListener('click', function(e) {{
-          if (e.target === overlay || e.target === inner) closeOverlay();
-        }});
-        closeBtn.addEventListener('click', closeOverlay);
-        document.addEventListener('keydown', function(e) {{
-          if (e.key === 'Escape') closeOverlay();
-        }});
-      }} catch(e) {{
-        document.getElementById('err').textContent = '\u26a0 Mermaid: ' + e.message;
-      }}
-    }})();
-  </script>
+<div id="out"></div>
+<div id="hint">🔍 Cliquer pour plein écran</div>
+<div id="err"></div>
+<script>
+(function(){{
+  var CODE={code_json};
+  var FS_B64="{fullscreen_b64}";
+  var isDark=!window.matchMedia('(prefers-color-scheme:light)').matches;
+  var TV_LIGHT={{
+    fontFamily:"system-ui,-apple-system,'Segoe UI',Helvetica,Arial,sans-serif",fontSize:'13px',
+    background:'#ffffff',
+    primaryColor:'#dbeafe',primaryTextColor:'#1a1a1a',primaryBorderColor:'#0066b8',lineColor:'#0066b8',
+    secondaryColor:'#ffedd5',tertiaryColor:'#ede9fe',mainBkg:'#dbeafe',
+    nodeBorder:'#0066b8',clusterBkg:'#f0f4ff',clusterBorder:'#d97706',titleColor:'#7c3aed',
+    edgeLabelBackground:'#ffffff'
+  }};
+  var TV_DARK={{
+    fontFamily:"system-ui,-apple-system,'Segoe UI',Helvetica,Arial,sans-serif",fontSize:'13px',
+    background:'#0d1117',
+    primaryColor:'#1f3a5f',primaryTextColor:'#e6edf3',primaryBorderColor:'#58a6ff',lineColor:'#58a6ff',
+    secondaryColor:'#431407',tertiaryColor:'#2d1b52',mainBkg:'#1f3a5f',
+    nodeBorder:'#58a6ff',clusterBkg:'#161b22',clusterBorder:'#a371f7',titleColor:'#a371f7',
+    edgeLabelBackground:'#0d1117'
+  }};
+  mermaid.initialize({{startOnLoad:false,securityLevel:'loose',theme:'base',
+    themeVariables:isDark?TV_DARK:TV_LIGHT}});
+  mermaid.render('prev_{idx}',CODE).then(function(r){{
+    document.getElementById('out').innerHTML=r.svg;
+  }}).catch(function(e){{
+    document.getElementById('err').textContent='\u26a0 '+e.message;
+  }});
+  function openFullscreen(){{
+    try{{
+      var html=atob(FS_B64);
+      var win=window.open('','_blank');
+      if(!win){{alert('Autorisez les popups pour cette page.');return;}}
+      win.document.open();
+      win.document.write(html);
+      win.document.close();
+    }}catch(e){{
+      console.error('Fullscreen error',e);
+    }}
+  }}
+  document.getElementById('out').addEventListener('click',openFullscreen);
+}})();
+</script>
 </body></html>"""
-
-
-
-
-
-
-
-
-
-
 def _render_chat_response(text: str, *, placeholder=None) -> None:
     """
     Rend la réponse finale du chat.
@@ -365,6 +478,8 @@ with st.sidebar:
                              on_click=lambda p=_ph: st.session_state.update({"_pending_query": p})):
                     pass
 
+    render_theme_toggle()
+
 # ---- Zone de chat ----
 st.title("💬 Chat avec votre coffre")
 
@@ -389,11 +504,11 @@ if st.session_state.pop("_goto_note", False):
 
 # Affiche l'historique
 for mi, msg in enumerate(st.session_state.messages):
-    with st.chat_message(msg["role"]):
-        if msg["role"] == "assistant":
-            _render_chat_response(msg["content"], placeholder=None)
-        else:
-            st.markdown(msg["content"])
+    if msg["role"] == "user":
+        _render_user_bubble(msg["content"])
+        continue
+    with st.chat_message("assistant"):
+        _render_chat_response(msg["content"], placeholder=None)
         if msg.get("stats"):
             s = msg["stats"]
             st.caption(
@@ -452,8 +567,7 @@ if user_input:
     svc.learner.log_user_query(user_input)
 
     st.session_state.messages.append({"role": "user", "content": user_input})
-    with st.chat_message("user"):
-        st.markdown(user_input)
+    _render_user_bubble(user_input)
 
     history = [
         {"role": m["role"], "content": m["content"]}

@@ -12,9 +12,11 @@ import streamlit.components.v1 as components
 
 from src.config import settings
 from src.ui.services_cache import get_services
+from src.ui.theme import inject_theme, render_theme_toggle
 
 _icon = str(Path(__file__).parent.parent / "static" / "favicon-32x32.png")
 st.set_page_config(page_title="Note — ObsiRAG", page_icon=_icon, layout="wide")
+inject_theme()
 svc = get_services()
 
 # ---------------------------------------------------------------------------
@@ -147,6 +149,7 @@ with st.sidebar:
 
     st.divider()
     st.page_link("app.py", label="← Retour au chat", icon="💬")
+    render_theme_toggle()
 
 # ---------------------------------------------------------------------------
 # Affichage principal
