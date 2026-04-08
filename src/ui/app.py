@@ -10,6 +10,7 @@ from datetime import datetime
 from pathlib import Path
 
 import streamlit as st
+import streamlit.components.v1 as components
 
 from src.ui.services_cache import get_services
 
@@ -128,20 +129,149 @@ def _highlight_ner(text: str) -> str:
     return "".join(result_parts)
 
 
-def _render_response(text: str, sources: list[dict]) -> str:
-    """Post-traite la réponse : cleanup Mermaid + highlight NER."""
-    # Cleanup blocs Mermaid
+_MERMAID_SPLIT_RE = re.compile(r"```mermaid\s*\n(.*?)```", re.DOTALL)
+
+
+def _mermaid_html_chat(code: str, idx: int) -> str:
+    """HTML autonome pour rendu Mermaid dans le chat — clic = plein écran scrollable."""
+    code_json = json.dumps(code)
+    return f"""<!DOCTYPE html>
+<html><head><meta charset="utf-8">
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+  <style>
+    * {{ box-sizing:border-box; margin:0; padding:0; }}
+    body {{ background:transparent; padding:8px 0; }}
+    #out {{ display:flex; justify-content:center; cursor:zoom-in; }}
+    #out svg {{ max-width:100%; height:auto; }}
+    #err {{ color:#F87171; font-family:monospace; font-size:12px; white-space:pre-wrap; padding:8px; }}
+
+    /* Overlay plein écran */
+    #overlay {{
+      display:none; position:fixed; inset:0; z-index:9999;
+      background:rgba(0,0,0,0.82); overflow:auto;
+      cursor:zoom-out;
+    }}
+    #overlay.open {{ display:block; }}
+    #overlay-inner {{
+      min-width:100%; min-height:100%;
+      display:flex; align-items:flex-start; justify-content:center;
+      padding:40px 20px;
+    }}
+    #overlay-inner svg {{
+      max-width:none !important; width:auto; height:auto;
+      background:#fff; border-radius:8px; padding:24px;
+      box-shadow:0 8px 40px rgba(0,0,0,0.5);
+    }}
+    #close-btn {{
+      position:fixed; top:16px; right:24px; z-index:10000;
+      background:#fff; color:#111; border:none; border-radius:50%;
+      width:36px; height:36px; font-size:20px; cursor:pointer;
+      display:none; align-items:center; justify-content:center;
+      box-shadow:0 2px 8px rgba(0,0,0,0.4);
+    }}
+    #overlay.open ~ #close-btn {{ display:flex; }}
+    #hint {{
+      font-size:11px; color:#888; text-align:center; margin-top:4px;
+      font-family:ui-sans-serif,system-ui,sans-serif;
+    }}
+  </style>
+</head><body>
+  <div id="out"></div>
+  <div id="hint">🔍 Cliquer pour agrandir</div>
+  <div id="err"></div>
+  <div id="overlay"><div id="overlay-inner"></div></div>
+  <button id="close-btn" title="Fermer">✕</button>
+  <script>
+    (async function() {{
+      const code = {code_json};
+      try {{
+        mermaid.initialize({{ startOnLoad:false, theme:'neutral', securityLevel:'loose',
+                              fontFamily:'ui-sans-serif,system-ui,sans-serif', fontSize:13 }});
+        const {{ svg }} = await mermaid.render('mc{idx}', code);
+        document.getElementById('out').innerHTML = svg;
+
+        // Rendu haute résolution pour l'overlay (même SVG, taille libre)
+        const {{ svg: svgFull }} = await mermaid.render('mc{idx}f', code);
+
+        const overlay = document.getElementById('overlay');
+        const inner   = document.getElementById('overlay-inner');
+        const closeBtn = document.getElementById('close-btn');
+
+        function openOverlay() {{
+          inner.innerHTML = svgFull;
+          overlay.classList.add('open');
+          closeBtn.style.display = 'flex';
+          // Agrandir l'iframe Streamlit pour couvrir l'écran
+          try {{
+            const frame = window.frameElement;
+            if (frame) {{
+              frame._origHeight = frame.style.height;
+              frame.style.cssText = 'position:fixed;inset:0;width:100vw;height:100vh;z-index:9998;border:none;';
+            }}
+          }} catch(e) {{}}
+        }}
+        function closeOverlay() {{
+          overlay.classList.remove('open');
+          closeBtn.style.display = 'none';
+          try {{
+            const frame = window.frameElement;
+            if (frame && frame._origHeight !== undefined) {{
+              frame.style.cssText = '';
+              frame.style.height = frame._origHeight || '';
+            }}
+          }} catch(e) {{}}
+        }}
+
+        document.getElementById('out').addEventListener('click', openOverlay);
+        overlay.addEventListener('click', function(e) {{
+          if (e.target === overlay || e.target === inner) closeOverlay();
+        }});
+        closeBtn.addEventListener('click', closeOverlay);
+        document.addEventListener('keydown', function(e) {{
+          if (e.key === 'Escape') closeOverlay();
+        }});
+      }} catch(e) {{
+        document.getElementById('err').textContent = '\u26a0 Mermaid: ' + e.message;
+      }}
+    }})();
+  </script>
+</body></html>"""
+
+
+def _render_chat_response(text: str) -> None:
+    """Rend la réponse dans Streamlit : texte NER-highlighté + blocs Mermaid visuels."""
+    # Cleanup accents/émojis dans les blocs Mermaid
+    def _clean_block(m: re.Match) -> str:
+        return f"```mermaid\n{_clean_mermaid(m.group(1))}\n```"
+    text = _MERMAID_SPLIT_RE.sub(_clean_block, text)
+
+    # Découper : indices pairs = texte, indices impairs = code Mermaid
+    segments = _MERMAID_SPLIT_RE.split(text)
+    mermaid_idx = 0
+    for i, segment in enumerate(segments):
+        if i % 2 == 0:
+            highlighted = _highlight_ner(segment)
+            if highlighted.strip():
+                st.markdown(highlighted, unsafe_allow_html=True)
+        else:
+            lines = segment.strip().splitlines()
+            height = max(220, min(600, 120 + len(lines) * 22))
+            st.caption("📊 Diagramme Mermaid")
+            components.html(_mermaid_html_chat(segment.strip(), mermaid_idx),
+                            height=height, scrolling=False)
+            mermaid_idx += 1
+
+
+def _render_response(text: str, sources: list[dict] = []) -> str:
+    """Retourne le texte post-traité (cleanup Mermaid + NER) sans rendu Streamlit."""
     def _clean_block(m: re.Match) -> str:
         lang = m.group(1)
         code = m.group(2)
         if "mermaid" in lang.lower():
             code = _clean_mermaid(code)
         return f"```{lang}\n{code}\n```"
-
     text = re.sub(r"```([^\n]*)\n(.*?)```", _clean_block, text, flags=re.DOTALL)
-    # Highlight NER via liste officielle WUDD.ai
-    text = _highlight_ner(text)
-    return text
+    return _highlight_ner(text)
 
 
 # ---- Statut auto-learner (fragment auto-rafraîchi toutes les 5s) ----
@@ -264,11 +394,10 @@ if "messages" not in st.session_state:
     st.session_state.messages = []
 
 # Affiche l'historique
-for msg in st.session_state.messages:
+for mi, msg in enumerate(st.session_state.messages):
     with st.chat_message(msg["role"]):
         if msg["role"] == "assistant":
-            rendered_hist = _render_response(msg["content"], msg.get("sources", []))
-            st.markdown(rendered_hist, unsafe_allow_html=True)
+            _render_chat_response(msg["content"])
         else:
             st.markdown(msg["content"])
         if msg.get("stats"):
@@ -293,7 +422,7 @@ for msg in st.session_state.messages:
                         )
                         st.caption(src.get("text", "")[:300] + "…")
                     with col_btn:
-                        if fp and st.button("📖", key=f"hist_src_{id(msg)}_{hi}", help="Ouvrir la note"):
+                        if fp and st.button("📖", key=f"hist_src_{mi}_{hi}_{fp[-20:]}", help="Ouvrir la note"):
                             st.session_state.viewing_note = fp
                             st.switch_page("pages/4_Note.py")
                     st.divider()
@@ -388,9 +517,9 @@ if user_input:
                         f"⚡ *{token_count} tokens · {elapsed:.1f}s · {tps:.0f} tok/s*"
                     )
 
-            # Affichage final propre — cleanup Mermaid + highlight NER
-            rendered = _render_response(full_response, sources)
-            response_area.markdown(rendered, unsafe_allow_html=True)
+            # Affichage final propre — Mermaid visuel + highlight NER
+            response_area.empty()
+            _render_chat_response(full_response)
             total = time.perf_counter() - t0
             ttft_val = (first_token_time - t0) if first_token_time else total
             tps_val = token_count / max(0.01, total - ttft_val)
@@ -434,7 +563,7 @@ if user_input:
                         )
                         st.caption(src.get("text", "")[:300] + "…")
                     with col_btn:
-                        if fp and st.button("📖", key=f"open_src_{i}_{fp[:20]}", help="Ouvrir la note"):
+                        if fp and st.button("📖", key=f"open_src_{i}_{fp[-20:]}", help="Ouvrir la note"):
                             st.session_state.viewing_note = fp
                             st.switch_page("pages/4_Note.py")
                     st.divider()
