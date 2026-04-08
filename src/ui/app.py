@@ -382,16 +382,23 @@ def _render_text_segment(segment: str) -> None:
     components.html(f"""<!DOCTYPE html><html><head><meta charset="utf-8">
 <script src="https://cdn.jsdelivr.net/npm/marked@9/marked.min.js"></script>
 <style>
+:root{{
+  --txt:#262730; --bg:transparent;
+  --code-bg:#f0f2f6; --quote-color:#6b7280; --quote-border:#d1d5db;
+}}
+@media(prefers-color-scheme:dark){{
+  :root{{--txt:#fafafa; --code-bg:#2d2d3a; --quote-color:#a0a0b0; --quote-border:#4a4a5a;}}
+}}
 body{{margin:0;padding:4px 0;font-family:ui-sans-serif,system-ui,-apple-system,sans-serif;
-     font-size:16px;line-height:1.7;color:#262730;background:transparent;
+     font-size:16px;line-height:1.7;color:var(--txt);background:var(--bg);
      word-wrap:break-word;overflow-x:hidden;}}
 p{{margin:0 0 .7em;}}ul,ol{{margin:0 0 .7em 1.4em;padding:0;}}
-h1,h2,h3{{margin:.8em 0 .4em;}}h4,h5,h6{{margin:.6em 0 .3em;}}
-code{{background:#f0f2f6;padding:1px 4px;border-radius:3px;font-size:14px;font-family:monospace;}}
-pre{{background:#f0f2f6;padding:10px;border-radius:6px;overflow-x:auto;}}
-blockquote{{margin:0 0 .7em;padding:0 0 0 1em;border-left:3px solid #d1d5db;color:#6b7280;}}
+h1,h2,h3{{margin:.8em 0 .4em;color:var(--txt);}}h4,h5,h6{{margin:.6em 0 .3em;color:var(--txt);}}
+code{{background:var(--code-bg);padding:1px 4px;border-radius:3px;font-size:14px;font-family:monospace;color:var(--txt);}}
+pre{{background:var(--code-bg);padding:10px;border-radius:6px;overflow-x:auto;color:var(--txt);}}
+blockquote{{margin:0 0 .7em;padding:0 0 0 1em;border-left:3px solid var(--quote-border);color:var(--quote-color);}}
 strong{{font-weight:700;}}em{{font-style:italic;}}
-a{{color:#7c3aed;text-decoration:none;font-weight:600;border-bottom:1px dotted #7c3aed;cursor:pointer;}}
+a{{color:#a78bfa;text-decoration:none;font-weight:600;border-bottom:1px dotted #a78bfa;cursor:pointer;}}
 span[title]{{border-radius:3px;padding:1px 4px;}}
 </style></head><body id="bd">
 <script>
