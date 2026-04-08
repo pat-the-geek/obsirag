@@ -405,22 +405,18 @@ for mi, msg in enumerate(st.session_state.messages):
                 for hi, src in enumerate(msg["sources"]):
                     _m = src.get("metadata", {})
                     title = _m.get("note_title", _m.get("file_path", ""))
-                    section = _m.get("section_title", "")
                     fp = _m.get("file_path", "")
-                    col_info, col_btn = st.columns([5, 1])
+                    col_info, col_btn = st.columns([8, 1])
                     with col_info:
-                        st.markdown(
-                            f"**{title}**"
-                            f"{'  —  ' + section if section else ''}  \n"
-                            f"*{_m.get('date_modified','')[:10]}* · Score `{src.get('score',0):.2f}`"
+                        st.caption(
+                            f"**{title}** · {_m.get('date_modified','')[:10]}"
+                            f" · Score `{src.get('score',0):.2f}`"
                         )
-                        st.caption(src.get("text", "")[:300] + "…")
                     with col_btn:
                         if fp:
                             st.button("📖", key=f"hist_src_{mi}_{hi}_{fp[-20:]}",
                                       help="Ouvrir la note",
                                       on_click=_open_note_cb, args=(fp,))
-                    st.divider()
 
 # Suggestions de démarrage
 if not st.session_state.messages:
@@ -550,25 +546,18 @@ if user_input:
                 for i, src in enumerate(sources[:8]):
                     _m = src.get("metadata", {})
                     title = _m.get("note_title", _m.get("file_path", ""))
-                    section = _m.get("section_title", "")
-                    date = _m.get("date_modified", "")[:10]
-                    score = src.get("score", 0)
                     fp = _m.get("file_path", "")
-
-                    col_info, col_btn = st.columns([5, 1])
+                    col_info, col_btn = st.columns([8, 1])
                     with col_info:
-                        st.markdown(
-                            f"**{title}**"
-                            f"{'  —  ' + section if section else ''}  \n"
-                            f"*{date}* · Score `{score:.2f}`"
+                        st.caption(
+                            f"**{title}** · {_m.get('date_modified','')[:10]}"
+                            f" · Score `{src.get('score',0):.2f}`"
                         )
-                        st.caption(src.get("text", "")[:300] + "…")
                     with col_btn:
                         if fp:
                             st.button("📖", key=f"open_src_{i}_{fp[-20:]}",
                                       help="Ouvrir la note",
                                       on_click=_open_note_cb, args=(fp,))
-                    st.divider()
 
     # Sauvegarde dans l'historique et les stats sidebar
     st.session_state.messages.append({
