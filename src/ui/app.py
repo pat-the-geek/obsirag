@@ -2,7 +2,9 @@
 ObsiRAG — Page principale : Chat
 """
 import base64
+import re
 import time
+import unicodedata
 from datetime import datetime
 
 from pathlib import Path
@@ -21,6 +23,98 @@ st.set_page_config(
 )
 
 svc = get_services()
+
+
+# ---- Helpers rendu ----
+
+_EMOJI_RE = re.compile(
+    "[\U0001F000-\U0001FFFF"
+    "\U00002600-\U000027BF"
+    "\U0001F300-\U0001F9FF"
+    "\U00002702-\U000027B0]+",
+    flags=re.UNICODE,
+)
+
+
+def _clean_mermaid(code: str) -> str:
+    """Supprime accents, émojis et caractères spéciaux non ASCII dans du code Mermaid."""
+    # Supprimer les émojis
+    code = _EMOJI_RE.sub("", code)
+    lines = []
+    for line in code.splitlines():
+        # Normaliser les caractères accentués -> ASCII de base
+        normalized = unicodedata.normalize("NFD", line)
+        ascii_line = "".join(c for c in normalized if unicodedata.category(c) != "Mn")
+        # Supprimer tout caractère non imprimable non ASCII (hors tab/espace)
+        ascii_line = re.sub(r"[^\x09\x20-\x7E]", "", ascii_line)
+        lines.append(ascii_line)
+    return "\n".join(lines)
+
+
+_NER_COLORS = {
+    "persons":   ("#d4e8ff", "#1a4a7a"),   # bleu
+    "orgs":      ("#d4f5e8", "#1a5c3a"),   # vert
+    "locations": ("#fff3d4", "#7a5200"),   # orange
+    "misc":      ("#f0d4ff", "#5a1a7a"),   # violet
+}
+
+
+def _highlight_ner(text: str, sources: list[dict]) -> str:
+    """Entoure les entités NER trouvées dans les sources avec du HTML coloré."""
+    # Collecter toutes les entités
+    entities: dict[str, str] = {}  # nom -> catégorie
+    for src in sources:
+        m = src.get("metadata", {})
+        for cat in ("persons", "orgs", "locations", "misc"):
+            raw = m.get(f"ner_{cat}", "")
+            if not raw:
+                continue
+            for ent in raw.split(","):
+                ent = ent.strip()
+                if len(ent) >= 3:
+                    entities[ent] = cat
+    if not entities:
+        return text
+
+    # Trier par longueur décroissante pour éviter les chevauchements
+    sorted_ents = sorted(entities.keys(), key=len, reverse=True)
+
+    # Séparer les blocs code/mermaid pour ne pas les modifier
+    parts = re.split(r"(```.*?```)", text, flags=re.DOTALL)
+    result_parts = []
+    for part in parts:
+        if part.startswith("```"):
+            result_parts.append(part)
+            continue
+        for ent in sorted_ents:
+            cat = entities[ent]
+            bg, fg = _NER_COLORS.get(cat, ("#eeeeee", "#333333"))
+            label = {"persons": "👤", "orgs": "🏢", "locations": "📍", "misc": "🔖"}.get(cat, "")
+            span = (
+                f'<span style="background:{bg};color:{fg};border-radius:3px;'
+                f'padding:1px 4px;font-weight:600" '
+                f'title="{cat}">{ent}</span>'
+            )
+            part = re.sub(rf"\b{re.escape(ent)}\b", span, part)
+        result_parts.append(part)
+    return "".join(result_parts)
+
+
+def _render_response(text: str, sources: list[dict]) -> str:
+    """Post-traite la réponse : cleanup Mermaid + highlight NER."""
+    # Cleanup blocs Mermaid
+    def _clean_block(m: re.Match) -> str:
+        lang = m.group(1)
+        code = m.group(2)
+        if "mermaid" in lang.lower():
+            code = _clean_mermaid(code)
+        return f"```{lang}\n{code}\n```"
+
+    text = re.sub(r"```([^\n]*)\n(.*?)```", _clean_block, text, flags=re.DOTALL)
+    # Highlight NER
+    text = _highlight_ner(text, sources)
+    return text
+
 
 # ---- Statut auto-learner (fragment auto-rafraîchi toutes les 5s) ----
 @st.fragment(run_every=5)
@@ -144,7 +238,11 @@ if "messages" not in st.session_state:
 # Affiche l'historique
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
-        st.markdown(msg["content"])
+        if msg["role"] == "assistant":
+            rendered_hist = _render_response(msg["content"], msg.get("sources", []))
+            st.markdown(rendered_hist, unsafe_allow_html=True)
+        else:
+            st.markdown(msg["content"])
         if msg.get("stats"):
             s = msg["stats"]
             st.caption(
@@ -262,8 +360,9 @@ if user_input:
                         f"⚡ *{token_count} tokens · {elapsed:.1f}s · {tps:.0f} tok/s*"
                     )
 
-            # Affichage final propre
-            response_area.markdown(full_response)
+            # Affichage final propre — cleanup Mermaid + highlight NER
+            rendered = _render_response(full_response, sources)
+            response_area.markdown(rendered, unsafe_allow_html=True)
             total = time.perf_counter() - t0
             ttft_val = (first_token_time - t0) if first_token_time else total
             tps_val = token_count / max(0.01, total - ttft_val)
