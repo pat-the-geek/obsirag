@@ -420,6 +420,21 @@ class AutoLearner:
             self._set_status(note=title, step="⚠️ Aucune réponse QA valide, insight non créé")
             logger.warning(f"Auto-learner : aucune réponse QA pour '{title}', artefact non créé")
 
+        # ---- Auto-renommage : titre représentatif via IA ----
+        fp = note_meta.get("file_path", "")
+        if fp and not self._is_obsirag_generated(fp):
+            abs_path = settings.vault / fp
+            if abs_path.exists():
+                self._set_status(note=title, step="Suggestion d'un titre représentatif…")
+                new_title = self._suggest_note_title(content_preview, title)
+                if new_title:
+                    self._set_status(note=title, step=f"Renommage : '{new_title}'…")
+                    result = self._rename_note_in_vault(abs_path, new_title, fp)
+                    if result:
+                        self._set_status(note=new_title, step=f"✅ Note renommée → '{new_title}'")
+                    else:
+                        self._set_status(note=title, step="⚠️ Renommage annulé (conflit ou erreur)")
+
     def _is_weak_answer(self, answer: str) -> bool:
         return len(answer.strip()) < _MIN_ANSWER_LENGTH or bool(_WEAK_ANSWER_PATTERNS.search(answer))
 
@@ -1288,6 +1303,128 @@ class AutoLearner:
         ]
         out_path.write_text("\n".join(lines), encoding="utf-8")
         logger.info(f"Synapse créée : {title_a} ↔ {title_b} ({score:.0%})")
+
+    # ---- Synthèse hebdomadaire ----
+
+    def _suggest_note_title(self, content_preview: str, current_title: str) -> str | None:
+        """
+        Demande au LLM un titre court et représentatif pour la note.
+        Retourne None si le titre actuel est déjà bon ou si le LLM échoue.
+        """
+        prompt = (
+            f"Voici un extrait d'une note personnelle intitulée actuellement : \"{current_title}\"\n\n"
+            f"<extrait>\n{content_preview[:1500]}\n</extrait>\n\n"
+            f"Propose un titre court (3 à 7 mots maximum) en français, représentatif du contenu réel, "
+            f"sans guillemets, sans ponctuation finale, sans préfixe comme 'Titre :'. "
+            f"Si le titre actuel est déjà représentatif, réponds exactement : CONSERVER\n"
+            f"Sinon, réponds uniquement avec le nouveau titre."
+        )
+        try:
+            result = self._rag._llm.chat(
+                [{"role": "user", "content": prompt}],
+                temperature=0.2,
+                max_tokens=50,
+                operation="autolearn_rename",
+            )
+            candidate = result.strip().strip('"').strip("'")
+            if not candidate or candidate.upper() == "CONSERVER":
+                return None
+            # Rejeter si trop long (>80 chars) ou identique au titre actuel
+            if len(candidate) > 80:
+                return None
+            if candidate.lower().strip() == current_title.lower().strip():
+                return None
+            return candidate
+        except Exception as exc:
+            logger.debug(f"Suggestion titre échouée pour '{current_title}': {exc}")
+            return None
+
+    def _rename_note_in_vault(
+        self,
+        old_abs: "Path",
+        new_title: str,
+        note_rel: str,
+    ) -> "Path | None":
+        """
+        Renomme `old_abs` vers un nouveau fichier basé sur `new_title`,
+        met à jour tous les [[wikilinks]] dans le vault, re-indexe.
+        Retourne le nouveau chemin absolu, ou None en cas d'échec.
+        """
+        from pathlib import Path as _Path
+        vault = settings.vault
+
+        # Construire le nouveau nom de fichier
+        safe = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "", new_title).strip()
+        safe = re.sub(r"\s+", " ", safe)
+        new_abs = old_abs.parent / f"{safe}.md"
+
+        # Éviter d'écraser un fichier existant
+        if new_abs.exists() and new_abs != old_abs:
+            logger.warning(f"Rename abort: '{new_abs.name}' existe déjà")
+            return None
+
+        old_stem = old_abs.stem
+        new_stem = new_abs.stem
+
+        try:
+            old_abs.rename(new_abs)
+        except Exception as exc:
+            logger.error(f"Impossible de renommer '{old_abs.name}': {exc}")
+            return None
+
+        logger.info(f"Note renommée : '{old_stem}' → '{new_stem}'")
+
+        # Mettre à jour le frontmatter title dans le nouveau fichier
+        try:
+            content = new_abs.read_text(encoding="utf-8")
+            fm_end = self._fm_end(content)
+            if fm_end != -1:
+                fm = content[3:fm_end]
+                if re.search(r"^title\s*:", fm, re.MULTILINE):
+                    fm = re.sub(r"^(title\s*:).*$", f"title: {new_stem}", fm, flags=re.MULTILINE)
+                else:
+                    fm = f"title: {new_stem}\n" + fm
+                content = "---\n" + fm + content[fm_end:]
+            else:
+                content = f"---\ntitle: {new_stem}\n---\n" + content
+            new_abs.write_text(content, encoding="utf-8")
+        except Exception as exc:
+            logger.warning(f"Maj frontmatter title échouée: {exc}")
+
+        # Mettre à jour [[old_stem]] → [[new_stem]] dans tout le vault
+        # Patterns : [[old_stem]], [[old_stem|alias]], [[old_stem#section]]
+        pattern = re.compile(
+            r"\[\[" + re.escape(old_stem) + r"([\|#\]])",
+            re.IGNORECASE,
+        )
+        replacement = r"[[" + new_stem + r"\1"
+        updated_files = 0
+        for md_file in vault.rglob("*.md"):
+            if md_file == new_abs:
+                continue
+            try:
+                text = md_file.read_text(encoding="utf-8")
+                if old_stem.lower() in text.lower():
+                    new_text = pattern.sub(replacement, text)
+                    if new_text != text:
+                        md_file.write_text(new_text, encoding="utf-8")
+                        updated_files += 1
+                        # Re-indexer les fichiers modifiés
+                        self._indexer.index_note(md_file)
+            except Exception as exc:
+                logger.warning(f"Update wikilinks dans '{md_file.name}': {exc}")
+
+        if updated_files:
+            logger.info(f"Wikilinks mis à jour dans {updated_files} fichier(s)")
+
+        # Re-indexer la note renommée (supprime old_rel, indexe new_rel)
+        try:
+            self._indexer.remove_note(old_abs)  # old_abs n'existe plus mais rel_path est connu
+        except Exception:
+            pass
+        self._indexer.index_note(new_abs)
+
+        return new_abs
 
     # ---- Synthèse hebdomadaire ----
 
