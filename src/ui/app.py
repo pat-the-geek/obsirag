@@ -8,6 +8,7 @@ import time
 import unicodedata
 from datetime import datetime
 from pathlib import Path
+from urllib.parse import quote
 
 import streamlit as st
 import streamlit.components.v1 as components
@@ -141,6 +142,35 @@ def _highlight_ner(text: str) -> str:
 _MERMAID_SPLIT_RE = re.compile(r"```mermaid\s*\n(.*?)```", re.DOTALL)
 
 
+def _linkify_wikilinks(text: str) -> str:
+    """Convertit [[Titre de note]] en liens obsidian:// cliquables."""
+    from src.config import settings as _s
+    vault = quote(_s.obsidian_vault, safe="")
+
+    def _repl(m: re.Match) -> str:
+        inner = m.group(1).strip()
+        parts = inner.split("|", 1)
+        file_name = parts[0].strip()
+        display = parts[1].strip() if len(parts) > 1 else file_name
+        encoded = quote(file_name, safe="")
+        url = f"obsidian://open?vault={vault}&file={encoded}"
+        return (
+            f'<a href="{url}" '
+            f'style="color:#7c3aed;text-decoration:none;font-weight:600;'
+            f'border-bottom:1px dotted #7c3aed" '
+            f'title="Ouvrir dans Obsidian">[[{display}]]</a>'
+        )
+
+    # Ne pas modifier les blocs code déjà traités (entre balises HTML)
+    return re.sub(r"\[\[([^\]]+)\]\]", _repl, text)
+
+
+def _open_note_cb(fp: str) -> None:
+    """Callback on_click : mémorise la note à ouvrir, déclenche navigate après rerun."""
+    st.session_state.viewing_note = fp
+    st.session_state._goto_note = True
+
+
 def _mermaid_html_chat(code: str, idx: int) -> str:
     """HTML autonome pour rendu Mermaid dans le chat — clic = plein écran scrollable."""
     code_json = json.dumps(code)
@@ -259,7 +289,7 @@ def _render_chat_response(text: str) -> None:
     mermaid_idx = 0
     for i, segment in enumerate(segments):
         if i % 2 == 0:
-            highlighted = _highlight_ner(segment)
+            highlighted = _linkify_wikilinks(_highlight_ner(segment))
             if highlighted.strip():
                 st.markdown(highlighted, unsafe_allow_html=True)
         else:
@@ -402,6 +432,10 @@ if not llm_ok:
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
+# Navigation différée : déclenchée par on_click des boutons 📖
+if st.session_state.pop("_goto_note", False):
+    st.switch_page("pages/4_Note.py")
+
 # Affiche l'historique
 for mi, msg in enumerate(st.session_state.messages):
     with st.chat_message(msg["role"]):
@@ -431,9 +465,10 @@ for mi, msg in enumerate(st.session_state.messages):
                         )
                         st.caption(src.get("text", "")[:300] + "…")
                     with col_btn:
-                        if fp and st.button("📖", key=f"hist_src_{mi}_{hi}_{fp[-20:]}", help="Ouvrir la note"):
-                            st.session_state.viewing_note = fp
-                            st.switch_page("pages/4_Note.py")
+                        if fp:
+                            st.button("📖", key=f"hist_src_{mi}_{hi}_{fp[-20:]}",
+                                      help="Ouvrir la note",
+                                      on_click=_open_note_cb, args=(fp,))
                     st.divider()
 
 # Suggestions de démarrage
@@ -572,9 +607,10 @@ if user_input:
                         )
                         st.caption(src.get("text", "")[:300] + "…")
                     with col_btn:
-                        if fp and st.button("📖", key=f"open_src_{i}_{fp[-20:]}", help="Ouvrir la note"):
-                            st.session_state.viewing_note = fp
-                            st.switch_page("pages/4_Note.py")
+                        if fp:
+                            st.button("📖", key=f"open_src_{i}_{fp[-20:]}",
+                                      help="Ouvrir la note",
+                                      on_click=_open_note_cb, args=(fp,))
                     st.divider()
 
     # Sauvegarde dans l'historique et les stats sidebar
