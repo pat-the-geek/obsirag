@@ -25,6 +25,11 @@ st.set_page_config(
 
 svc = get_services()
 
+# Pending query (depuis sidebar historique ou suggestions) — capturé dès le début
+if "prompt_history" not in st.session_state:
+    st.session_state.prompt_history = []
+_pending = st.session_state.pop("_pending_query", None)
+
 
 # ---- Helpers rendu ----
 
@@ -374,11 +379,8 @@ def _render_text_segment(segment: str) -> None:
     if '<a ' not in processed and '<span ' not in processed:
         st.markdown(processed, unsafe_allow_html=True)
         return
-    # Estimation hauteur : nb lignes * 26px + marge
-    lines = segment.count('\n') + sum(
-        max(1, (len(l) + 79) // 80) for l in segment.split('\n')
-    )
-    height = max(60, min(1500, lines * 26 + 30))
+    # Estimation hauteur : on démarre petit, le JS auto-resize ajuste
+    height = 10
     components.html(f"""<!DOCTYPE html><html><head><meta charset="utf-8">
 <script src="https://cdn.jsdelivr.net/npm/marked@9/marked.min.js"></script>
 <style>
@@ -411,8 +413,12 @@ span[title]{{border-radius:3px;padding:1px 4px;}}
 marked.use({{breaks:true,gfm:true}});
 const raw={json.dumps(processed)};
 document.getElementById('bd').innerHTML=marked.parse(raw);
-function resize(){{try{{const h=document.body.scrollHeight;const f=window.frameElement;if(f)f.style.height=(h+10)+'px';}}catch(e){{}}}}
-setTimeout(resize,30);setTimeout(resize,200);
+function resize(){{try{{const h=document.body.scrollHeight;
+        const f=window.frameElement;
+        if(f){{f.style.height=(h+12)+'px';f.style.minHeight=(h+12)+'px';}}
+        }}catch(e){{}}}}
+setTimeout(resize,20);setTimeout(resize,100);setTimeout(resize,400);
+window.addEventListener('load',resize);
 </script></body></html>""", height=height, scrolling=False)
 
 
@@ -573,9 +579,9 @@ with st.sidebar:
             with _col_t:
                 st.caption(_ph[:80] + ("…" if len(_ph) > 80 else ""))
             with _col_b:
-                if st.button("↩", key=f"ph_{_pi}", help="Réutiliser"):
-                    st.session_state._pending_query = _ph
-                    st.rerun()
+                if st.button("↩", key=f"ph_{_pi}", help="Réutiliser",
+                             on_click=lambda p=_ph: st.session_state.update({"_pending_query": p})):
+                    pass
 
 # ---- Zone de chat ----
 st.title("💬 Chat avec votre coffre")
@@ -650,7 +656,7 @@ if not st.session_state.messages:
                 st.session_state._pending_query = sug
                 st.rerun()
 
-pending = st.session_state.pop("_pending_query", None)
+pending = _pending
 
 user_input = st.chat_input("Posez une question sur votre coffre…") or pending
 
