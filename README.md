@@ -221,7 +221,7 @@ Le découpage respecte la structure de la note : d'abord par section (`## Titre`
 
 ### 2. Vectorisation (embedding)
 
-Chaque chunk est transformé en un **vecteur numérique** — une liste de ~768 nombres — par le modèle `paraphrase-multilingual-MiniLM-L12-v2` (sentence-transformers, exécuté localement). Ce vecteur encode le *sens* du texte : deux passages sémantiquement proches produisent des vecteurs proches dans l'espace mathématique, même s'ils n'ont aucun mot en commun.
+Chaque chunk est transformé en un **vecteur numérique** — une liste de ~768 nombres — par le modèle `nomic-embed-text` via **Ollama** (calculs sur GPU/ANE du Mac, sans charge CPU dans Docker). Ce vecteur encode le *sens* du texte : deux passages sémantiquement proches produisent des vecteurs proches dans l'espace mathématique, même s'ils n'ont aucun mot en commun.
 
 ### 3. Stockage dans ChromaDB
 
