@@ -257,10 +257,12 @@ ObsiRAG est conçu pour fonctionner **en tâche de fond sur un MacBook Air M5 16
 Ce délai est intentionnel et s'explique par la mécanique du cycle :
 
 - L'auto-learner se réveille **toutes les 60 minutes** et traite au maximum **3 notes nouvelles** par cycle (full-scan)
-- Pour chaque note, il génère 3 questions et effectue des appels LLM espacés de **15 secondes** entre chaque question, et de **30 secondes** entre chaque note
-- Résultat : 200 notes ÷ 3 notes/cycle × 60 min/cycle ≈ **67 heures**, soit environ 3 jours en fonctionnement continu
+- Le traitement complet d'une note (génération des questions + réponses LLM + recherche web) prend de **5 à 12 minutes** selon la complexité du contenu, auxquelles s'ajoutent les pauses de **15 secondes** entre chaque question et **30 secondes** entre chaque note
+- Résultat : 200 notes ÷ 3 notes/cycle × 60 min/cycle ≈ **67 heures** de fonctionnement actif, soit environ 3 jours en usage continu
 
 Ces pauses sont délibérées — elles garantissent qu'Ollama reste disponible pour le chat en temps réel et que la machine n'est pas saturée en arrière-plan. Les paramètres `AUTOLEARN_FULLSCAN_PER_RUN` et `AUTOLEARN_INTERVAL_MINUTES` dans `.env` permettent d'accélérer l'amorçage si vous le souhaitez (ex. 5 notes/cycle toutes les 30 min pour traiter le coffre en moins d'une journée).
+
+> **Sur MacBook :** le container Docker et Ollama se remettent automatiquement en marche à la sortie de veille — aucune intervention manuelle n'est nécessaire. L'auto-learner reprend son cycle là où il s'était arrêté, de façon totalement transparente.
 
 Une fois l'amorçage terminé, seules les notes nouvelles ou récemment modifiées sont retraitées à chaque cycle — le fonctionnement courant est quasi-instantané.
 
