@@ -79,6 +79,15 @@ _WUDDAI_TYPE_TO_CAT = {
     "FAC":     "lieu",
 }
 
+# Mots courants à ne jamais surligner même s'ils sont dans le cache WUDD.ai
+_NER_STOPWORDS = {
+    "outil", "outils", "chose", "choses", "point", "points", "fois",
+    "place", "part", "plus", "type", "types", "base", "bien",
+    "aide", "aides", "sens", "art", "clé", "clés", "cas", "lot",
+    "set", "get", "run", "use", "new", "one", "two", "top", "pro",
+    "max", "min", "end", "api", "url", "key", "id",
+}
+
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def _load_wuddai_index() -> dict[str, dict]:
@@ -119,6 +128,9 @@ def _highlight_ner(text: str) -> str:
             if ent_type not in _NER_COLORS:
                 continue
             official_value = entity["value"]
+            # Filtrer les mots courants et les entités trop courtes (< 4 chars)
+            if official_value.lower() in _NER_STOPWORDS or len(official_value) < 4:
+                continue
             bg, fg = _NER_COLORS[ent_type]
             cat_label = _WUDDAI_TYPE_TO_CAT.get(ent_type, ent_type.lower())
             span = (
@@ -353,6 +365,44 @@ def _copy_button_html(text: str) -> str:
 </body></html>"""
 
 
+def _render_text_segment(segment: str) -> None:
+    """Rend un segment texte avec liens + NER.
+    Utilise components.html() si HTML présent (onclick préservé, pas de sanitisation)."""
+    if not segment.strip():
+        return
+    processed = _highlight_ner(_linkify_wikilinks(segment))
+    if '<a ' not in processed and '<span ' not in processed:
+        st.markdown(processed, unsafe_allow_html=True)
+        return
+    # Estimation hauteur : nb lignes * 26px + marge
+    lines = segment.count('\n') + sum(
+        max(1, (len(l) + 79) // 80) for l in segment.split('\n')
+    )
+    height = max(60, min(1500, lines * 26 + 30))
+    components.html(f"""<!DOCTYPE html><html><head><meta charset="utf-8">
+<script src="https://cdn.jsdelivr.net/npm/marked@9/marked.min.js"></script>
+<style>
+body{{margin:0;padding:4px 0;font-family:ui-sans-serif,system-ui,-apple-system,sans-serif;
+     font-size:16px;line-height:1.7;color:#262730;background:transparent;
+     word-wrap:break-word;overflow-x:hidden;}}
+p{{margin:0 0 .7em;}}ul,ol{{margin:0 0 .7em 1.4em;padding:0;}}
+h1,h2,h3{{margin:.8em 0 .4em;}}h4,h5,h6{{margin:.6em 0 .3em;}}
+code{{background:#f0f2f6;padding:1px 4px;border-radius:3px;font-size:14px;font-family:monospace;}}
+pre{{background:#f0f2f6;padding:10px;border-radius:6px;overflow-x:auto;}}
+blockquote{{margin:0 0 .7em;padding:0 0 0 1em;border-left:3px solid #d1d5db;color:#6b7280;}}
+strong{{font-weight:700;}}em{{font-style:italic;}}
+a{{color:#7c3aed;text-decoration:none;font-weight:600;border-bottom:1px dotted #7c3aed;cursor:pointer;}}
+span[title]{{border-radius:3px;padding:1px 4px;}}
+</style></head><body id="bd">
+<script>
+marked.use({{breaks:true,gfm:true}});
+const raw={json.dumps(processed)};
+document.getElementById('bd').innerHTML=marked.parse(raw);
+function resize(){{try{{const h=document.body.scrollHeight;const f=window.frameElement;if(f)f.style.height=(h+10)+'px';}}catch(e){{}}}}
+setTimeout(resize,30);setTimeout(resize,200);
+</script></body></html>""", height=height, scrolling=False)
+
+
 def _render_chat_response(text: str) -> None:
     """Rend la réponse dans Streamlit : texte NER-highlighté + blocs Mermaid visuels."""
     # Cleanup accents/émojis dans les blocs Mermaid
@@ -365,12 +415,7 @@ def _render_chat_response(text: str) -> None:
     mermaid_idx = 0
     for i, segment in enumerate(segments):
         if i % 2 == 0:
-            # _linkify_wikilinks doit tourner AVANT _highlight_ner
-            # pour que le HTML injecté par NER ne casse pas les regex de liens
-            linked = _linkify_wikilinks(segment)
-            highlighted = _highlight_ner(linked)
-            if highlighted.strip():
-                st.markdown(highlighted, unsafe_allow_html=True)
+            _render_text_segment(segment)
         else:
             lines = segment.strip().splitlines()
             height = max(220, min(600, 120 + len(lines) * 22))
@@ -501,6 +546,24 @@ with st.sidebar:
         )
         st.rerun()
 
+    # ---- Historique des prompts dans la sidebar ----
+    if "prompt_history" not in st.session_state:
+        st.session_state.prompt_history = []
+
+    st.divider()
+    ph_label = f"📜 Prompts ({len(st.session_state.prompt_history)})" if st.session_state.prompt_history else "📜 Historique prompts"
+    with st.expander(ph_label, expanded=False):
+        if not st.session_state.prompt_history:
+            st.caption("Aucun prompt pour l'instant.")
+        for _pi, _ph in enumerate(st.session_state.prompt_history):
+            _col_t, _col_b = st.columns([5, 1])
+            with _col_t:
+                st.caption(_ph[:80] + ("…" if len(_ph) > 80 else ""))
+            with _col_b:
+                if st.button("↩", key=f"ph_{_pi}", help="Réutiliser"):
+                    st.session_state._pending_query = _ph
+                    st.rerun()
+
 # ---- Zone de chat ----
 st.title("💬 Chat avec votre coffre")
 
@@ -576,21 +639,6 @@ if not st.session_state.messages:
 
 pending = st.session_state.pop("_pending_query", None)
 
-# ---- Historique des prompts (↑/↓) ----
-if "prompt_history" not in st.session_state:
-    st.session_state.prompt_history = []
-
-if st.session_state.prompt_history:
-    with st.expander(f"📜 Historique ({len(st.session_state.prompt_history)} prompts)", expanded=False):
-        for _pi, _ph in enumerate(st.session_state.prompt_history):
-            _col_t, _col_b = st.columns([6, 1])
-            with _col_t:
-                st.caption(_ph)
-            with _col_b:
-                if st.button("↩", key=f"ph_{_pi}", help="Réutiliser ce prompt"):
-                    st.session_state._pending_query = _ph
-                    st.rerun()
-
 user_input = st.chat_input("Posez une question sur votre coffre…") or pending
 
 if user_input:
@@ -598,7 +646,7 @@ if user_input:
         st.error("Ollama n'est pas disponible.")
         st.stop()
 
-    # Mémorise dans l'historique (dédupliqué, max 20, en tête de liste)
+    # Mémorise dans l'historique sidebar (dédupliqué, max 20, en tête de liste)
     ph = st.session_state.prompt_history
     if user_input not in ph:
         ph.insert(0, user_input)
