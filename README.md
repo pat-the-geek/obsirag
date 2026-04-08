@@ -287,6 +287,19 @@ Le modèle doit avoir une fenêtre de contexte d'au moins **4096 tokens**. 8192+
 
 Les embeddings sont gérés par Ollama via `LMSTUDIO_EMBED_MODEL` (`nomic-embed-text` par défaut, 768 dimensions) — les calculs s'effectuent sur le GPU/ANE du Mac, sans charge CPU dans Docker.
 
+### Gestion automatique de la mémoire par Ollama
+
+Ollama adopte un comportement **load-on-demand** : le modèle de chat n'est chargé en RAM que lorsqu'un appel est effectué, puis automatiquement déchargé après une période d'inactivité (paramètre `OLLAMA_KEEP_ALIVE`, défaut : **5 minutes**).
+
+Concrètement, pour ObsiRAG :
+- Pendant une session de chat active, les appels sont rapprochés → le modèle reste en mémoire, les réponses sont immédiates.
+- Après 5 minutes d'inactivité (plus de chat, plus d'auto-learner en cours), le modèle libère ses ~3–5 GB de RAM unifiée automatiquement.
+- Au prochain appel, un délai de **2–3 secondes** est observé le temps du rechargement (visible dans le spinner de l'interface).
+
+Ce mécanisme garantit que la machine hôte n'est jamais saturée en mémoire en fond de tâche. Il n'y a rien à configurer — c'est le comportement natif d'Ollama.
+
+> Pour allonger la fenêtre d'inactivité (ex. sessions de travail avec pauses fréquentes), vous pouvez définir `OLLAMA_KEEP_ALIVE=10m` via `launchctl setenv OLLAMA_KEEP_ALIVE 10m` sur macOS.
+
 ---
 
 ## Stack technique
