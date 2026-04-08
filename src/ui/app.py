@@ -108,11 +108,11 @@ def _highlight_ner(text: str) -> str:
     # Trier par longueur décroissante pour éviter les chevauchements
     sorted_entries = sorted(wuddai.items(), key=lambda kv: len(kv[0]), reverse=True)
 
-    # Séparer les blocs code/mermaid pour ne pas les modifier
-    parts = re.split(r"(```.*?```)", text, flags=re.DOTALL)
+    # Séparer les blocs code/mermaid ET les balises HTML pour ne pas les modifier
+    parts = re.split(r"(```.*?```|<[^>]+>)", text, flags=re.DOTALL)
     result_parts = []
     for part in parts:
-        if part.startswith("```"):
+        if part.startswith("```") or part.startswith("<"):
             result_parts.append(part)
             continue
         for value_lower, entity in sorted_entries:
@@ -131,7 +131,7 @@ def _highlight_ner(text: str) -> str:
                 rf"(?<![>\w]){re.escape(official_value)}(?![\w<])",
                 span,
                 part,
-                flags=re.IGNORECASE,
+                # Pas de re.IGNORECASE : évite les faux positifs (ex: "Ces" ≠ "CES")
             )
         result_parts.append(part)
     return "".join(result_parts)
@@ -142,14 +142,18 @@ _MERMAID_SPLIT_RE = re.compile(r"```mermaid\s*\n(.*?)```", re.DOTALL)
 
 @st.cache_data(ttl=60, show_spinner=False)
 def _build_title_to_fp() -> dict[str, str]:
-    """Index titre (minuscule) → file_path depuis ChromaDB."""
+    """Index titre et stem (minuscule) → file_path depuis ChromaDB."""
     result: dict[str, str] = {}
     for note in svc.chroma.list_notes():
-        meta = note.get("metadata", {})
-        fp = note.get("file_path") or meta.get("file_path", "")
-        title = meta.get("note_title") or Path(fp).stem
-        if fp:
-            result[title.lower()] = fp
+        # list_notes() retourne un dict plat avec clés "file_path" et "title"
+        fp = note.get("file_path", "")
+        title = note.get("title") or Path(fp).stem
+        if not fp:
+            continue
+        result[title.lower()] = fp
+        # Indexe aussi par le stem du fichier (tel que le LLM cite la note)
+        stem = Path(fp).stem
+        result[stem.lower()] = fp
     return result
 
 
@@ -352,7 +356,10 @@ def _render_chat_response(text: str) -> None:
     mermaid_idx = 0
     for i, segment in enumerate(segments):
         if i % 2 == 0:
-            highlighted = _linkify_wikilinks(_highlight_ner(segment))
+            # _linkify_wikilinks doit tourner AVANT _highlight_ner
+            # pour que le HTML injecté par NER ne casse pas les regex de liens
+            linked = _linkify_wikilinks(segment)
+            highlighted = _highlight_ner(linked)
             if highlighted.strip():
                 st.markdown(highlighted, unsafe_allow_html=True)
         else:
