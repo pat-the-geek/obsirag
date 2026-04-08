@@ -252,7 +252,15 @@ Quand vous posez une question dans le chat :
 
 ObsiRAG est conçu pour fonctionner **en tâche de fond sur un MacBook Air M5 16 Go** — la machine de référence du projet. L'ensemble du traitement (indexation, génération d'insights, synapses) tourne de façon transparente sans perturber l'utilisation normale : navigation web, rédaction dans Obsidian, appels visio.
 
-**Temps d'amorçage initial :** pour un coffre d'environ 200 notes, comptez **2 à 3 jours** pour que l'ensemble des insights soit généré. Ce délai s'explique par les pauses intentionnelles entre chaque note et chaque appel LLM, qui permettent de ménager le CPU et de ne pas bloquer Ollama.
+**Temps d'amorçage initial :** pour un coffre d'environ 200 notes, comptez **2 à 3 jours** pour que l'ensemble des insights soit généré.
+
+Ce délai est intentionnel et s'explique par la mécanique du cycle :
+
+- L'auto-learner se réveille **toutes les 60 minutes** et traite au maximum **3 notes nouvelles** par cycle (full-scan)
+- Pour chaque note, il génère 3 questions et effectue des appels LLM espacés de **15 secondes** entre chaque question, et de **30 secondes** entre chaque note
+- Résultat : 200 notes ÷ 3 notes/cycle × 60 min/cycle ≈ **67 heures**, soit environ 3 jours en fonctionnement continu
+
+Ces pauses sont délibérées — elles garantissent qu'Ollama reste disponible pour le chat en temps réel et que la machine n'est pas saturée en arrière-plan. Les paramètres `AUTOLEARN_FULLSCAN_PER_RUN` et `AUTOLEARN_INTERVAL_MINUTES` dans `.env` permettent d'accélérer l'amorçage si vous le souhaitez (ex. 5 notes/cycle toutes les 30 min pour traiter le coffre en moins d'une journée).
 
 Une fois l'amorçage terminé, seules les notes nouvelles ou récemment modifiées sont retraitées à chaque cycle — le fonctionnement courant est quasi-instantané.
 
