@@ -154,16 +154,14 @@ def _build_title_to_fp() -> dict[str, str]:
 
 
 def _linkify_wikilinks(text: str) -> str:
-    """Convertit [[Titre de note]] en liens cliquables qui ouvrent la note dans ObsiRAG."""
+    """Convertit [[Titre]] et [Titre] (citations LLM) en liens cliquables vers le visualiseur."""
     title_to_fp = _build_title_to_fp()
 
-    def _repl(m: re.Match) -> str:
-        inner = m.group(1).strip()
-        parts = inner.split("|", 1)
-        file_name = parts[0].strip()
-        display = parts[1].strip() if len(parts) > 1 else file_name
-        # Résoudre vers file_path réel (fallback: titre brut)
-        fp = title_to_fp.get(file_name.lower(), file_name)
+    def _make_link(file_name: str, display: str) -> str:
+        fp = title_to_fp.get(file_name.lower(), "")
+        if not fp:
+            # Pas trouvé dans l'index → lien simple non cliquable
+            return f"[[{display}]]" if display != file_name else f"[{display}]"
         fp_js = fp.replace("\\", "\\\\").replace("'", "\\'")
         onclick = (
             f"localStorage.setItem('obsirag_open_note','{fp_js}');"
@@ -173,10 +171,27 @@ def _linkify_wikilinks(text: str) -> str:
             f'<a href="#" onclick="{onclick}" '
             f'style="color:#7c3aed;text-decoration:none;font-weight:600;'
             f'border-bottom:1px dotted #7c3aed;cursor:pointer" '
-            f'title="Ouvrir la note">[[{display}]]</a>'
+            f'title="Voir la note">Voir la note ↗</a>'
         )
 
-    return re.sub(r"\[\[([^\]]+)\]\]", _repl, text)
+    def _repl_double(m: re.Match) -> str:
+        inner = m.group(1).strip()
+        parts = inner.split("|", 1)
+        file_name = parts[0].strip()
+        display = parts[1].strip() if len(parts) > 1 else file_name
+        return _make_link(file_name, display)
+
+    def _repl_single(m: re.Match) -> str:
+        inner = m.group(1).strip()
+        # Ne matcher que si ça ressemble à un titre de note (pas une URL, pas du Markdown déjà traité)
+        if not inner or inner.startswith("http") or "<" in inner:
+            return m.group(0)
+        return _make_link(inner, inner)
+
+    # Traiter d'abord [[...]] (double crochet) puis [...] (simple crochet — citations LLM)
+    text = re.sub(r"\[\[([^\]]+)\]\]", _repl_double, text)
+    text = re.sub(r"(?<!\[)\[([^\]\n<>]{3,80})\](?!\(|\[)", _repl_single, text)
+    return text
 
 
 def _open_note_cb(fp: str) -> None:
