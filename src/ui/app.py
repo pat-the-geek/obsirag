@@ -63,10 +63,9 @@ def _clean_mermaid(code: str) -> str:
 
 _NER_COLORS = {
     "PERSON":  ("#eef5ff", "#3b6ea8"),   # bleu pâle
-    "ORG":     ("#edfaf3", "#2e7d55"),   # vert pâle
     "GPE":     ("#fefce8", "#a16207"),   # jaune très pâle (pays/ville)
     "PRODUCT": ("#f5f3ff", "#6d4fa0"),   # violet pâle
-    # LOC, EVENT, NORP, FAC : entités secondaires — non mis en évidence
+    # ORG, LOC, EVENT, NORP, FAC : non mis en évidence
 }
 
 _WUDDAI_TYPE_TO_CAT = {
@@ -142,18 +141,20 @@ _MERMAID_SPLIT_RE = re.compile(r"```mermaid\s*\n(.*?)```", re.DOTALL)
 
 @st.cache_data(ttl=60, show_spinner=False)
 def _build_title_to_fp() -> dict[str, str]:
-    """Index titre et stem (minuscule) → file_path depuis ChromaDB."""
+    """Index titre + stem + préfixe 30 chars (minuscule) → file_path depuis ChromaDB."""
     result: dict[str, str] = {}
     for note in svc.chroma.list_notes():
-        # list_notes() retourne un dict plat avec clés "file_path" et "title"
         fp = note.get("file_path", "")
         title = note.get("title") or Path(fp).stem
         if not fp:
             continue
         result[title.lower()] = fp
-        # Indexe aussi par le stem du fichier (tel que le LLM cite la note)
         stem = Path(fp).stem
         result[stem.lower()] = fp
+        # Préfixe des 30 premiers chars pour matcher les titres abrégés par le LLM
+        for key in (title.lower(), stem.lower()):
+            if len(key) > 30:
+                result[key[:30]] = fp
     return result
 
 
@@ -162,9 +163,17 @@ def _linkify_wikilinks(text: str) -> str:
     title_to_fp = _build_title_to_fp()
 
     def _make_link(file_name: str, display: str) -> str:
-        fp = title_to_fp.get(file_name.lower(), "")
+        key = file_name.lower()
+        fp = title_to_fp.get(key, "")
         if not fp:
-            # Pas trouvé dans l'index → lien simple non cliquable
+            # Fallback préfixe : cherche une entrée qui commence par les 30 premiers chars
+            prefix = key[:30]
+            for k, v in title_to_fp.items():
+                if k.startswith(prefix) or prefix.startswith(k[:30]):
+                    fp = v
+                    break
+        if not fp:
+            # Non résolu : rendu neutre, pas de lien
             return f"[[{display}]]" if display != file_name else f"[{display}]"
         fp_js = fp.replace("\\", "\\\\").replace("'", "\\'")
         onclick = (
@@ -187,14 +196,14 @@ def _linkify_wikilinks(text: str) -> str:
 
     def _repl_single(m: re.Match) -> str:
         inner = m.group(1).strip()
-        # Ne matcher que si ça ressemble à un titre de note (pas une URL, pas du Markdown déjà traité)
         if not inner or inner.startswith("http") or "<" in inner:
             return m.group(0)
         return _make_link(inner, inner)
 
-    # Traiter d'abord [[...]] (double crochet) puis [...] (simple crochet — citations LLM)
+    # Traiter [[...]] (double crochet Obsidian) puis [...] (citations simples du LLM)
+    # Limite 200 chars pour couvrir les titres longs
     text = re.sub(r"\[\[([^\]]+)\]\]", _repl_double, text)
-    text = re.sub(r"(?<!\[)\[([^\]\n<>]{3,80})\](?!\(|\[)", _repl_single, text)
+    text = re.sub(r"(?<!\[)\[([^\]\n<>]{3,200})\](?!\(|\[)", _repl_single, text)
     return text
 
 
@@ -566,12 +575,34 @@ if not st.session_state.messages:
                 st.rerun()
 
 pending = st.session_state.pop("_pending_query", None)
+
+# ---- Historique des prompts (↑/↓) ----
+if "prompt_history" not in st.session_state:
+    st.session_state.prompt_history = []
+
+if st.session_state.prompt_history:
+    with st.expander(f"📜 Historique ({len(st.session_state.prompt_history)} prompts)", expanded=False):
+        for _pi, _ph in enumerate(st.session_state.prompt_history):
+            _col_t, _col_b = st.columns([6, 1])
+            with _col_t:
+                st.caption(_ph)
+            with _col_b:
+                if st.button("↩", key=f"ph_{_pi}", help="Réutiliser ce prompt"):
+                    st.session_state._pending_query = _ph
+                    st.rerun()
+
 user_input = st.chat_input("Posez une question sur votre coffre…") or pending
 
 if user_input:
     if not llm_ok:
         st.error("Ollama n'est pas disponible.")
         st.stop()
+
+    # Mémorise dans l'historique (dédupliqué, max 20, en tête de liste)
+    ph = st.session_state.prompt_history
+    if user_input not in ph:
+        ph.insert(0, user_input)
+        st.session_state.prompt_history = ph[:20]
 
     svc.learner.log_user_query(user_input)
 
