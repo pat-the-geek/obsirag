@@ -65,11 +65,8 @@ _NER_COLORS = {
     "PERSON":  ("#eef5ff", "#3b6ea8"),   # bleu pâle
     "ORG":     ("#edfaf3", "#2e7d55"),   # vert pâle
     "GPE":     ("#fefce8", "#a16207"),   # jaune très pâle (pays/ville)
-    "LOC":     ("#fff7ed", "#b45309"),   # orange très pâle (lieu)
     "PRODUCT": ("#f5f3ff", "#6d4fa0"),   # violet pâle
-    "EVENT":   ("#fff1f1", "#b94040"),   # rouge pâle
-    "NORP":    ("#f0fdf9", "#2a7a6a"),   # turquoise pâle
-    "FAC":     ("#fdf2f8", "#a8417a"),   # rose pâle
+    # LOC, EVENT, NORP, FAC : entités secondaires — non mis en évidence
 }
 
 _WUDDAI_TYPE_TO_CAT = {
@@ -119,9 +116,11 @@ def _highlight_ner(text: str) -> str:
             result_parts.append(part)
             continue
         for value_lower, entity in sorted_entries:
-            official_value = entity["value"]
             ent_type = entity.get("type", "")
-            bg, fg = _NER_COLORS.get(ent_type, ("#eeeeee", "#333333"))
+            if ent_type not in _NER_COLORS:
+                continue
+            official_value = entity["value"]
+            bg, fg = _NER_COLORS[ent_type]
             cat_label = _WUDDAI_TYPE_TO_CAT.get(ent_type, ent_type.lower())
             span = (
                 f'<span style="background:{bg};color:{fg};border-radius:3px;'
