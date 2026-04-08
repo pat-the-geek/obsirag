@@ -136,6 +136,9 @@ def _highlight_ner(text: str) -> str:
             # Filtrer les mots courants et les entités trop courtes (< 4 chars)
             if official_value.lower() in _NER_STOPWORDS or len(official_value) < 4:
                 continue
+            # Ignorer les entités purement numériques (dates, années, chiffres)
+            if re.fullmatch(r"[\d\s\-/.,]+", official_value):
+                continue
             bg, fg = _NER_COLORS[ent_type]
             cat_label = _WUDDAI_TYPE_TO_CAT.get(ent_type, ent_type.lower())
             span = (
