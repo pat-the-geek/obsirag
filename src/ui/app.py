@@ -66,165 +66,7 @@ def _clean_mermaid(code: str) -> str:
     return code
 
 
-_NER_COLORS = {
-    "PERSON":  ("#eef5ff", "#3b6ea8"),   # bleu pâle
-    "GPE":     ("#fefce8", "#a16207"),   # jaune très pâle (pays/ville)
-    "PRODUCT": ("#f5f3ff", "#6d4fa0"),   # violet pâle
-    # ORG, LOC, EVENT, NORP, FAC : non mis en évidence
-}
-
-_WUDDAI_TYPE_TO_CAT = {
-    "PERSON":  "personne",
-    "ORG":     "organisation",
-    "GPE":     "lieu",
-    "LOC":     "lieu",
-    "PRODUCT": "produit",
-    "EVENT":   "événement",
-    "NORP":    "groupe",
-    "FAC":     "lieu",
-}
-
-# Mots courants à ne jamais surligner même s'ils sont dans le cache WUDD.ai
-_NER_STOPWORDS = {
-    "outil", "outils", "chose", "choses", "point", "points", "fois",
-    "place", "part", "plus", "type", "types", "base", "bien",
-    "aide", "aides", "sens", "art", "clé", "clés", "cas", "lot",
-    "set", "get", "run", "use", "new", "one", "two", "top", "pro",
-    "max", "min", "end", "api", "url", "key", "id",
-}
-
-
-@st.cache_data(ttl=3600, show_spinner=False)
-def _load_wuddai_index() -> dict[str, dict]:
-    """Charge le cache WUDD.ai depuis le disque. Retourne {value_lower: {type, value}}."""
-    from src.config import settings as _s
-    cache_file = _s.data_dir / "wuddai_entities_cache.json"
-    if not cache_file.exists():
-        return {}
-    try:
-        data = json.loads(cache_file.read_text(encoding="utf-8"))
-        return {
-            e["value"].lower(): e
-            for e in data.get("entities", [])
-            if e.get("value")
-        }
-    except Exception:
-        return {}
-
-
-def _highlight_ner(text: str) -> str:
-    """Surligne dans le texte les entités officielles WUDD.ai avec du HTML coloré."""
-    wuddai = _load_wuddai_index()
-    if not wuddai:
-        return text
-
-    # Trier par longueur décroissante pour éviter les chevauchements
-    sorted_entries = sorted(wuddai.items(), key=lambda kv: len(kv[0]), reverse=True)
-
-    # Séparer les blocs code/mermaid ET les balises HTML pour ne pas les modifier
-    parts = re.split(r"(```.*?```|<[^>]+>)", text, flags=re.DOTALL)
-    result_parts = []
-    for part in parts:
-        if part.startswith("```") or part.startswith("<"):
-            result_parts.append(part)
-            continue
-        for value_lower, entity in sorted_entries:
-            ent_type = entity.get("type", "")
-            if ent_type not in _NER_COLORS:
-                continue
-            official_value = entity["value"]
-            # Filtrer les mots courants et les entités trop courtes (< 4 chars)
-            if official_value.lower() in _NER_STOPWORDS or len(official_value) < 4:
-                continue
-            # Ignorer les entités purement numériques (dates, années, chiffres)
-            if re.fullmatch(r"[\d\s\-/.,]+", official_value):
-                continue
-            bg, fg = _NER_COLORS[ent_type]
-            cat_label = _WUDDAI_TYPE_TO_CAT.get(ent_type, ent_type.lower())
-            span = (
-                f'<span style="background:{bg};color:{fg};border-radius:3px;'
-                f'padding:1px 4px;font-weight:600" '
-                f'title="{cat_label}">{official_value}</span>'
-            )
-            part = re.sub(
-                rf"(?<![>\w]){re.escape(official_value)}(?![\w<])",
-                span,
-                part,
-                # Pas de re.IGNORECASE : évite les faux positifs (ex: "Ces" ≠ "CES")
-            )
-        result_parts.append(part)
-    return "".join(result_parts)
-
-
 _MERMAID_SPLIT_RE = re.compile(r"```mermaid\s*\n(.*?)```", re.DOTALL)
-
-
-@st.cache_data(ttl=60, show_spinner=False)
-def _build_title_to_fp() -> dict[str, str]:
-    """Index titre + stem + préfixe 30 chars (minuscule) → file_path depuis ChromaDB."""
-    result: dict[str, str] = {}
-    for note in svc.chroma.list_notes():
-        fp = note.get("file_path", "")
-        title = note.get("title") or Path(fp).stem
-        if not fp:
-            continue
-        result[title.lower()] = fp
-        stem = Path(fp).stem
-        result[stem.lower()] = fp
-        # Préfixe des 30 premiers chars pour matcher les titres abrégés par le LLM
-        for key in (title.lower(), stem.lower()):
-            if len(key) > 30:
-                result[key[:30]] = fp
-    return result
-
-
-def _linkify_wikilinks(text: str) -> str:
-    """Convertit [[Titre]] et [Titre] (citations LLM) en liens cliquables vers le visualiseur."""
-    title_to_fp = _build_title_to_fp()
-
-    def _make_link(file_name: str, display: str) -> str:
-        key = file_name.lower()
-        fp = title_to_fp.get(key, "")
-        if not fp:
-            # Fallback préfixe : cherche une entrée qui commence par les 30 premiers chars
-            prefix = key[:30]
-            for k, v in title_to_fp.items():
-                if k.startswith(prefix) or prefix.startswith(k[:30]):
-                    fp = v
-                    break
-        if not fp:
-            # Non résolu : rendu neutre, pas de lien
-            return f"[[{display}]]" if display != file_name else f"[{display}]"
-        fp_js = fp.replace("\\", "\\\\").replace("'", "\\'")
-        onclick = (
-            f"localStorage.setItem('obsirag_open_note','{fp_js}');"
-            "return false;"
-        )
-        return (
-            f'<a href="#" onclick="{onclick}" '
-            f'style="color:#7c3aed;text-decoration:none;font-weight:600;'
-            f'border-bottom:1px dotted #7c3aed;cursor:pointer" '
-            f'title="Voir la note">Voir la note ↗</a>'
-        )
-
-    def _repl_double(m: re.Match) -> str:
-        inner = m.group(1).strip()
-        parts = inner.split("|", 1)
-        file_name = parts[0].strip()
-        display = parts[1].strip() if len(parts) > 1 else file_name
-        return _make_link(file_name, display)
-
-    def _repl_single(m: re.Match) -> str:
-        inner = m.group(1).strip()
-        if not inner or inner.startswith("http") or "<" in inner:
-            return m.group(0)
-        return _make_link(inner, inner)
-
-    # Traiter [[...]] (double crochet Obsidian) puis [...] (citations simples du LLM)
-    # Limite 200 chars pour couvrir les titres longs
-    text = re.sub(r"\[\[([^\]]+)\]\]", _repl_double, text)
-    text = re.sub(r"(?<!\[)\[([^\]\n<>]{3,200})\](?!\(|\[)", _repl_single, text)
-    return text
 
 
 def _open_note_cb(fp: str) -> None:
@@ -339,38 +181,6 @@ def _mermaid_html_chat(code: str, idx: int) -> str:
 </body></html>"""
 
 
-def _copy_button_html(text: str) -> str:
-    """Petit bouton 📋 autonome qui copie le texte brut dans le presse-papier."""
-    text_json = json.dumps(text)
-    return f"""<!DOCTYPE html><html><head><meta charset="utf-8"><style>
-  body{{margin:0;padding:2px 0;background:transparent;display:flex;align-items:center}}
-  button{{
-    background:none;border:1px solid #d1d5db;border-radius:6px;
-    padding:3px 10px;font-size:12px;cursor:pointer;color:#6b7280;
-    display:flex;align-items:center;gap:5px;transition:all .15s;
-    font-family:ui-sans-serif,system-ui,sans-serif;
-  }}
-  button:hover{{background:#f3f4f6;border-color:#9ca3af;color:#374151}}
-  button.ok{{border-color:#10b981;color:#10b981}}
-</style></head><body>
-  <button id="b" onclick="copy()">📋 Copier</button>
-  <script>
-    const txt = {text_json};
-    function copy() {{
-      const btn = document.getElementById('b');
-      (navigator.clipboard
-        ? navigator.clipboard.writeText(txt)
-        : Promise.resolve(document.execCommand('copy', false,
-            (()=>{{const t=document.createElement('textarea');
-              t.value=txt;document.body.appendChild(t);t.select();
-              document.execCommand('copy');document.body.removeChild(t)}})()))
-      ).then(()=>{{
-        btn.textContent='✓ Copié';btn.classList.add('ok');
-        setTimeout(()=>{{btn.innerHTML='📋 Copier';btn.classList.remove('ok')}},2000);
-      }}).catch(()=>{{btn.textContent='⚠ Échec';}});
-    }}
-  </script>
-</body></html>"""
 
 
 
@@ -378,16 +188,28 @@ def _copy_button_html(text: str) -> str:
 
 
 
-def _render_chat_response(text: str) -> None:
-    """Rend la réponse : st.markdown pour le texte + iframes Mermaid séparées."""
-    # Cleanup Mermaid
-    def _clean_block(m: re.Match) -> str:
-        return f"```mermaid\n{_clean_mermaid(m.group(1))}\n```"
-    text = _MERMAID_SPLIT_RE.sub(_clean_block, text)
+
+def _render_chat_response(text: str, *, placeholder=None) -> None:
+    """
+    Rend la réponse finale du chat.
+    - Si placeholder fourni ET pas de Mermaid : met à jour en place (pas de slot vide).
+    - Sinon : st.markdown dans le contexte courant.
+    """
+    has_mermaid = bool(_MERMAID_SPLIT_RE.search(text))
+
+    if not has_mermaid:
+        # Cas le plus fréquent : rendu simple, mise à jour en place du placeholder
+        if placeholder is not None:
+            placeholder.markdown(text)
+        else:
+            st.markdown(text)
+        return
+
+    # Cas Mermaid : vider le placeholder et rendre dans le contexte parent
+    if placeholder is not None:
+        placeholder.empty()
 
     segments = _MERMAID_SPLIT_RE.split(text)
-
-    # Construire la liste ordonnée (text, mermaid)
     blocks: list[tuple[str, str]] = []
     text_accum: list[str] = []
     for i, segment in enumerate(segments):
@@ -397,19 +219,15 @@ def _render_chat_response(text: str) -> None:
             if text_accum:
                 blocks.append(("text", "\n".join(text_accum)))
                 text_accum = []
-            blocks.append(("mermaid", segment.strip()))
+            blocks.append(("mermaid", _clean_mermaid(segment.strip())))
     if text_accum:
         blocks.append(("text", "\n".join(text_accum)))
 
     mermaid_idx = 0
     for btype, content in blocks:
         if btype == "text":
-            if not content.strip():
-                continue
-            processed = _highlight_ner(_linkify_wikilinks(content))
-            # st.markdown avec unsafe_allow_html préserve <a onclick> et <span>
-            # et interprète le Markdown (**, ##, listes, etc.) sans iframe
-            st.markdown(processed, unsafe_allow_html=True)
+            if content.strip():
+                st.markdown(content)
         else:
             lines = content.splitlines()
             height = max(220, min(600, 120 + len(lines) * 22))
@@ -418,20 +236,8 @@ def _render_chat_response(text: str) -> None:
                             height=height, scrolling=False)
             mermaid_idx += 1
 
-    # Bouton copier
-    components.html(_copy_button_html(text), height=44, scrolling=False)
 
 
-def _render_response(text: str, sources: list[dict] = []) -> str:
-    """Retourne le texte post-traité (cleanup Mermaid + NER) sans rendu Streamlit."""
-    def _clean_block(m: re.Match) -> str:
-        lang = m.group(1)
-        code = m.group(2)
-        if "mermaid" in lang.lower():
-            code = _clean_mermaid(code)
-        return f"```{lang}\n{code}\n```"
-    text = re.sub(r"```([^\n]*)\n(.*?)```", _clean_block, text, flags=re.DOTALL)
-    return _highlight_ner(text)
 
 
 # ---- Statut auto-learner (fragment auto-rafraîchi toutes les 5s) ----
@@ -585,7 +391,7 @@ if st.session_state.pop("_goto_note", False):
 for mi, msg in enumerate(st.session_state.messages):
     with st.chat_message(msg["role"]):
         if msg["role"] == "assistant":
-            _render_chat_response(msg["content"])
+            _render_chat_response(msg["content"], placeholder=None)
         else:
             st.markdown(msg["content"])
         if msg.get("stats"):
@@ -713,9 +519,8 @@ if user_input:
                         f"⚡ *{token_count} tokens · {elapsed:.1f}s · {tps:.0f} tok/s*"
                     )
 
-            # Affichage final propre — Mermaid visuel + highlight NER
-            response_area.empty()
-            _render_chat_response(full_response)
+            # Affichage final propre (met à jour response_area en place si pas de Mermaid)
+            _render_chat_response(full_response, placeholder=response_area)
             total = time.perf_counter() - t0
             ttft_val = (first_token_time - t0) if first_token_time else total
             tps_val = token_count / max(0.01, total - ttft_val)
