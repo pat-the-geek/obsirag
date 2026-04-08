@@ -291,6 +291,40 @@ def _mermaid_html_chat(code: str, idx: int) -> str:
 </body></html>"""
 
 
+def _copy_button_html(text: str) -> str:
+    """Petit bouton 📋 autonome qui copie le texte brut dans le presse-papier."""
+    text_json = json.dumps(text)
+    return f"""<!DOCTYPE html><html><head><meta charset="utf-8"><style>
+  body{{margin:0;padding:2px 0;background:transparent;display:flex;align-items:center}}
+  button{{
+    background:none;border:1px solid #d1d5db;border-radius:6px;
+    padding:3px 10px;font-size:12px;cursor:pointer;color:#6b7280;
+    display:flex;align-items:center;gap:5px;transition:all .15s;
+    font-family:ui-sans-serif,system-ui,sans-serif;
+  }}
+  button:hover{{background:#f3f4f6;border-color:#9ca3af;color:#374151}}
+  button.ok{{border-color:#10b981;color:#10b981}}
+</style></head><body>
+  <button id="b" onclick="copy()">📋 Copier</button>
+  <script>
+    const txt = {text_json};
+    function copy() {{
+      const btn = document.getElementById('b');
+      (navigator.clipboard
+        ? navigator.clipboard.writeText(txt)
+        : Promise.resolve(document.execCommand('copy', false,
+            (()=>{{const t=document.createElement('textarea');
+              t.value=txt;document.body.appendChild(t);t.select();
+              document.execCommand('copy');document.body.removeChild(t)}})()))
+      ).then(()=>{{
+        btn.textContent='✓ Copié';btn.classList.add('ok');
+        setTimeout(()=>{{btn.innerHTML='📋 Copier';btn.classList.remove('ok')}},2000);
+      }}).catch(()=>{{btn.textContent='⚠ Échec';}});
+    }}
+  </script>
+</body></html>"""
+
+
 def _render_chat_response(text: str) -> None:
     """Rend la réponse dans Streamlit : texte NER-highlighté + blocs Mermaid visuels."""
     # Cleanup accents/émojis dans les blocs Mermaid
@@ -313,6 +347,8 @@ def _render_chat_response(text: str) -> None:
             components.html(_mermaid_html_chat(segment.strip(), mermaid_idx),
                             height=height, scrolling=False)
             mermaid_idx += 1
+    # Bouton copier le texte brut (sans HTML)
+    components.html(_copy_button_html(text), height=36, scrolling=False)
 
 
 def _render_response(text: str, sources: list[dict] = []) -> str:
