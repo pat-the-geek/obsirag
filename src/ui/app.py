@@ -2,11 +2,11 @@
 ObsiRAG — Page principale : Chat
 """
 import base64
+import json
 import re
 import time
 import unicodedata
 from datetime import datetime
-
 from pathlib import Path
 
 import streamlit as st
@@ -52,32 +52,53 @@ def _clean_mermaid(code: str) -> str:
 
 
 _NER_COLORS = {
-    "persons":   ("#d4e8ff", "#1a4a7a"),   # bleu
-    "orgs":      ("#d4f5e8", "#1a5c3a"),   # vert
-    "locations": ("#fff3d4", "#7a5200"),   # orange
-    "misc":      ("#f0d4ff", "#5a1a7a"),   # violet
+    "PERSON":  ("#d4e8ff", "#1a4a7a"),   # bleu
+    "ORG":     ("#d4f5e8", "#1a5c3a"),   # vert
+    "GPE":     ("#fff3d4", "#7a5200"),   # orange (pays/ville)
+    "LOC":     ("#fff3d4", "#7a5200"),   # orange (lieu)
+    "PRODUCT": ("#f0d4ff", "#5a1a7a"),   # violet
+    "EVENT":   ("#ffd4d4", "#7a1a1a"),   # rouge
+    "NORP":    ("#d4fff0", "#1a5a3a"),   # vert clair
+}
+
+_WUDDAI_TYPE_TO_CAT = {
+    "PERSON":  "personne",
+    "ORG":     "organisation",
+    "GPE":     "lieu",
+    "LOC":     "lieu",
+    "PRODUCT": "produit",
+    "EVENT":   "événement",
+    "NORP":    "groupe",
+    "FAC":     "lieu",
 }
 
 
-def _highlight_ner(text: str, sources: list[dict]) -> str:
-    """Entoure les entités NER trouvées dans les sources avec du HTML coloré."""
-    # Collecter toutes les entités
-    entities: dict[str, str] = {}  # nom -> catégorie
-    for src in sources:
-        m = src.get("metadata", {})
-        for cat in ("persons", "orgs", "locations", "misc"):
-            raw = m.get(f"ner_{cat}", "")
-            if not raw:
-                continue
-            for ent in raw.split(","):
-                ent = ent.strip()
-                if len(ent) >= 3:
-                    entities[ent] = cat
-    if not entities:
+@st.cache_data(ttl=3600, show_spinner=False)
+def _load_wuddai_index() -> dict[str, dict]:
+    """Charge le cache WUDD.ai depuis le disque. Retourne {value_lower: {type, value}}."""
+    from src.config import settings as _s
+    cache_file = _s.data_dir / "wuddai_entities_cache.json"
+    if not cache_file.exists():
+        return {}
+    try:
+        data = json.loads(cache_file.read_text(encoding="utf-8"))
+        return {
+            e["value"].lower(): e
+            for e in data.get("entities", [])
+            if e.get("value")
+        }
+    except Exception:
+        return {}
+
+
+def _highlight_ner(text: str) -> str:
+    """Surligne dans le texte les entités officielles WUDD.ai avec du HTML coloré."""
+    wuddai = _load_wuddai_index()
+    if not wuddai:
         return text
 
     # Trier par longueur décroissante pour éviter les chevauchements
-    sorted_ents = sorted(entities.keys(), key=len, reverse=True)
+    sorted_entries = sorted(wuddai.items(), key=lambda kv: len(kv[0]), reverse=True)
 
     # Séparer les blocs code/mermaid pour ne pas les modifier
     parts = re.split(r"(```.*?```)", text, flags=re.DOTALL)
@@ -86,16 +107,22 @@ def _highlight_ner(text: str, sources: list[dict]) -> str:
         if part.startswith("```"):
             result_parts.append(part)
             continue
-        for ent in sorted_ents:
-            cat = entities[ent]
-            bg, fg = _NER_COLORS.get(cat, ("#eeeeee", "#333333"))
-            label = {"persons": "👤", "orgs": "🏢", "locations": "📍", "misc": "🔖"}.get(cat, "")
+        for value_lower, entity in sorted_entries:
+            official_value = entity["value"]
+            ent_type = entity.get("type", "")
+            bg, fg = _NER_COLORS.get(ent_type, ("#eeeeee", "#333333"))
+            cat_label = _WUDDAI_TYPE_TO_CAT.get(ent_type, ent_type.lower())
             span = (
                 f'<span style="background:{bg};color:{fg};border-radius:3px;'
                 f'padding:1px 4px;font-weight:600" '
-                f'title="{cat}">{ent}</span>'
+                f'title="{cat_label}">{official_value}</span>'
             )
-            part = re.sub(rf"\b{re.escape(ent)}\b", span, part)
+            part = re.sub(
+                rf"(?<![>\w]){re.escape(official_value)}(?![\w<])",
+                span,
+                part,
+                flags=re.IGNORECASE,
+            )
         result_parts.append(part)
     return "".join(result_parts)
 
@@ -111,8 +138,8 @@ def _render_response(text: str, sources: list[dict]) -> str:
         return f"```{lang}\n{code}\n```"
 
     text = re.sub(r"```([^\n]*)\n(.*?)```", _clean_block, text, flags=re.DOTALL)
-    # Highlight NER
-    text = _highlight_ner(text, sources)
+    # Highlight NER via liste officielle WUDD.ai
+    text = _highlight_ner(text)
     return text
 
 
