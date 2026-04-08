@@ -8,12 +8,11 @@ import time
 import unicodedata
 from datetime import datetime
 from pathlib import Path
-from urllib.parse import quote
-
 import streamlit as st
 import streamlit.components.v1 as components
 
 from src.ui.services_cache import get_services
+from src.ui.components.note_bridge_component import note_bridge as _note_bridge
 
 # ---- Configuration de la page ----
 _icon = str(Path(__file__).parent / "static" / "favicon-32x32.png")
@@ -142,26 +141,42 @@ def _highlight_ner(text: str) -> str:
 _MERMAID_SPLIT_RE = re.compile(r"```mermaid\s*\n(.*?)```", re.DOTALL)
 
 
+@st.cache_data(ttl=60, show_spinner=False)
+def _build_title_to_fp() -> dict[str, str]:
+    """Index titre (minuscule) → file_path depuis ChromaDB."""
+    result: dict[str, str] = {}
+    for note in svc.chroma.list_notes():
+        meta = note.get("metadata", {})
+        fp = note.get("file_path") or meta.get("file_path", "")
+        title = meta.get("note_title") or Path(fp).stem
+        if fp:
+            result[title.lower()] = fp
+    return result
+
+
 def _linkify_wikilinks(text: str) -> str:
-    """Convertit [[Titre de note]] en liens obsidian:// cliquables."""
-    from src.config import settings as _s
-    vault = quote(_s.obsidian_vault, safe="")
+    """Convertit [[Titre de note]] en liens cliquables qui ouvrent la note dans ObsiRAG."""
+    title_to_fp = _build_title_to_fp()
 
     def _repl(m: re.Match) -> str:
         inner = m.group(1).strip()
         parts = inner.split("|", 1)
         file_name = parts[0].strip()
         display = parts[1].strip() if len(parts) > 1 else file_name
-        encoded = quote(file_name, safe="")
-        url = f"obsidian://open?vault={vault}&file={encoded}"
+        # Résoudre vers file_path réel (fallback: titre brut)
+        fp = title_to_fp.get(file_name.lower(), file_name)
+        fp_js = fp.replace("\\", "\\\\").replace("'", "\\'")
+        onclick = (
+            f"localStorage.setItem('obsirag_open_note','{fp_js}');"
+            "return false;"
+        )
         return (
-            f'<a href="{url}" '
+            f'<a href="#" onclick="{onclick}" '
             f'style="color:#7c3aed;text-decoration:none;font-weight:600;'
-            f'border-bottom:1px dotted #7c3aed" '
-            f'title="Ouvrir dans Obsidian">[[{display}]]</a>'
+            f'border-bottom:1px dotted #7c3aed;cursor:pointer" '
+            f'title="Ouvrir la note">[[{display}]]</a>'
         )
 
-    # Ne pas modifier les blocs code déjà traités (entre balises HTML)
     return re.sub(r"\[\[([^\]]+)\]\]", _repl, text)
 
 
@@ -431,6 +446,12 @@ if not llm_ok:
 
 if "messages" not in st.session_state:
     st.session_state.messages = []
+
+# Bridge invisible : écoute localStorage 'obsirag_open_note' (wikilinks du chat)
+_bridge_val = _note_bridge(default=None, key="chat_note_bridge")
+if _bridge_val:
+    st.session_state.viewing_note = _bridge_val
+    st.switch_page("pages/4_Note.py")
 
 # Navigation différée : déclenchée par on_click des boutons 📖
 if st.session_state.pop("_goto_note", False):
