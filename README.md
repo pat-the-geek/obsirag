@@ -97,6 +97,27 @@ docker exec obsirag python3 /app/scripts/migrate_insight_tags.py --dry-run  # si
 docker exec obsirag python3 /app/scripts/migrate_insight_tags.py              # application
 ```
 
+Pour renommer en batch les insights/synapses/syntheses selon un titre court généré par le LLM :
+```bash
+# Prévisualisation sans modification
+docker exec obsirag python3 /app/scripts/rename_insights.py --dry-run
+
+# Renommage avec LLM (tous les dossiers, pause 2 s entre appels)
+docker exec obsirag python3 /app/scripts/rename_insights.py --sleep 2
+
+# Cibler un seul dossier
+docker exec obsirag python3 /app/scripts/rename_insights.py --dir insights
+
+# Mode rapide sans LLM (retire uniquement le suffixe _YYYYMMDD)
+docker exec obsirag python3 /app/scripts/rename_insights.py --no-llm
+```
+
+Le script :
+- Saute le frontmatter pour lire le corps de la note (évite que les tags YAML consomment le contexte LLM)
+- Propage `[[ancien_titre]]` → `[[nouveau_titre]]` dans **tout le vault**
+- Met à jour `synapse_index.json` (paires `fp_a|||fp_b`)
+- Re-indexe dans ChromaDB les fichiers modifiés
+
 ### Page Insights
 
 Consultation des artefacts, synapses et synthèses générés, avec :
