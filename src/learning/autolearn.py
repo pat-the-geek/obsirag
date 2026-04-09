@@ -1268,7 +1268,7 @@ class AutoLearner:
         explanation = self._rag._llm.chat(
             [{"role": "user", "content": prompt}],
             temperature=0.6,
-            max_tokens=1024,
+            max_tokens=2048,
             operation="autolearn_synapse",
         )
 
@@ -1295,11 +1295,11 @@ class AutoLearner:
             "",
             f"## [[{title_a}]]",
             "",
-            f"> {excerpt_a[:250]}…",
+            f"> {excerpt_a[:600]}…",
             "",
             f"## [[{title_b}]]",
             "",
-            f"> {excerpt_b[:250]}…",
+            f"> {excerpt_b[:600]}…",
         ]
         out_path.write_text("\n".join(lines), encoding="utf-8")
         logger.info(f"Synapse créée : {title_a} ↔ {title_b} ({score:.0%})")

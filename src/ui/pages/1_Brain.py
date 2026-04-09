@@ -12,15 +12,17 @@ from src.ui.components.note_bridge_component import note_bridge as _note_bridge
 from src.ui.theme import inject_theme, render_theme_toggle
 
 _icon = str(Path(__file__).parent.parent / "static" / "favicon-32x32.png")
-_icon_b64 = base64.b64encode((Path(__file__).parent.parent / "static" / "android-chrome-512x512.png").read_bytes()).decode()
+_brain_b64 = base64.b64encode(
+    (Path(__file__).parent.parent / "static" / "brain_transparent.svg").read_bytes()
+).decode()
 st.set_page_config(page_title="Cerveau — ObsiRAG", page_icon=_icon, layout="wide")
 inject_theme()
 
 svc = get_services()
 
 st.markdown(
-    f'<h1 style="display:flex;align-items:center;gap:12px">'
-    f'<img src="data:image/png;base64,{_icon_b64}" width="144" style="border-radius:6px">'
+    f'<h1 style="display:flex;align-items:center;gap:8px">'
+    f'<img src="data:image/svg+xml;base64,{_brain_b64}" width="96" height="96">'
     f'Cerveau</h1>',
     unsafe_allow_html=True,
 )
@@ -42,7 +44,6 @@ with st.sidebar:
 
     st.markdown("### Filtres")
 
-    from pathlib import Path
     folders = sorted({str(Path(n["file_path"]).parent) for n in notes})
     selected_folders = st.multiselect(
         "Dossiers",

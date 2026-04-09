@@ -145,6 +145,35 @@ def _css_block(p: dict) -> str:
     h1, h2, h3, h4, h5, h6 {{
         color: {p["text"]} !important;
     }}
+    /* ── Tailles de titres raisonnables dans le contenu Markdown ── */
+    [data-testid="stMarkdownContainer"] h1 {{
+        font-size: 1.15rem !important;
+        font-weight: 700 !important;
+        margin-top: 0.8em !important;
+        margin-bottom: 0.3em !important;
+        line-height: 1.3 !important;
+    }}
+    [data-testid="stMarkdownContainer"] h2 {{
+        font-size: 1.0rem !important;
+        font-weight: 600 !important;
+        margin-top: 0.7em !important;
+        margin-bottom: 0.3em !important;
+    }}
+    [data-testid="stMarkdownContainer"] h3 {{
+        font-size: 0.92rem !important;
+        font-weight: 600 !important;
+    }}
+    [data-testid="stMarkdownContainer"] h4,
+    [data-testid="stMarkdownContainer"] h5,
+    [data-testid="stMarkdownContainer"] h6 {{
+        font-size: 0.88rem !important;
+        font-weight: 600 !important;
+    }}
+    [data-testid="stMarkdownContainer"] p,
+    [data-testid="stMarkdownContainer"] li {{
+        font-size: 0.85rem !important;
+        line-height: 1.6 !important;
+    }}
     .stCaption, [data-testid="stCaptionContainer"],
     [data-testid="stCaptionContainer"] p {{
         color: {p["text_dim"]} !important;
@@ -160,6 +189,37 @@ def _css_block(p: dict) -> str:
         background-color: {p["input_bg"]} !important;
         color: {p["text"]} !important;
         border-color: {p["border"]} !important;
+    }}
+    /* Inputs désactivés — annule l'opacité Streamlit et maintient le contraste */
+    [data-testid="stTextInput"] input:disabled,
+    [data-testid="stTextArea"] textarea:disabled,
+    [data-testid="stNumberInput"] input:disabled,
+    [data-baseweb="input"] input:disabled {{
+        color: {p["text"]} !important;
+        -webkit-text-fill-color: {p["text"]} !important;
+        opacity: 1 !important;
+        background-color: {p["bg3"]} !important;
+        cursor: default !important;
+    }}
+    [data-testid="stTextInput"]:has(input:disabled),
+    [data-testid="stTextArea"]:has(textarea:disabled),
+    [data-testid="stNumberInput"]:has(input:disabled) {{
+        opacity: 1 !important;
+    }}
+    [data-testid="stTextInput"]:has(input:disabled) [data-baseweb="input"],
+    [data-testid="stNumberInput"]:has(input:disabled) [data-baseweb="input"],
+    [data-testid="stTextArea"]:has(textarea:disabled) [data-baseweb="textarea"] {{
+        background-color: {p["bg3"]} !important;
+        border-color: {p["border"]} !important;
+    }}
+    /* Labels des inputs */
+    [data-testid="stTextInput"] label,
+    [data-testid="stTextArea"] label,
+    [data-testid="stNumberInput"] label,
+    [data-testid="stSelectbox"] label,
+    [data-testid="stMultiSelect"] label {{
+        color: {p["text"]} !important;
+        opacity: 1 !important;
     }}
     [data-baseweb="input"],
     [data-baseweb="textarea"] {{
@@ -196,6 +256,14 @@ def _css_block(p: dict) -> str:
         border-color: {p["border"]} !important;
         color: {p["text"]} !important;
     }}
+    /* Valeur sélectionnée affichée dans le champ */
+    [data-baseweb="select"] [data-baseweb="select"] span,
+    [data-baseweb="select"] span,
+    [data-baseweb="select"] div span {{
+        font-size: 13px !important;
+        line-height: 1.4 !important;
+    }}
+    /* Options du menu déroulant */
     [data-baseweb="menu"],
     [data-baseweb="popover"] {{
         background-color: {p["bg2"]} !important;
@@ -205,6 +273,7 @@ def _css_block(p: dict) -> str:
     [data-baseweb="menu"] li {{
         background-color: {p["bg2"]} !important;
         color: {p["text"]} !important;
+        font-size: 13px !important;
     }}
     [role="option"]:hover,
     [data-baseweb="menu"] li:hover {{
@@ -219,16 +288,26 @@ def _css_block(p: dict) -> str:
     /* ── Boutons ── */
     .stButton > button,
     [data-testid="stBaseButton-secondary"],
-    [data-testid="stBaseButton-secondaryFormSubmit"] {{
-        background-color: {p["bg2"]} !important;
+    [data-testid="stBaseButton-secondaryFormSubmit"],
+    [data-testid^="stBaseButton"] {{
+        background-color: {p["bg3"]} !important;
         color: {p["text"]} !important;
-        border-color: {p["border"]} !important;
+        border: 1px solid {p["accent"]} !important;
+        font-weight: 600 !important;
+        border-radius: 6px !important;
     }}
     .stButton > button:hover,
-    [data-testid="stBaseButton-secondary"]:hover {{
+    [data-testid="stBaseButton-secondary"]:hover,
+    [data-testid^="stBaseButton"]:hover {{
         background-color: {p["accent_dim"]} !important;
         border-color: {p["accent"]} !important;
         color: {p["accent"]} !important;
+        filter: none !important;
+    }}
+    .stButton > button p,
+    [data-testid^="stBaseButton"] p {{
+        color: inherit !important;
+        font-weight: 600 !important;
     }}
     .stButton > button[kind="primary"],
     [data-testid="stBaseButton-primary"],
@@ -236,10 +315,15 @@ def _css_block(p: dict) -> str:
         background-color: {p["accent"]} !important;
         color: #ffffff !important;
         border-color: {p["accent"]} !important;
+        font-weight: 700 !important;
     }}
     .stButton > button[kind="primary"]:hover,
     [data-testid="stBaseButton-primary"]:hover {{
-        filter: brightness(1.15);
+        filter: brightness(1.12) !important;
+    }}
+    .stButton > button[kind="primary"] p,
+    [data-testid="stBaseButton-primary"] p {{
+        color: #ffffff !important;
     }}
 
     /* ── Métriques ── */
@@ -263,6 +347,10 @@ def _css_block(p: dict) -> str:
     [data-testid="stExpander"] {{
         background-color: {p["bg2"]} !important;
         border: 1px solid {p["border"]} !important;
+        border-radius: 6px !important;
+        overflow: visible !important;
+    }}
+    [data-testid="stExpander"] details {{
         border-radius: 6px !important;
         overflow: hidden !important;
     }}
@@ -340,13 +428,9 @@ def _css_block(p: dict) -> str:
     /* ── Dataframe / Table ── */
     [data-testid="stDataFrame"],
     [data-testid="stTable"] {{
-        background-color: {p["bg2"]} !important;
         border: 1px solid {p["border"]} !important;
         border-radius: 6px !important;
-    }}
-    .dvn-scroller,
-    [class*="glideDataEditor"] {{
-        background-color: {p["bg2"]} !important;
+        overflow: hidden !important;
     }}
 
     /* ── Progress bar ── */
@@ -382,10 +466,17 @@ def _css_block(p: dict) -> str:
         padding: 10px 16px !important;
         margin-bottom: 8px !important;
         max-width: 78% !important;
-        width: fit-content !important;
+        width: auto !important;
+        min-width: 0 !important;
         display: flex !important;
         align-items: flex-start !important;
         gap: 10px !important;
+        box-sizing: border-box !important;
+    }}
+    [data-testid="stChatMessageContent"] {{
+        flex: 1 1 auto !important;
+        min-width: 0 !important;
+        width: 100% !important;
     }}
     /* Message user → droite */
     [data-testid="stChatMessage"]:has([data-testid="chatAvatarIcon-user"]) {{
