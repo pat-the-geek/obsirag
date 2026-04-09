@@ -38,6 +38,14 @@ Interface conversationnelle connectée à **Ollama** (via son API OpenAI-compati
 
 ![](<docs/Screen-Captures/Chat - IA - RAG depuis coffre.png>)
 
+#### Diagrammes Mermaid
+
+Lorsque la réponse du LLM contient un bloc Mermaid, le chat affiche un **bouton de visualisation intégré** qui ouvre le diagramme dans un viewer dédié — sans quitter l'interface.
+
+![](<docs/Screen-Captures/Chat - Mermaid - integration.png>)
+
+![](<docs/Screen-Captures/Chat - Mermaid - viewer.png>)
+
 ### Cerveau — graphe de connaissances
 
 Visualisation interactive du réseau de vos notes sous forme de graphe interactif (rendu Pyvis sur fond sombre). Chaque nœud est une note, chaque arête une connexion.
