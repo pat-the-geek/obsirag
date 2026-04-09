@@ -119,6 +119,11 @@ class Settings(BaseSettings):
         return self.vault_obsirag_dir / "synapses"
 
     @property
+    def conversations_dir(self) -> Path:
+        """Conversations sauvegardées depuis le chat — lisibles dans Obsidian."""
+        return self.vault_obsirag_dir / "conversations"
+
+    @property
     def synapse_index_file(self) -> Path:
         """Index des paires déjà traitées pour éviter les doublons."""
         return self.data_dir / "autolearn" / "synapse_index.json"

@@ -481,6 +481,79 @@ with st.sidebar:
 
     render_theme_toggle()
 
+# ---- Sauvegarde de conversation ----
+
+def _save_conversation() -> None:
+    """Génère un nom de fichier via LLM et sauvegarde la conversation en Markdown."""
+    messages = st.session_state.get("messages", [])
+    if not messages:
+        st.warning("Aucun message à sauvegarder.")
+        return
+
+    # Résumé des échanges pour le LLM (questions utilisateur seulement)
+    user_turns = [m["content"] for m in messages if m["role"] == "user"]
+    summary_input = "\n".join(f"- {q[:200]}" for q in user_turns[:5])
+
+    # Génération du titre via LLM
+    title = "conversation"
+    try:
+        prompt = (
+            "Voici les questions posées lors d'une conversation avec un assistant IA :\n\n"
+            f"{summary_input}\n\n"
+            "Propose UN titre court (4 à 8 mots) en français, sans ponctuation, "
+            "qui résume le sujet principal de cette conversation. "
+            "Réponds uniquement avec le titre, rien d'autre."
+        )
+        title = svc.llm.chat(
+            [{"role": "user", "content": prompt}],
+            temperature=0.3,
+            max_tokens=30,
+            operation="save_conversation",
+        ).strip().strip('"').strip("'")
+    except Exception:
+        pass
+
+    # Slug du titre : même logique que les insights
+    safe_title = unicodedata.normalize("NFD", title)
+    safe_title = "".join(c for c in safe_title if unicodedata.category(c) != "Mn")
+    safe_title = re.sub(r"[^\w\s-]", "", safe_title).strip()
+    safe_title = re.sub(r"[\s_]+", "-", safe_title)[:60]
+
+    date_str = datetime.now().strftime("%Y-%m")
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M")
+    filename = f"{safe_title}_{timestamp}.md"
+
+    from src.config import settings as _settings
+    conv_dir = _settings.conversations_dir / date_str
+    conv_dir.mkdir(parents=True, exist_ok=True)
+    out_path = conv_dir / filename
+
+    # Construction du Markdown
+    lines = [
+        "---",
+        "tags:",
+        "  - conversation",
+        "  - obsirag",
+        "---",
+        "",
+        f"# {title}",
+        "",
+        f"**Date :** {datetime.now().strftime('%Y-%m-%d %H:%M')}  ",
+        f"**Questions :** {len(user_turns)}  ",
+        "",
+        "---",
+        "",
+    ]
+    for msg in messages:
+        if msg["role"] == "user":
+            lines += [f"## 🧑 {msg['content'][:120]}", "", f"> {msg['content']}", ""]
+        else:
+            lines += ["### 🤖 Réponse", "", msg["content"], ""]
+
+    out_path.write_text("\n".join(lines), encoding="utf-8")
+    st.success(f"✅ Conversation sauvegardée : `obsirag/conversations/{date_str}/{filename}`")
+
+
 # ---- Zone de chat ----
 st.title("💬 Chat avec votre coffre")
 
@@ -686,7 +759,12 @@ if user_input:
         st.session_state.last_gen_stats = gen_stats
 
 if st.session_state.messages:
-    if st.button("🗑 Effacer l'historique", key="clear_history"):
-        st.session_state.messages = []
-        st.session_state.pop("last_gen_stats", None)
-        st.rerun()
+    col_clear, col_save = st.columns([1, 1])
+    with col_clear:
+        if st.button("🗑 Effacer l'historique", key="clear_history", use_container_width=True):
+            st.session_state.messages = []
+            st.session_state.pop("last_gen_stats", None)
+            st.rerun()
+    with col_save:
+        if st.button("💾 Sauvegarder cette conversation", key="save_conv", use_container_width=True):
+            _save_conversation()

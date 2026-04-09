@@ -147,6 +147,20 @@ Le script :
 - Met à jour `synapse_index.json` (paires `fp_a|||fp_b`)
 - Re-indexe dans ChromaDB les fichiers modifiés
 
+### Sauvegarde des conversations
+
+À tout moment, le bouton **💾 Sauvegarder cette conversation** (affiché sous le chat dès qu'un échange existe) enregistre l'intégralité de la conversation en cours sous forme de note Markdown dans votre coffre.
+
+- Le **titre du fichier est généré par le LLM** à partir des questions posées (4 à 8 mots, en français), selon la même logique de nommage que les insights : slug normalisé + horodatage
+- Le fichier est créé dans `obsirag/conversations/YYYY-MM/` et est immédiatement visible dans Obsidian
+- Le frontmatter contient les tags `conversation` et `obsirag`
+- Chaque échange (question / réponse) est mis en forme en Markdown navigable
+- La note est indexée par ObsiRAG au prochain cycle : les conversations passées deviennent elles-mêmes interrogeables dans le chat
+
+**Exemple de chemin :** `obsirag/conversations/2026-04/Connexions-entre-notes-ML_20260409_1423.md`
+
+---
+
 ### Page Insights
 
 Consultation des artefacts, synapses et synthèses générés, avec :
@@ -375,7 +389,7 @@ Ce mécanisme garantit que la machine hôte n'est jamais saturée en mémoire en
 | Entités NER        | spaCy + validation [WUDD.ai](http://localhost:5050) (top 5 000 entités officielles) |
 | Géolocalisation    | Wikipedia Coordinates API → frontmatter `location:` (Obsidian Map View) |
 | Coffre             | Obsidian (lecture seule)                                           |
-| Artefacts générés  | `obsirag/insights/`, `obsirag/synthesis/`, `obsirag/synapses/`     |
+| Artefacts générés  | `obsirag/insights/`, `obsirag/synthesis/`, `obsirag/synapses/`, `obsirag/conversations/` |
 
 ---
 
