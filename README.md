@@ -36,6 +36,8 @@ Exemples de requêtes :
 
 Interface conversationnelle connectée à **Ollama** (via son API OpenAI-compatible) et au moteur de recherche du coffre. Les requêtes sont traitées en combinant récupération sémantique et synthèse par l'IA.
 
+![](<docs/Screen-Captures/Chat - IA - RAG depuis coffre.png>)
+
 ### Cerveau — graphe de connaissances
 
 Visualisation interactive du réseau de vos notes sous forme de graphe interactif (rendu Pyvis sur fond sombre). Chaque nœud est une note, chaque arête une connexion.
@@ -55,6 +57,8 @@ Visualisation interactive du réseau de vos notes sous forme de graphe interacti
 - Sélecteur de note alphabétique pour ouvrir directement une note dans le visualiseur
 
 Le graphe est mis en cache 5 minutes et recalculé à la demande via le bouton 🔄. Il est également exporté en JSON (`data/graph/knowledge_graph.json`) pour un usage externe éventuel.
+
+![](<docs/Screen-Captures/Cerveau - Coffre - Notes - Synapses.png>)
 
 ### Page Note — visualiseur intégré
 
@@ -140,6 +144,10 @@ Le script :
 Consultation des artefacts, synapses et synthèses générés, avec :
 - **Progression & estimation du temps restant** : widget affichant le nombre de notes traitées, restantes, et une estimation de la durée nécessaire pour compléter le traitement — avec heure du prochain cycle en heure locale
 - Historique des requêtes posées dans le chat
+
+![](<docs/Screen-Captures/Insights - Connaissances ajoutées.png>)
+
+![](<docs/Screen-Captures/Insights - Prompts.png>)
 
 ---
 
@@ -246,6 +254,10 @@ location: [lat, lng]         ← optionnel, si entité géolocalisable
 
 ## Synthèse des sources web   ← si des pages web ont été analysées
 ```
+
+![](<docs/Screen-Captures/Insights - exemple - Question - Réponse.png>)
+
+![](<docs/Screen-Captures/Insights - exemple 2 - Question - Réponse.png>)
 
 ---
 
