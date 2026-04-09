@@ -56,6 +56,23 @@ Visualisation interactive du réseau de vos notes sous forme de graphe interacti
 
 Le graphe est mis en cache 5 minutes et recalculé à la demande via le bouton 🔄. Il est également exporté en JSON (`data/graph/knowledge_graph.json`) pour un usage externe éventuel.
 
+### Page Note — visualiseur intégré
+
+Chaque note du coffre est consultable dans un visualiseur Markdown intégré, accessible depuis :
+
+- Le **graphe Cerveau** — bouton *Ouvrir dans ObsiRAG* au survol d'un nœud, ou via le top 5 des nœuds les plus connectés
+- Les **résultats du chat** — bouton d'ouverture directe dans un message de réponse
+- La **page Note** directement — sélecteur alphabétique en barre latérale
+
+**Ce qui est affiché :**
+
+- Rendu Markdown complet (titres, listes, code, callouts Obsidian…)
+- **`[[Wikilinks]]` cliquables** : chaque lien interne navigue vers la note cible dans le même visualiseur
+- **Rétroliens** : toutes les notes du coffre qui référencent la note affichée
+- Tags et métadonnées du frontmatter YAML
+
+La liste de sélection est triée **par ordre alphabétique**. En cas de doublons de titre, le chemin complet est affiché pour distinguer les notes.
+
 ### Auto-apprentissage (background learner)
 
 Un processus léger tourne en arrière-plan et :
@@ -166,7 +183,7 @@ En neurologie, une **synapse** est la jonction entre deux neurones : elle transm
 
 1. **Détection de paires** : à chaque cycle, ObsiRAG tire aléatoirement des notes du coffre et cherche dans ChromaDB les notes sémantiquement proches (similarité cosinus au-dessus d'un seuil configurable), en excluant celles qui ont déjà un wikilink entre elles
 2. **Mémoire des paires** : chaque paire `Note A ↔ Note B` est mémorisée dans `data/synapse_index.json` — elle ne sera jamais retraitée deux fois
-3. **Génération du texte** : le LLM reçoit un extrait des deux notes et explique en 3 à 5 phrases la connexion implicite qui les unit, ainsi qu'une question à approfondir
+3. **Génération du texte** : le LLM reçoit un extrait des deux notes (600 premiers caractères chacune) et rédige une explication complète de la connexion implicite qui les unit, ainsi qu'une question à approfondir
 4. **Fichier résultat** : une note Markdown est créée dans `obsirag/synapses/` nommée `{NoteA}__{NoteB}_{date}.md`, avec le score de similarité, la connexion expliquée et les extraits des deux notes sources
 
 ### Ce que vous voyez dans Obsidian
