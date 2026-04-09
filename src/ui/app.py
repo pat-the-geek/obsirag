@@ -74,6 +74,7 @@ _MERMAID_SPLIT_RE = re.compile(r"```mermaid\s*\n(.*?)```", re.DOTALL)
 def _open_note_cb(fp: str) -> None:
     """Callback on_click : mémorise la note à ouvrir, déclenche navigate après rerun."""
     st.session_state.viewing_note = fp
+    st.session_state.note_nav_request = fp
     st.session_state._goto_note = True
 
 
@@ -496,6 +497,7 @@ if "messages" not in st.session_state:
 _bridge_val = _note_bridge(default=None, key="chat_note_bridge")
 if _bridge_val:
     st.session_state.viewing_note = _bridge_val
+    st.session_state.note_nav_request = _bridge_val
     st.switch_page("pages/4_Note.py")
 
 # Navigation différée : déclenchée par on_click des boutons 📖

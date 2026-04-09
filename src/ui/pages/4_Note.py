@@ -116,7 +116,7 @@ def render_note(content: str) -> None:
 # Sidebar — sélecteur de note
 # ---------------------------------------------------------------------------
 
-notes = svc.chroma.list_notes()
+notes = sorted(svc.chroma.list_notes(), key=lambda n: n["title"].lower())
 
 with st.sidebar:
     st.markdown("### 📄 Sélectionner une note")
@@ -132,20 +132,47 @@ with st.sidebar:
             or any(t in tag.lower() for tag in n.get("tags", []))
         ]
 
-    options = {f"{n['title']}": n["file_path"] for n in filtered}
+    # Labels uniques : si doublon de titre, on ajoute le chemin entre parenthèses
+    labels = []
+    seen_titles: dict[str, int] = {}
+    for n in filtered:
+        title = n["title"]
+        if title in seen_titles:
+            seen_titles[title] += 1
+            labels.append(f"{title} ({n['file_path']})")
+        else:
+            seen_titles[title] = 1
+            labels.append(title)
+    label_to_fp = {lbl: n["file_path"] for lbl, n in zip(labels, filtered)}
 
-    preselected = st.session_state.get("viewing_note", "")
-    pre_title = next((n["title"] for n in notes if n["file_path"] == preselected), None)
+    _SELECTOR_KEY = "note_page_selector"
+    _NAV_KEY = "note_nav_request"  # navigation externe (Brain, wikilinks…)
 
-    selected_label = st.selectbox(
-        "Note",
-        options=list(options.keys()),
-        index=(list(options.keys()).index(pre_title) if pre_title and pre_title in options else 0),
-        label_visibility="collapsed",
-    )
-    selected_fp = options.get(selected_label, "")
-    if selected_fp:
+    if labels:
+        # Navigation externe : une autre page a positionné note_nav_request
+        _nav_fp = st.session_state.pop(_NAV_KEY, None)
+        if _nav_fp:
+            _nav_label = next(
+                (lbl for lbl, fp in label_to_fp.items() if fp == _nav_fp),
+                None,
+            )
+            if _nav_label:
+                st.session_state[_SELECTOR_KEY] = _nav_label
+        elif st.session_state.get(_SELECTOR_KEY) not in labels:
+            # Premier chargement ou liste filtrée ne contient plus la sélection
+            st.session_state[_SELECTOR_KEY] = labels[0]
+
+        selected_label = st.selectbox(
+            "Note",
+            options=labels,
+            key=_SELECTOR_KEY,
+            label_visibility="collapsed",
+        )
+        selected_fp = label_to_fp.get(selected_label, "")
         st.session_state.viewing_note = selected_fp
+    else:
+        selected_fp = ""
+        st.info("Aucune note ne correspond à la recherche.")
 
     st.divider()
     st.page_link("app.py", label="← Retour au chat", icon="💬")
@@ -215,6 +242,7 @@ if wikilinks or True:
                 if target:
                     if st.button(f"→ {target['title']}", key=f"wl_{link}", use_container_width=True):
                         st.session_state.viewing_note = target["file_path"]
+                        st.session_state.note_nav_request = target["file_path"]
                         st.rerun()
                 else:
                     st.caption(f"↗ {link} *(non indexé)*")
@@ -231,4 +259,5 @@ if wikilinks or True:
             for bl in backlinks[:10]:
                 if st.button(f"← {bl['title']}", key=f"bl_{bl['file_path']}", use_container_width=True):
                     st.session_state.viewing_note = bl["file_path"]
+                    st.session_state.note_nav_request = bl["file_path"]
                     st.rerun()

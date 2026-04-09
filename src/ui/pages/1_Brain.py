@@ -40,6 +40,7 @@ with st.sidebar:
     _opened_note = _note_bridge(default=None, key="note_bridge_v1")
     if _opened_note:
         st.session_state.viewing_note = _opened_note
+        st.session_state.note_nav_request = _opened_note
         st.switch_page("pages/4_Note.py")
 
     st.markdown("### Filtres")
@@ -65,7 +66,9 @@ with st.sidebar:
         label_visibility="visible",
     )
     if st.button("📖 Ouvrir dans le visualiseur", use_container_width=True):
-        st.session_state.viewing_note = note_opts[selected_note_title]
+        _fp = note_opts[selected_note_title]
+        st.session_state.viewing_note = _fp
+        st.session_state.note_nav_request = _fp
         st.switch_page("pages/4_Note.py")
 
     render_theme_toggle()
@@ -116,6 +119,7 @@ if fps_tuple:
             col_t.markdown(f"**{title}** — centralité `{score}`")
             if col_b.button("📖", key=f"top_{idx}_{fp}", help="Ouvrir"):
                 st.session_state.viewing_note = fp
+                st.session_state.note_nav_request = fp
                 st.switch_page("pages/4_Note.py")
 else:
     st.warning("Aucune note à afficher avec ces filtres.")
