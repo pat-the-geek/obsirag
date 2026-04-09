@@ -117,7 +117,20 @@ def _css_block(p: dict) -> str:
         color: {p["text"]} !important;
     }}
 
-    /* ── Header ── */
+    /* ── Réduction de l'espace en haut de page ── */
+    /* Cache complètement la barre de header Streamlit */
+    [data-testid="stHeader"] {{
+        display: none !important;
+    }}
+    /* Réduit le padding-top du conteneur principal (défaut ~6rem) */
+    .block-container,
+    div.block-container,
+    section.main div.block-container {{
+        padding-top: 1.5rem !important;
+        padding-bottom: 1rem !important;
+    }}
+
+    /* ── Header (couleur conservée au cas où il redevient visible) ── */
     [data-testid="stHeader"] {{
         background-color: {p["bg2"]} !important;
         border-bottom: 1px solid {p["border"]} !important;
@@ -501,6 +514,16 @@ def _css_block(p: dict) -> str:
         color: {p["text"]} !important;
     }}
 
+    /* ── Bouton collapse/expand de la sidebar ── */
+    [data-testid="stSidebarCollapseButton"] svg *,
+    [data-testid="stSidebarCollapsedControl"] svg *,
+    [data-testid="collapsedControl"] svg *,
+    button[data-testid="stBaseButton-headerNoPadding"] svg *,
+    button[data-testid="stBaseButton-header"] svg * {{
+        fill: {p["accent"]} !important;
+        stroke: {p["accent"]} !important;
+    }}
+
     /* ── Dividers ── */
     hr {{ border-color: {p["border"]} !important; }}
 
@@ -527,6 +550,16 @@ _CSS_AUTO = f"""<style>
 }}
 </style>"""
 
+# ── CSS d'espacement — injecté sans media query pour garantir la priorité ─────
+_CSS_SPACING = """<style>
+/* Cache la barre de header Streamlit */
+header[data-testid="stHeader"] { display: none !important; }
+/* Réduit le padding-top du conteneur de contenu (défaut ~6rem) */
+section.main > div.block-container,
+section[data-testid="stMain"] > div.block-container,
+div.block-container { padding-top: 0.5rem !important; padding-bottom: 1rem !important; }
+</style>"""
+
 # ── Clé localStorage partagée avec les iframes Mermaid ────────────────────────
 _LS_KEY = "obsirag_diag_theme_v2"
 
@@ -546,6 +579,9 @@ def inject_theme() -> None:
         st.markdown(_CSS_LIGHT, unsafe_allow_html=True)
     else:
         st.markdown(_CSS_AUTO, unsafe_allow_html=True)
+
+    # Espacement — injecté séparément, sans media query, pour garantir la priorité
+    st.markdown(_CSS_SPACING, unsafe_allow_html=True)
 
     # Synchronise localStorage pour les iframes Mermaid (même clé)
     _sync_localstorage(pref)

@@ -123,3 +123,20 @@ if fps_tuple:
                 st.switch_page("pages/4_Note.py")
 else:
     st.warning("Aucune note à afficher avec ces filtres.")
+
+# ---- Explication de la densité ----
+with st.expander("ℹ️ Comprendre la densité du graphe"):
+    st.markdown("""
+**La densité** mesure le ratio entre le nombre de connexions existantes et le nombre maximum de connexions possibles entre toutes les notes.
+
+$$\\text{Densité} = \\frac{\\text{connexions réelles}}{n \\times (n-1)}$$
+
+| Densité | Interprétation |
+|---|---|
+| < 0.01 | Très épars — typique des bases de connaissances personnelles |
+| 0.01 – 0.1 | Épars mais structuré |
+| 0.1 – 0.5 | Modérément dense |
+| > 0.5 | Très dense (rare en pratique) |
+
+Une valeur faible (< 0.01) est **tout à fait normale** pour un vault Obsidian : chaque note n'est naturellement liée qu'à une petite fraction des autres notes.
+""")
