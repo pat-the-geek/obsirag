@@ -4,7 +4,7 @@
 
 # ObsiRAG
 
-Un système RAG (Retrieval-Augmented Generation) local pour votre coffre Obsidian, tournant nativement en Python sur macOS et utilisant **Ollama** comme moteur IA local.
+Un système RAG (Retrieval-Augmented Generation) local pour votre coffre Obsidian, tournant nativement en Python sur macOS et utilisant **Ollama** comme moteur IA local et **ChromaDB** comme base vectorielle.
 
 ---
 
@@ -25,8 +25,10 @@ Exemples de requêtes :
 - **100% local** : vos notes ne quittent jamais votre machine
 - **Coffre en lecture seule** : ObsiRAG ne modifie jamais vos notes Obsidian existantes
 - **Accès complet au coffre** : pas de fenêtre contextuelle limitée, l'ensemble du coffre est exploitable
-- **Artefacts traçables** : les insights générés indiquent leur provenance (Coffre, Web, ou Coffre et Web)
-- **Déploiement natif macOS** : service launchd, environnement Python isolé (venv), sans conteneur
+- **Insights générés automatiquement** : chaque note du coffre donne lieu à des questions perspicaces auxquelles le LLM répond en combinant votre coffre et le web — les réponses sont sauvegardées en Markdown avec provenance et références citées
+- **Synapses** : connexions implicites découvertes entre vos notes par similarité sémantique — des ponts thématiques que vous n'auriez pas forcément tracés vous-même, sauvegardés comme notes dans votre coffre
+- **Artefacts traçables** : les insights et synapses générés indiquent leur provenance (Coffre, Web, ou Coffre et Web) et sont eux-mêmes interrogeables dans le chat
+- **Déploiement natif macOS** : service launchd, environnement Python isolé (venv)
 
 ---
 
