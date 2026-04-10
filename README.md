@@ -4,7 +4,7 @@
 
 # ObsiRAG
 
-Un système RAG (Retrieval-Augmented Generation) local pour votre coffre Obsidian, tournant en Python dans Docker et utilisant **Ollama** comme moteur IA local.
+Un système RAG (Retrieval-Augmented Generation) local pour votre coffre Obsidian, tournant nativement en Python sur macOS et utilisant **Ollama** comme moteur IA local.
 
 ---
 
@@ -26,7 +26,7 @@ Exemples de requêtes :
 - **Coffre en lecture seule** : ObsiRAG ne modifie jamais vos notes Obsidian existantes
 - **Accès complet au coffre** : pas de fenêtre contextuelle limitée, l'ensemble du coffre est exploitable
 - **Artefacts traçables** : les insights générés indiquent leur provenance (Coffre, Web, ou Coffre et Web)
-- **Déploiement Docker** : isolation propre, reproductible
+- **Déploiement natif macOS** : service launchd, environnement Python isolé (venv), sans conteneur
 
 ---
 
@@ -99,7 +99,7 @@ Un processus léger tourne en arrière-plan et :
 
 > Les artefacts générés sont indexés et deviennent eux-mêmes interrogeables dans le chat.
 
-Le système est conçu pour fonctionner **sans pénaliser l'utilisation normale de la machine** : les appels LLM sont espacés (pause configurable entre chaque note et chaque question), le nombre de notes traitées par cycle est limité, et tout tourne dans un thread d'arrière-plan isolé dans Docker. La machine reste pleinement disponible pendant le traitement.
+Le système est conçu pour fonctionner **sans pénaliser l'utilisation normale de la machine** : les appels LLM sont espacés (pause configurable entre chaque note et chaque question), le nombre de notes traitées par cycle est limité, et tout tourne dans un thread d'arrière-plan isolé. La machine reste pleinement disponible pendant le traitement.
 
 #### Alignement sémantique des questions
 
@@ -122,23 +122,23 @@ Chaque insight généré est enrichi avec des **entités nommées validées** (p
 
 Pour migrer les insights existants (tags + géolocalisation + galeries) :
 ```bash
-docker exec obsirag python3 /app/scripts/migrate_insight_tags.py --dry-run  # simulation
-docker exec obsirag python3 /app/scripts/migrate_insight_tags.py              # application
+.venv/bin/python scripts/migrate_insight_tags.py --dry-run  # simulation
+.venv/bin/python scripts/migrate_insight_tags.py              # application
 ```
 
 Pour renommer en batch les insights/synapses/syntheses selon un titre court généré par le LLM :
 ```bash
 # Prévisualisation sans modification
-docker exec obsirag python3 /app/scripts/rename_insights.py --dry-run
+.venv/bin/python scripts/rename_insights.py --dry-run
 
 # Renommage avec LLM (tous les dossiers, pause 2 s entre appels)
-docker exec obsirag python3 /app/scripts/rename_insights.py --sleep 2
+.venv/bin/python scripts/rename_insights.py --sleep 2
 
 # Cibler un seul dossier
-docker exec obsirag python3 /app/scripts/rename_insights.py --dir insights
+.venv/bin/python scripts/rename_insights.py --dir insights
 
 # Mode rapide sans LLM (retire uniquement le suffixe _YYYYMMDD)
-docker exec obsirag python3 /app/scripts/rename_insights.py --no-llm
+.venv/bin/python scripts/rename_insights.py --no-llm
 ```
 
 Le script :
@@ -293,7 +293,7 @@ Le découpage respecte la structure de la note : d'abord par section (`## Titre`
 
 ### 2. Vectorisation (embedding)
 
-Chaque chunk est transformé en un **vecteur numérique** — une liste de ~768 nombres — par le modèle `nomic-embed-text` via **Ollama** (calculs sur GPU/ANE du Mac, sans charge CPU dans Docker). Ce vecteur encode le *sens* du texte : deux passages sémantiquement proches produisent des vecteurs proches dans l'espace mathématique, même s'ils n'ont aucun mot en commun.
+Chaque chunk est transformé en un **vecteur numérique** — une liste de ~768 nombres — par le modèle `nomic-embed-text` via **Ollama** (calculs sur GPU/ANE du Mac). Ce vecteur encode le *sens* du texte : deux passages sémantiquement proches produisent des vecteurs proches dans l'espace mathématique, même s'ils n'ont aucun mot en commun.
 
 ### 3. Stockage dans ChromaDB
 
@@ -334,7 +334,7 @@ Ce délai est intentionnel et s'explique par la mécanique du cycle :
 
 Ces pauses sont délibérées — elles garantissent qu'Ollama reste disponible pour le chat en temps réel et que la machine n'est pas saturée en arrière-plan. Les paramètres `AUTOLEARN_FULLSCAN_PER_RUN` et `AUTOLEARN_INTERVAL_MINUTES` dans `.env` permettent d'accélérer l'amorçage si vous le souhaitez (ex. 5 notes/cycle toutes les 30 min pour traiter le coffre en moins d'une journée).
 
-> **Sur MacBook :** le container Docker et Ollama se remettent automatiquement en marche à la sortie de veille — aucune intervention manuelle n'est nécessaire. L'auto-learner reprend son cycle là où il s'était arrêté, de façon totalement transparente.
+> **Sur MacBook :** Ollama et ObsiRAG se remettent automatiquement en marche à la sortie de veille (service launchd) — aucune intervention manuelle n'est nécessaire. L'auto-learner reprend son cycle là où il s'était arrêté, de façon totalement transparente.
 
 Une fois l'amorçage terminé, seules les notes nouvelles ou récemment modifiées sont retraitées à chaque cycle — le fonctionnement courant est quasi-instantané.
 
@@ -348,16 +348,16 @@ ObsiRAG utilise **Ollama** comme serveur IA local (API compatible OpenAI). Deux 
 
 | Usage                       | Opération                                    | Modèle configuré                                 |
 | --------------------------- | -------------------------------------------- | ------------------------------------------------ |
-| **Chat / RAG**              | Réponses aux questions sur le coffre         | `LMSTUDIO_CHAT_MODEL` (ex. `gemma3:4b`)          |
+| **Chat / RAG**              | Réponses aux questions sur le coffre         | `OLLAMA_CHAT_MODEL` (ex. `gemma3:4b`)          |
 | **Génération de questions** | Auto-learner — questions ancrées dans le champ sémantique de chaque note | Même modèle que le chat                          |
 | **Synapses & synthèses**    | Connexions implicites, synthèse hebdomadaire | Même modèle que le chat                          |
-| **Embeddings**              | Vectorisation des notes et des requêtes      | `LMSTUDIO_EMBED_MODEL` (ex. `nomic-embed-text`)  |
+| **Embeddings**              | Vectorisation des notes et des requêtes      | `OLLAMA_EMBED_MODEL` (ex. `nomic-embed-text`)  |
 
-> Un seul modèle de chat suffit pour tout. Configurer `LMSTUDIO_CHAT_MODEL` dans `.env` avec le nom exact du modèle Ollama.
+> Un seul modèle de chat suffit pour tout. Configurer `OLLAMA_CHAT_MODEL` dans `.env` avec le nom exact du modèle Ollama.
 
-Le modèle doit avoir une fenêtre de contexte d'au moins **4096 tokens**. 8192+ est recommandé pour les coffres volumineux. Ajuster `LMSTUDIO_CONTEXT_SIZE` en conséquence.
+Le modèle doit avoir une fenêtre de contexte d'au moins **4096 tokens**. 8192+ est recommandé pour les coffres volumineux. Ajuster `OLLAMA_CONTEXT_SIZE` en conséquence.
 
-Les embeddings sont gérés par Ollama via `LMSTUDIO_EMBED_MODEL` (`nomic-embed-text` par défaut, 768 dimensions) — les calculs s'effectuent sur le GPU/ANE du Mac, sans charge CPU dans Docker.
+Les embeddings sont gérés par Ollama via `OLLAMA_EMBED_MODEL` (`nomic-embed-text` par défaut, 768 dimensions) — les calculs s'effectuent sur le GPU/ANE du Mac.
 
 ### Gestion automatique de la mémoire par Ollama
 
@@ -379,7 +379,7 @@ Ce mécanisme garantit que la machine hôte n'est jamais saturée en mémoire en
 | Composant          | Technologie                                                        |
 | ------------------ | ------------------------------------------------------------------ |
 | Langage            | Python 3.11                                                        |
-| Déploiement        | Docker / Docker Compose                                            |
+| Déploiement        | macOS natif (launchd + Python venv)                                |
 | IA                 | Ollama (API locale, compatible OpenAI)                             |
 | Base vectorielle   | ChromaDB                                                           |
 | Embeddings         | Ollama — `nomic-embed-text` (768 dimensions, Metal/ANE)            |
@@ -401,7 +401,7 @@ Ce mécanisme garantit que la machine hôte n'est jamais saturée en mémoire en
 | `AUTOLEARN_LOOKBACK_HOURS` | **24 h** | Fenêtre de détection — seules les notes modifiées dans les dernières 24h sont candidates |
 | `AUTOLEARN_MIN_REPROCESS_DAYS` | **7 jours** | Délai de grâce — une note déjà traitée ne sera pas retraitée avant 7 jours |
 
-Le premier cycle démarre **5 minutes après le lancement du container**, pour laisser le temps à Ollama d'être prêt.
+Le premier cycle démarre **5 minutes après le démarrage de l'application**, pour laisser le temps à Ollama d'être prêt.
 
 > Ces trois paramètres permettent d'adapter le comportement selon l'usage : un intervalle plus court (ex. 30 min) pour un coffre très actif, un lookback plus large (ex. 48h) pour rattraper des notes modifiées en dehors des heures habituelles, et un `MIN_REPROCESS_DAYS` plus court si vous souhaitez qu'une note soit ré-enrichie plus fréquemment.
 
@@ -411,10 +411,10 @@ Le premier cycle démarre **5 minutes après le lancement du container**, pour l
 
 ```bash
 # Installer Ollama (si ce n'est pas déjà fait)
-curl -fsSL https://ollama.com/install.sh | sh
+brew install ollama
 
 # Télécharger les modèles nécessaires
-ollama pull gemma3:4b          # modèle chat (~3.3 GB)
+ollama pull qwen2.5:7b         # modèle chat (~4.7 GB)
 ollama pull nomic-embed-text   # modèle embedding (~274 MB)
 
 # Cloner le dépôt
@@ -423,13 +423,21 @@ cd obsirag
 
 # Configurer l'environnement
 cp .env.example .env
-# Éditer .env : renseigner VAULT_PATH (LMSTUDIO_BASE_URL pointe déjà sur Ollama par défaut)
+# Éditer .env : renseigner VAULT_PATH, OLLAMA_CHAT_MODEL, etc.
 
-# Lancer
-docker compose up -d
+# Installer les dépendances Python et configurer le service
+./setup.sh
+
+# Démarrer l'application
+./start.sh
 ```
 
 L'interface est accessible sur [http://localhost:8501](http://localhost:8501).
+
+Pour installer ObsiRAG comme service macOS (démarrage automatique au login) :
+```bash
+./install_service.sh
+```
 
 ---
 

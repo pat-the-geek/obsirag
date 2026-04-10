@@ -2,9 +2,11 @@ from pathlib import Path
 from typing import Optional
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+_ENV_FILE = Path(__file__).resolve().parent.parent / ".env"
+
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(env_file=str(_ENV_FILE), extra="ignore")
 
     # Coffre Obsidian (lecture, + écriture dans obsirag/insights et obsirag/synthesis)
     vault_path: str = "/vault"
@@ -12,11 +14,11 @@ class Settings(BaseSettings):
     # Données système ObsiRAG — volume Docker (HORS coffre, pas de sync iCloud)
     app_data_dir: str = "/app/data"
 
-    # LM Studio
-    lmstudio_base_url: str = "http://host.docker.internal:1234/v1"
-    lmstudio_chat_model: str = ""
-    lmstudio_embed_model: Optional[str] = None
-    lmstudio_context_size: int = 4096  # n_ctx du modèle chargé dans LM Studio
+    # Ollama
+    ollama_base_url: str = "http://localhost:11434/v1"
+    ollama_chat_model: str = ""
+    ollama_embed_model: Optional[str] = None
+    ollama_context_size: int = 4096  # n_ctx du modèle chargé dans Ollama
 
     # Embeddings locaux
     embedding_model: str = "paraphrase-multilingual-MiniLM-L12-v2"

@@ -60,7 +60,7 @@ if [ ! -f ".env" ]; then
   echo ""
   echo "  !! Edite .env et définis au minimum :"
   echo "       VAULT_PATH=/chemin/absolu/vers/ton/coffre"
-  echo "       LMSTUDIO_BASE_URL=http://localhost:1234/v1  (LM Studio)"
+  echo "       OLLAMA_BASE_URL=http://localhost:11434/v1  (Ollama)"
   echo "       APP_DATA_DIR=$(pwd)/data"
   echo ""
 else

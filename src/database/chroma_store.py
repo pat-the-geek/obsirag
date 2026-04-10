@@ -1,8 +1,8 @@
 """
 Couche d'accès ChromaDB.
 - Persistance sur disque dans obsirag/data/chroma
-- Embedding via LM Studio (Metal/ANE) si LMSTUDIO_EMBED_MODEL est défini,
-  sinon via sentence-transformers en local (CPU Docker, fallback)
+- Embedding via Ollama (Metal/ANE) si OLLAMA_EMBED_MODEL est défini,
+  sinon via sentence-transformers en local (CPU, fallback)
 - Recherche sémantique, par date, par entité NER, par tags
 """
 from __future__ import annotations
@@ -22,23 +22,23 @@ from src.indexer.chunker import Chunk
 def _build_embedding_function() -> EmbeddingFunction:
     """
     Choisit la fonction d'embedding selon la configuration :
-    - LMSTUDIO_EMBED_MODEL défini  → OpenAI-compatible via LM Studio (Metal/ANE)
-    - sinon                        → SentenceTransformers local (CPU Docker, fallback)
+    - OLLAMA_EMBED_MODEL défini  → OpenAI-compatible via Ollama (Metal/ANE)
+    - sinon                      → SentenceTransformers local (CPU, fallback)
 
     IMPORTANT : changer de backend change la dimension des vecteurs.
     Si vous basculez d'un mode à l'autre sur une collection existante,
     supprimez le dossier data/chroma et relancez une indexation complète.
     """
-    if settings.lmstudio_embed_model:
+    if settings.ollama_embed_model:
         from chromadb.utils.embedding_functions import OpenAIEmbeddingFunction
         logger.info(
-            f"Embedding via LM Studio ({settings.lmstudio_base_url}) : "
-            f"{settings.lmstudio_embed_model}"
+            f"Embedding via Ollama ({settings.ollama_base_url}) : "
+            f"{settings.ollama_embed_model}"
         )
         return OpenAIEmbeddingFunction(
-            api_key="lm-studio",
-            api_base=settings.lmstudio_base_url,
-            model_name=settings.lmstudio_embed_model,
+            api_key="ollama",
+            api_base=settings.ollama_base_url,
+            model_name=settings.ollama_embed_model,
         )
 
     from chromadb.utils.embedding_functions import SentenceTransformerEmbeddingFunction
@@ -81,7 +81,7 @@ class ChromaStore:
             metadatas=[c.as_metadata() for c in chunks],
         )
         elapsed = time.perf_counter() - t0
-        backend = settings.lmstudio_embed_model or settings.embedding_model
+        backend = settings.ollama_embed_model or settings.embedding_model
         logger.info(
             f"embed:add {len(chunks)} chunk(s) — {elapsed:.2f}s "
             f"({elapsed / len(chunks):.3f}s/chunk) backend={backend}"
@@ -116,7 +116,7 @@ class ChromaStore:
         t0 = time.perf_counter()
         results = self._collection.query(**kwargs)
         elapsed = time.perf_counter() - t0
-        backend = settings.lmstudio_embed_model or settings.embedding_model
+        backend = settings.ollama_embed_model or settings.embedding_model
         logger.debug(
             f"embed:search {elapsed:.3f}s backend={backend} top_k={top_k}"
         )

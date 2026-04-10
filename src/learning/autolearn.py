@@ -13,7 +13,9 @@ CPU-friendly : pause entre chaque appel LLM, pas de parallélisme agressif.
 from __future__ import annotations
 
 import json
+import os
 import re
+import tempfile
 import threading
 import time
 import unicodedata
@@ -147,6 +149,7 @@ class AutoLearner:
         self._indexer = indexer
         self._last_user_activity: float = 0.0  # timestamp epoch
         self._activity_lock = threading.Lock()
+        self._processed_lock = threading.Lock()
         self._bulk_initial_done = threading.Event()  # signalé quand la passe initiale est finie
         # Statut lisible depuis l'UI (thread-safe via dict atomique Python)
         self.processing_status: dict = {
@@ -173,14 +176,27 @@ class AutoLearner:
         return {}
 
     def _save_processed(self, processed: dict[str, str]) -> None:
+        """Écriture atomique via fichier temporaire + rename pour éviter les corruptions."""
         f = settings.processed_notes_file
         f.parent.mkdir(parents=True, exist_ok=True)
-        f.write_text(json.dumps(processed, ensure_ascii=False, indent=2), encoding="utf-8")
+        content = json.dumps(processed, ensure_ascii=False, indent=2)
+        tmp_fd, tmp_path = tempfile.mkstemp(dir=f.parent, suffix=".tmp")
+        try:
+            with os.fdopen(tmp_fd, "w", encoding="utf-8") as fh:
+                fh.write(content)
+            os.replace(tmp_path, f)
+        except Exception:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            raise
 
     def _mark_processed(self, file_path: str) -> None:
-        processed = self._load_processed()
-        processed[file_path] = datetime.utcnow().isoformat()
-        self._save_processed(processed)
+        with self._processed_lock:
+            processed = self._load_processed()
+            processed[file_path] = datetime.utcnow().isoformat()
+            self._save_processed(processed)
 
     def _is_first_insight_run(self) -> bool:
         """Vrai s'il reste beaucoup de notes non traitées (rattrapage nécessaire).
@@ -201,6 +217,16 @@ class AutoLearner:
         et avec des pauses minimales. Appelée une seule fois au premier démarrage.
         Le cycle normal prend le relai une fois cette passe terminée."""
         try:
+            # Warm-up : attendre qu'Ollama et le modèle d'embedding soient prêts
+            for attempt in range(10):
+                try:
+                    self._chroma.search("warm-up", top_k=1)
+                    logger.info("Auto-learner mode accéléré — Ollama prêt, démarrage du bulk")
+                    break
+                except Exception as warm_exc:
+                    logger.info(f"Auto-learner : attente Ollama ({attempt + 1}/10) : {warm_exc}")
+                    time.sleep(3)
+
             all_notes = [
                 n for n in self._chroma.list_notes()
                 if not self._is_obsirag_generated(n["file_path"])
@@ -342,6 +368,13 @@ class AutoLearner:
     def _run_cycle(self) -> None:
         logger.info("Auto-learner : début du cycle")
         try:
+            # Vérifier qu'Ollama est prêt avant de démarrer le cycle
+            try:
+                self._chroma.search("warm-up", top_k=1)
+            except Exception as warm_exc:
+                logger.warning(f"Auto-learner : Ollama non prêt, cycle annulé : {warm_exc}")
+                return
+
             processed_count = 0
             processed_map = self._load_processed()
 
@@ -545,14 +578,14 @@ class AutoLearner:
     ) -> tuple[str, str]:
         """
         Tronque rag_ctx et web_ctx pour que le prompt complet respecte la fenêtre
-        de contexte du modèle (settings.lmstudio_context_size).
+        de contexte du modèle (settings.ollama_context_size).
 
         Budget = (n_ctx - max_tokens_réponse) × 4 chars/token − overhead
         Allocation : 30 % pour rag_ctx, 70 % pour web_ctx.
         """
         chars_per_token = 4
         total_budget = (
-            settings.lmstudio_context_size - self._MAX_TOKENS_RESPONSE
+            settings.ollama_context_size - self._MAX_TOKENS_RESPONSE
         ) * chars_per_token - overhead
         total_budget = max(total_budget, 800)  # plancher de sécurité
 
@@ -565,7 +598,7 @@ class AutoLearner:
             logger.debug(
                 f"fit_context : rag {len(rag_ctx)}→{len(fitted_rag)} chars, "
                 f"web {len(web_ctx)}→{len(fitted_web)} chars "
-                f"(budget={total_budget}, n_ctx={settings.lmstudio_context_size})"
+                f"(budget={total_budget}, n_ctx={settings.ollama_context_size})"
             )
         return fitted_rag, fitted_web
 

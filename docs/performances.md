@@ -37,7 +37,7 @@ Matériel de test : **Apple M5 16GB** — modèle Ollama : `gemma3:4b`
 | 200 notes | ~70h (~3 jours) |
 | 500 notes | ~175h (~7 jours) |
 
-> Le traitement est **progressif et résumable** : en cas d'interruption (redémarrage Docker, coupure), le scan reprend automatiquement là où il s'était arrêté grâce au fichier `processed_notes.json`.
+> Le traitement est **progressif et résumable** : en cas d'interruption (redémarrage, coupure), le scan reprend automatiquement là où il s'était arrêté grâce au fichier `processed_notes.json`.
 
 ---
 
@@ -101,4 +101,4 @@ Le goulot d'étranglement principal n'est pas le CPU mais la **bande passante m�
 - Les tok/s sont mesurés en **génération** (decode), pas en prefill.
 - Les durées ObsiRAG incluent les pauses configurées entre les appels LLM (`_SLEEP_BETWEEN_NOTES`, `_SLEEP_BETWEEN_QUESTIONS`) pour ne pas saturer Ollama.
 - La recherche web (DDG + fetch URLs) prend ~30–45s par question, indépendamment du matériel.
-- Les embeddings (`nomic-embed-text` via Ollama) s'exécutent sur le Metal/ANE du Mac — charge CPU Docker nulle. L'indexation initiale d'un coffre de 176 notes prend ~4 min à ~29 chunks/s.
+- Les embeddings (`nomic-embed-text` via Ollama) s'exécutent sur le Metal/ANE du Mac. L'indexation initiale d'un coffre de 176 notes prend ~4 min à ~29 chunks/s.

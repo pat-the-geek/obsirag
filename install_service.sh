@@ -65,10 +65,10 @@ _env_val() {
 
 VAULT_PATH="$(_env_val VAULT_PATH)"
 APP_DATA_DIR="$(_env_val APP_DATA_DIR)"
-LMSTUDIO_BASE_URL="$(_env_val LMSTUDIO_BASE_URL)"
-LMSTUDIO_CHAT_MODEL="$(_env_val LMSTUDIO_CHAT_MODEL)"
-LMSTUDIO_CONTEXT_SIZE="$(_env_val LMSTUDIO_CONTEXT_SIZE)"
-LMSTUDIO_EMBED_MODEL="$(_env_val LMSTUDIO_EMBED_MODEL)"
+OLLAMA_BASE_URL="$(_env_val OLLAMA_BASE_URL)"
+OLLAMA_CHAT_MODEL="$(_env_val OLLAMA_CHAT_MODEL)"
+OLLAMA_CONTEXT_SIZE="$(_env_val OLLAMA_CONTEXT_SIZE)"
+OLLAMA_EMBED_MODEL="$(_env_val OLLAMA_EMBED_MODEL)"
 EMBEDDING_MODEL="$(_env_val EMBEDDING_MODEL)"
 EMBEDDING_MODEL="${EMBEDDING_MODEL:-paraphrase-multilingual-MiniLM-L12-v2}"
 OBSIDIAN_VAULT_NAME="$(_env_val OBSIDIAN_VAULT_NAME)"
@@ -80,7 +80,7 @@ AUTOLEARN_INTERVAL_MINUTES="$(_env_val AUTOLEARN_INTERVAL_MINUTES)"
 AUTOLEARN_INTERVAL_MINUTES="${AUTOLEARN_INTERVAL_MINUTES:-60}"
 
 # Remplacer host.docker.internal → localhost
-LMSTUDIO_BASE_URL="${LMSTUDIO_BASE_URL/host.docker.internal/localhost}"
+OLLAMA_BASE_URL="${OLLAMA_BASE_URL/host.docker.internal/localhost}"
 
 # APP_DATA_DIR par défaut
 APP_DATA_DIR="${APP_DATA_DIR:-$HOME/Library/Application Support/ObsiRAG}"
@@ -128,14 +128,14 @@ cat > "$PLIST_DST" <<PLIST
         <string>${PROJECT_DIR}/logs</string>
         <key>LOG_LEVEL</key>
         <string>${LOG_LEVEL}</string>
-        <key>LMSTUDIO_BASE_URL</key>
-        <string>${LMSTUDIO_BASE_URL}</string>
-        <key>LMSTUDIO_CHAT_MODEL</key>
-        <string>${LMSTUDIO_CHAT_MODEL}</string>
-        <key>LMSTUDIO_CONTEXT_SIZE</key>
-        <string>${LMSTUDIO_CONTEXT_SIZE}</string>
-        <key>LMSTUDIO_EMBED_MODEL</key>
-        <string>${LMSTUDIO_EMBED_MODEL}</string>
+        <key>OLLAMA_BASE_URL</key>
+        <string>${OLLAMA_BASE_URL}</string>
+        <key>OLLAMA_CHAT_MODEL</key>
+        <string>${OLLAMA_CHAT_MODEL}</string>
+        <key>OLLAMA_CONTEXT_SIZE</key>
+        <string>${OLLAMA_CONTEXT_SIZE}</string>
+        <key>OLLAMA_EMBED_MODEL</key>
+        <string>${OLLAMA_EMBED_MODEL}</string>
         <key>EMBEDDING_MODEL</key>
         <string>${EMBEDDING_MODEL}</string>
         <key>OBSIDIAN_VAULT_NAME</key>

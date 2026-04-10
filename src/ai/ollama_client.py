@@ -1,5 +1,5 @@
 """
-Client LM Studio (API compatible OpenAI).
+Client Ollama (API compatible OpenAI).
 - Completion de chat (streaming et non-streaming)
 - Suivi automatique de la consommation de tokens à chaque appel
 """
@@ -15,14 +15,14 @@ from src.config import settings
 from src.logger import log_token_usage
 
 
-class LMStudioClient:
+class OllamaClient:
     def __init__(self) -> None:
         self._client = OpenAI(
-            base_url=settings.lmstudio_base_url,
-            api_key="lm-studio",  # LM Studio n'exige pas de clé réelle
+            base_url=settings.ollama_base_url,
+            api_key="ollama",
         )
-        self._model = settings.lmstudio_chat_model
-        logger.info(f"LMStudioClient → {settings.lmstudio_base_url} | modèle : {self._model or 'auto'}")
+        self._model = settings.ollama_chat_model
+        logger.info(f"OllamaClient → {settings.ollama_base_url} | modèle : {self._model or 'auto'}")
 
     # ---- API publique ----
 
@@ -47,7 +47,7 @@ class LMStudioClient:
             return answer
 
         except OpenAIError as exc:
-            logger.error(f"LMStudio chat error : {exc}")
+            logger.error(f"Ollama chat error : {exc}")
             raise
 
     def stream(
@@ -88,21 +88,21 @@ class LMStudioClient:
                 )
 
         except OpenAIError as exc:
-            logger.error(f"LMStudio stream error : {exc}")
+            logger.error(f"Ollama stream error : {exc}")
             raise
 
     def is_available(self) -> bool:
-        """Vérifie que LM Studio répond."""
+        """Vérifie qu'Ollama répond."""
         try:
             self._client.models.list()
             return True
         except Exception:
             return False
 
-    # ---- helpers ----
+    # ---- helpers privés ----
 
-    def _track_tokens(self, response: Any, operation: str) -> None:
-        usage = getattr(response, "usage", None)
+    def _track_tokens(self, resp: Any, operation: str) -> None:
+        usage = getattr(resp, "usage", None)
         if usage:
             log_token_usage(
                 operation=operation,

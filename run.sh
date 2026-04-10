@@ -18,13 +18,15 @@ if [ ! -x "$VENV_STREAMLIT" ]; then
 fi
 
 # ---- Variables d'environnement depuis .env ------------------
+# Nettoyer les anciens noms de variables (migration LM Studio → Ollama)
+unset LMSTUDIO_BASE_URL LMSTUDIO_CHAT_MODEL LMSTUDIO_CONTEXT_SIZE LMSTUDIO_EMBED_MODEL 2>/dev/null || true
 set -o allexport
 source "$SCRIPT_DIR/.env"
 set +o allexport
 
 # Remplace host.docker.internal → localhost (héritage Docker)
-if [[ "${LMSTUDIO_BASE_URL:-}" == *"host.docker.internal"* ]]; then
-  export LMSTUDIO_BASE_URL="${LMSTUDIO_BASE_URL/host.docker.internal/localhost}"
+if [[ "${OLLAMA_BASE_URL:-}" == *"host.docker.internal"* ]]; then
+  export OLLAMA_BASE_URL="${OLLAMA_BASE_URL/host.docker.internal/localhost}"
 fi
 
 export APP_DATA_DIR="${APP_DATA_DIR:-$SCRIPT_DIR/data}"

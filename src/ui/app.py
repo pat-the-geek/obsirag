@@ -366,7 +366,10 @@ def _autolearn_live_status():
     _user_fps = {n["file_path"] for n in _user_notes}
     _total = len(_user_notes)
     _pf = _s.processed_notes_file
-    _processed_map = _json.loads(_pf.read_text(encoding="utf-8")) if _pf.exists() else {}
+    try:
+        _processed_map = _json.loads(_pf.read_text(encoding="utf-8")) if _pf.exists() else {}
+    except Exception:
+        _processed_map = {}
     _processed = len([fp for fp in _processed_map if fp in _user_fps])
     _insights = len(list(_s.insights_dir.rglob("*.md"))) if _s.insights_dir.exists() else 0
     _synapses = len(list(_s.synapses_dir.rglob("*.md"))) if _s.synapses_dir.exists() else 0

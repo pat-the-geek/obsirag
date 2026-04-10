@@ -30,9 +30,9 @@ class ServiceManager:
         from src.database.chroma_store import ChromaStore
         self.chroma = ChromaStore()
 
-        _step("🤖 Connexion à LM Studio…")
-        from src.ai.lmstudio import LMStudioClient
-        self.llm = LMStudioClient()
+        _step("🤖 Connexion à Ollama…")
+        from src.ai.ollama_client import OllamaClient
+        self.llm = OllamaClient()
 
         _step("🔗 Initialisation du pipeline RAG…")
         from src.ai.rag import RAGPipeline

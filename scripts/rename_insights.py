@@ -256,8 +256,8 @@ def main() -> None:
     indexer = None
     if not args.dry_run and not args.no_llm:
         try:
-            from src.ai.lmstudio import LMStudioClient
-            llm = LMStudioClient()
+            from src.ai.ollama_client import OllamaClient
+            llm = OllamaClient()
             if not llm.is_available():
                 print("⚠ Ollama non disponible — mode --no-llm activé")
                 llm = None
