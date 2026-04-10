@@ -58,16 +58,16 @@ cp "$PROJECT_DIR/.streamlit/config.toml" "$HOME/.streamlit/config.toml"
 
 # ---- Lire les variables du .env ----------------------------
 # Charger .env pour lire les valeurs (les guillemets sont gérés)
+# grep retourne exit 1 si rien trouvé — le || true empêche set -e de tout arrêter
 _env_val() {
-  grep -E "^${1}=" "$PROJECT_DIR/.env" | head -1 \
-    | sed -E "s/^${1}=['\"]?//;s/['\"]?$//"
+  grep -E "^${1}=" "$PROJECT_DIR/.env" 2>/dev/null | head -1 \
+    | sed -E "s/^${1}=['\"]?//;s/['\"]?$//" || true
 }
 
 VAULT_PATH="$(_env_val VAULT_PATH)"
 APP_DATA_DIR="$(_env_val APP_DATA_DIR)"
-OLLAMA_BASE_URL="$(_env_val OLLAMA_BASE_URL)"
-OLLAMA_CHAT_MODEL="$(_env_val OLLAMA_CHAT_MODEL)"
-OLLAMA_CONTEXT_SIZE="$(_env_val OLLAMA_CONTEXT_SIZE)"
+MLX_CHAT_MODEL="$(_env_val MLX_CHAT_MODEL)"
+MLX_CHAT_MODEL="${MLX_CHAT_MODEL:-mlx-community/Qwen2.5-7B-Instruct-4bit}"
 OLLAMA_EMBED_MODEL="$(_env_val OLLAMA_EMBED_MODEL)"
 EMBEDDING_MODEL="$(_env_val EMBEDDING_MODEL)"
 EMBEDDING_MODEL="${EMBEDDING_MODEL:-paraphrase-multilingual-MiniLM-L12-v2}"
@@ -78,9 +78,6 @@ AUTOLEARN_ENABLED="$(_env_val AUTOLEARN_ENABLED)"
 AUTOLEARN_ENABLED="${AUTOLEARN_ENABLED:-true}"
 AUTOLEARN_INTERVAL_MINUTES="$(_env_val AUTOLEARN_INTERVAL_MINUTES)"
 AUTOLEARN_INTERVAL_MINUTES="${AUTOLEARN_INTERVAL_MINUTES:-60}"
-
-# Remplacer host.docker.internal → localhost
-OLLAMA_BASE_URL="${OLLAMA_BASE_URL/host.docker.internal/localhost}"
 
 # APP_DATA_DIR par défaut
 APP_DATA_DIR="${APP_DATA_DIR:-$HOME/Library/Application Support/ObsiRAG}"
@@ -128,12 +125,8 @@ cat > "$PLIST_DST" <<PLIST
         <string>${PROJECT_DIR}/logs</string>
         <key>LOG_LEVEL</key>
         <string>${LOG_LEVEL}</string>
-        <key>OLLAMA_BASE_URL</key>
-        <string>${OLLAMA_BASE_URL}</string>
-        <key>OLLAMA_CHAT_MODEL</key>
-        <string>${OLLAMA_CHAT_MODEL}</string>
-        <key>OLLAMA_CONTEXT_SIZE</key>
-        <string>${OLLAMA_CONTEXT_SIZE}</string>
+        <key>MLX_CHAT_MODEL</key>
+        <string>${MLX_CHAT_MODEL}</string>
         <key>OLLAMA_EMBED_MODEL</key>
         <string>${OLLAMA_EMBED_MODEL}</string>
         <key>EMBEDDING_MODEL</key>
@@ -148,6 +141,8 @@ cat > "$PLIST_DST" <<PLIST
         <string>${HOME}/.cache/huggingface/transformers</string>
         <key>HF_HOME</key>
         <string>${HOME}/.cache/huggingface</string>
+        <key>TZ</key>
+        <string>Europe/Zurich</string>
     </dict>
 
     <!-- Démarrer automatiquement à la connexion -->

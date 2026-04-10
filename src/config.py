@@ -14,7 +14,10 @@ class Settings(BaseSettings):
     # Données système ObsiRAG — volume Docker (HORS coffre, pas de sync iCloud)
     app_data_dir: str = "/app/data"
 
-    # Ollama
+    # MLX-LM (génération locale Apple Silicon — remplace Ollama)
+    mlx_chat_model: str = "mlx-community/Qwen2.5-7B-Instruct-4bit"
+
+    # Ollama (conservé pour compatibilité ascendante / fallback éventuel)
     ollama_base_url: str = "http://localhost:11434/v1"
     ollama_chat_model: str = ""
     ollama_embed_model: Optional[str] = None
@@ -85,6 +88,11 @@ class Settings(BaseSettings):
     @property
     def token_stats_file(self) -> Path:
         return self.data_dir / "stats" / "token_usage.json"
+
+    @property
+    def processing_times_file(self) -> Path:
+        """Historique glissant des durées réelles de traitement par note (secondes)."""
+        return self.data_dir / "stats" / "processing_times.json"
 
     @property
     def queries_file(self) -> Path:

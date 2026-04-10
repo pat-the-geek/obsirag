@@ -30,9 +30,9 @@ class ServiceManager:
         from src.database.chroma_store import ChromaStore
         self.chroma = ChromaStore()
 
-        _step("🤖 Connexion à Ollama…")
-        from src.ai.ollama_client import OllamaClient
-        self.llm = OllamaClient()
+        _step("🤖 Chargement du modèle MLX (peut prendre 30-60 s)…")
+        from src.ai.mlx_client import MlxClient
+        self.llm = MlxClient()
 
         _step("🔗 Initialisation du pipeline RAG…")
         from src.ai.rag import RAGPipeline

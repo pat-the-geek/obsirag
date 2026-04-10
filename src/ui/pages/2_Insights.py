@@ -44,14 +44,21 @@ with st.expander("⏱️ Progression & estimation du temps restant", expanded=Tr
     processed_count = len([fp for fp in processed_map if fp in user_fps])
     remaining = max(0, total_notes - processed_count)
 
-    # Paramètres de vitesse (secondes par note)
-    # 1 appel semantic field + 1 appel questions + 3 × (15s sleep + ~10s LLM) + 30s sleep fin
-    secs_per_note = (
-        5          # sleep post-semantic-field
-        + 3 * 15   # sleep entre questions
-        + 30       # sleep entre notes
-        + 3 * 20   # estimation appels LLM (~20s chacun)
-    )
+    # Durée réelle moyenne par note (historique glissant)
+    _FALLBACK_SECS_PER_NOTE = 125  # valeur par défaut avant les premières mesures
+    secs_per_note = _FALLBACK_SECS_PER_NOTE
+    avg_source = "estimation par défaut"
+    if settings.processing_times_file.exists():
+        try:
+            _times: list[float] = json.loads(
+                settings.processing_times_file.read_text(encoding="utf-8")
+            )
+            if _times:
+                _recent = _times[-20:]  # moyenne glissante sur les 20 dernières notes
+                secs_per_note = sum(_recent) / len(_recent)
+                avg_source = f"moyenne réelle ({len(_recent)} notes)"
+        except Exception:
+            pass
 
     notes_per_cycle = settings.autolearn_max_notes_per_run + settings.autolearn_fullscan_per_run
     cycle_minutes = settings.autolearn_interval_minutes
@@ -60,7 +67,8 @@ with st.expander("⏱️ Progression & estimation du temps restant", expanded=Tr
     time_in_cycle_secs = notes_per_cycle * secs_per_note
     total_secs = cycles_needed * max(cycle_minutes * 60, time_in_cycle_secs)
 
-    def _fmt_duration(secs: int) -> str:
+    def _fmt_duration(secs: float) -> str:
+        secs = int(secs)
         if secs < 60:
             return f"{secs}s"
         if secs < 3600:
@@ -78,7 +86,8 @@ with st.expander("⏱️ Progression & estimation du temps restant", expanded=Tr
         _fmt_duration(total_secs) if remaining > 0 else "✅ Complet",
         help=f"{cycles_needed} cycle(s) × ~{_fmt_duration(time_in_cycle_secs)} / cycle · "
              f"intervalle cycle : {cycle_minutes} min · "
-             f"{notes_per_cycle} notes/cycle"
+             f"{notes_per_cycle} notes/cycle · "
+             f"~{_fmt_duration(int(secs_per_note))}/note ({avg_source})"
     )
 
     if remaining > 0 and total_notes > 0:

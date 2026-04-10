@@ -198,6 +198,27 @@ class AutoLearner:
             processed[file_path] = datetime.utcnow().isoformat()
             self._save_processed(processed)
 
+    def _record_processing_time(self, secs: float) -> None:
+        """Ajoute une durée (en secondes) à l'historique glissant (max 100 entrées)."""
+        f = settings.processing_times_file
+        f.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            times: list[float] = json.loads(f.read_text(encoding="utf-8")) if f.exists() else []
+        except Exception:
+            times = []
+        times.append(round(secs, 1))
+        times = times[-100:]  # conserver les 100 dernières mesures
+        tmp_fd, tmp_path = tempfile.mkstemp(dir=f.parent, suffix=".tmp")
+        try:
+            with os.fdopen(tmp_fd, "w", encoding="utf-8") as fh:
+                fh.write(json.dumps(times))
+            os.replace(tmp_path, f)
+        except Exception:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+
     def _is_first_insight_run(self) -> bool:
         """Vrai s'il reste beaucoup de notes non traitées (rattrapage nécessaire).
         Se déclenche tant que >= 10 notes du coffre n'ont pas encore d'insight."""
@@ -243,6 +264,7 @@ class AutoLearner:
 
             for note_meta in pending_notes:
                 try:
+                    _t0 = time.perf_counter()
                     self._set_status(
                         note=note_meta.get("title", note_meta["file_path"]),
                         step=f"[Accéléré] {new_done + 1}/{pending_total}",
@@ -255,6 +277,7 @@ class AutoLearner:
                     self._mark_processed(note_meta["file_path"])
                     new_done += 1
                     time.sleep(self._FAST_SLEEP_BETWEEN_NOTES)
+                    self._record_processing_time(time.perf_counter() - _t0)
                 except Exception as exc:
                     logger.warning(f"Auto-learner accéléré : erreur sur {note_meta['file_path']} : {exc}")
 
@@ -395,10 +418,12 @@ class AutoLearner:
             for note_meta in recent_filtered[: settings.autolearn_max_notes_per_run]:
                 self._wait_for_idle(note_meta.get("title", ""))
                 try:
+                    _t0 = time.perf_counter()
                     self._process_note(note_meta)
                     self._mark_processed(note_meta["file_path"])
                     processed_count += 1
                     time.sleep(self._SLEEP_BETWEEN_NOTES)
+                    self._record_processing_time(time.perf_counter() - _t0)
                 except Exception as exc:
                     logger.warning(f"Auto-learner : erreur sur {note_meta['file_path']} : {exc}")
 
@@ -427,11 +452,13 @@ class AutoLearner:
                     continue
                 self._wait_for_idle(note_meta.get("title", ""))
                 try:
+                    _t0 = time.perf_counter()
                     self._process_note(note_meta)
                     self._mark_processed(fp)
                     processed_count += 1
                     quota -= 1
                     time.sleep(self._SLEEP_BETWEEN_NOTES)
+                    self._record_processing_time(time.perf_counter() - _t0)
                 except Exception as exc:
                     logger.warning(f"Auto-learner full-scan : erreur sur {fp} : {exc}")
 

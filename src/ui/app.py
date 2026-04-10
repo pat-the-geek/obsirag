@@ -438,7 +438,7 @@ with st.sidebar:
             st.caption(f"…{current[-40:]}" if len(current) > 40 else current)
 
     llm_ok = svc.llm.is_available()
-    st.markdown(f"**Ollama** : {'🟢 Connecté' if llm_ok else '🔴 Non disponible'}")
+    st.markdown(f"**MLX** : {'🟢 Modèle chargé' if llm_ok else '🔴 Non disponible'}")
 
     # Dernières stats de génération
     if st.session_state.get("last_gen_stats"):

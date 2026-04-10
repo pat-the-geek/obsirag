@@ -16,7 +16,12 @@ from itertools import chain
 from typing import Any
 
 from loguru import logger
-from openai import BadRequestError
+# Sentinelle locale — plus jamais levée depuis la migration vers MLX-LM,
+# conservée pour que la logique de retry sur contexte trop grand reste en place.
+class _ContextTooLargeError(Exception):
+    pass
+
+BadRequestError = _ContextTooLargeError  # alias de compatibilité
 
 from src.config import settings
 from src.database.chroma_store import ChromaStore

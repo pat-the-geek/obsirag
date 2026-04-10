@@ -25,13 +25,12 @@ tab_config, tab_tokens, tab_index, tab_danger = st.tabs(
 
 # ---- Configuration ----
 with tab_config:
-    st.markdown("### Connexion Ollama")
+    st.markdown("### Modèle de génération (MLX-LM)")
     c1, c2 = st.columns(2)
-    c1.text_input("URL de l'API", value=settings.ollama_base_url, disabled=True)
-    c2.text_input("Modèle de chat", value=settings.ollama_chat_model or "(auto)", disabled=True)
-
+    c1.text_input("Modèle MLX", value=settings.mlx_chat_model, disabled=True)
     llm_ok = svc.llm.is_available()
-    st.markdown(f"**Statut :** {'🟢 Ollama accessible' if llm_ok else '🔴 Ollama non accessible'}")
+    c2.markdown("")  # espaceur
+    st.markdown(f"**Statut :** {'🟢 Modèle chargé' if llm_ok else '🔴 Modèle non disponible'}")
 
     st.divider()
     st.markdown("### Chemins")
@@ -43,7 +42,7 @@ with tab_config:
     st.caption(
         "📁 **Dans le coffre** (visibles dans Obsidian) : "
         f"`obsirag/insights/`, `obsirag/synthesis/`  \n"
-        "🐳 **Volume Docker** (hors iCloud) : ChromaDB, index, stats, requêtes"
+        "� **Données système** (hors iCloud) : ChromaDB, index, stats, requêtes"
     )
 
     st.divider()

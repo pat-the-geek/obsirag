@@ -4,7 +4,7 @@
 
 # ObsiRAG
 
-Un système RAG (Retrieval-Augmented Generation) local pour votre coffre Obsidian, tournant nativement en Python sur macOS et utilisant **Ollama** comme moteur IA local et **ChromaDB** comme base vectorielle.
+Un système RAG (Retrieval-Augmented Generation) local pour votre coffre Obsidian, tournant nativement en Python sur macOS et utilisant **MLX-LM** (Apple Silicon) comme moteur IA local et **ChromaDB** comme base vectorielle.
 
 ---
 
@@ -36,7 +36,7 @@ Exemples de requêtes :
 
 ### Chat avec le coffre
 
-Interface conversationnelle connectée à **Ollama** (via son API OpenAI-compatible) et au moteur de recherche du coffre. Les requêtes sont traitées en combinant récupération sémantique et synthèse par l'IA.
+Interface conversationnelle connectée à **MLX-LM** (inférence locale Apple Silicon, sans serveur externe) et au moteur de recherche du coffre. Les requêtes sont traitées en combinant récupération sémantique et synthèse par l'IA.
 
 ![](<docs/Screen-Captures/Chat - IA - RAG depuis coffre.png>)
 
@@ -183,7 +183,7 @@ Toutes les notes ne donnent pas lieu à un insight. Voici les cas où une note e
 | --- | --- | --- |
 | **Note trop courte / mal indexée** | Aucun chunk trouvé dans ChromaDB | La note n'est pas dans l'index vectoriel ; elle sera ignorée jusqu'à la prochaine réindexation |
 | **Aucune question générée** | Le LLM n'a pas suivi le format attendu, ou le contenu est trop pauvre pour formuler une question | L'étape de génération de questions est sautée |
-| **Toutes les réponses QA ont échoué** | Erreur Ollama (contexte dépassé, modèle non disponible…) pour les 3 questions | L'insight n'est pas sauvegardé |
+| **Toutes les réponses QA ont échoué** | Erreur LLM (contexte dépassé, modèle non disponible…) pour les 3 questions | L'insight n'est pas sauvegardé |
 | **Note mal parsée (YAML invalide)** | Le frontmatter Obsidian contient des caractères illégaux ou est mal formé | La note n'est pas indexée du tout |
 
 ### Notes qui produisent un insight
@@ -201,7 +201,7 @@ L'insight est sauvegardé dans `obsirag/insights/YYYY-MM/` avec :
 - La provenance (Web, Coffre, ou Web+Coffre)
 - Une synthèse des sources web lorsque des URLs ont été récupérées et analysées
 
-> **Astuce** : Si une note attendue ne produit pas d'insight, vérifiez qu'elle est bien indexée (bouton "Re-indexer le coffre" dans le chat) et que le LLM est disponible dans Ollama (`ollama list`).
+> **Astuce** : Si une note attendue ne produit pas d'insight, vérifiez qu'elle est bien indexée (bouton "Re-indexer le coffre" dans le chat) et que le modèle MLX est correctement chargé (page Paramètres).
 
 ---
 
@@ -295,7 +295,7 @@ Le découpage respecte la structure de la note : d'abord par section (`## Titre`
 
 ### 2. Vectorisation (embedding)
 
-Chaque chunk est transformé en un **vecteur numérique** — une liste de ~768 nombres — par le modèle `nomic-embed-text` via **Ollama** (calculs sur GPU/ANE du Mac). Ce vecteur encode le *sens* du texte : deux passages sémantiquement proches produisent des vecteurs proches dans l'espace mathématique, même s'ils n'ont aucun mot en commun.
+Chaque chunk est transformé en un **vecteur numérique** — une liste de ~384 nombres — par le modèle `paraphrase-multilingual-MiniLM-L12-v2` via **sentence-transformers** (calculs en local, CPU). Ce vecteur encode le *sens* du texte : deux passages sémantiquement proches produisent des vecteurs proches dans l'espace mathématique, même s'ils n'ont aucun mot en commun.
 
 ### 3. Stockage dans ChromaDB
 
@@ -307,8 +307,8 @@ Quand vous posez une question dans le chat :
 
 1. La question est elle-même vectorisée
 2. ChromaDB identifie les chunks dont le vecteur est le plus proche → **similarité cosinus**
-3. Ces chunks (vos notes) sont injectés comme contexte dans le prompt envoyé à Ollama
-4. Ollama génère une réponse ancrée dans **votre coffre**, pas dans ses seules connaissances pré-entraînées
+3. Ces chunks (vos notes) sont injectés comme contexte dans le prompt envoyé à **MLX-LM**
+4. Le modèle génère une réponse ancrée dans **votre coffre**, pas dans ses seules connaissances pré-entraînées
 
 > C'est ce mécanisme qui permet de retrouver une note sur "les effets des écrans sur le sommeil" en posant la question "comment la lumière bleue affecte-t-elle le repos ?" — sans que ces mots exacts apparaissent dans la note.
 
@@ -326,17 +326,17 @@ Quand vous posez une question dans le chat :
 
 ObsiRAG est conçu pour fonctionner **en tâche de fond sur un MacBook Air M5 16 Go** — la machine de référence du projet. L'ensemble du traitement (indexation, génération d'insights, synapses) tourne de façon transparente sans perturber l'utilisation normale : navigation web, rédaction dans Obsidian, appels visio.
 
-**Temps d'amorçage initial :** pour un coffre d'environ 200 notes, comptez **2 à 3 jours** pour que l'ensemble des insights soit généré.
+**Temps d'amorçage initial :** pour un coffre d'environ 200 notes, comptez **1 à 2 jours** pour que l'ensemble des insights soit généré.
 
 Ce délai est intentionnel et s'explique par la mécanique du cycle :
 
-- L'auto-learner se réveille **toutes les 60 minutes** et traite au maximum **3 notes nouvelles** par cycle (full-scan)
-- Le traitement complet d'une note (génération des questions + réponses LLM + recherche web) prend de **5 à 12 minutes** selon la complexité du contenu, auxquelles s'ajoutent les pauses de **15 secondes** entre chaque question et **30 secondes** entre chaque note
-- Résultat : 200 notes ÷ 3 notes/cycle × 60 min/cycle ≈ **67 heures** de fonctionnement actif, soit environ 3 jours en usage continu
+- L'auto-learner se réveille **toutes les 15 minutes** et traite au maximum **3 notes nouvelles** par cycle (full-scan)
+- Le traitement complet d'une note avec MLX-LM (génération des questions + réponses + recherche web) prend de **2 à 5 minutes** selon la complexité du contenu
+- Résultat : 200 notes ÷ 3 notes/cycle × 15 min/cycle ≈ **17 heures** de fonctionnement actif
 
-Ces pauses sont délibérées — elles garantissent qu'Ollama reste disponible pour le chat en temps réel et que la machine n'est pas saturée en arrière-plan. Les paramètres `AUTOLEARN_FULLSCAN_PER_RUN` et `AUTOLEARN_INTERVAL_MINUTES` dans `.env` permettent d'accélérer l'amorçage si vous le souhaitez (ex. 5 notes/cycle toutes les 30 min pour traiter le coffre en moins d'une journée).
+Ces pauses sont délibérées — elles garantissent que le modèle MLX reste disponible pour le chat en temps réel. Les paramètres `AUTOLEARN_FULLSCAN_PER_RUN` et `AUTOLEARN_INTERVAL_MINUTES` dans `.env` permettent d'accélérer l'amorçage si vous le souhaitez.
 
-> **Sur MacBook :** Ollama et ObsiRAG se remettent automatiquement en marche à la sortie de veille (service launchd) — aucune intervention manuelle n'est nécessaire. L'auto-learner reprend son cycle là où il s'était arrêté, de façon totalement transparente.
+> **Sur MacBook :** ObsiRAG se remet automatiquement en marche à la sortie de veille (service launchd) — aucune intervention manuelle n'est nécessaire. L'auto-learner reprend son cycle là où il s'était arrêté, de façon totalement transparente.
 
 Une fois l'amorçage terminé, seules les notes nouvelles ou récemment modifiées sont retraitées à chaque cycle — le fonctionnement courant est quasi-instantané.
 
@@ -344,35 +344,28 @@ Pour les détails de débit, temps de traitement par note et choix du modèle : 
 
 ---
 
-## Modèles IA utilisés via Ollama
+## Modèle IA utilisé via MLX-LM
 
-ObsiRAG utilise **Ollama** comme serveur IA local (API compatible OpenAI). Deux modèles sont nécessaires :
+ObsiRAG utilise **MLX-LM** pour la génération locale, sans serveur externe. Le modèle tourne directement dans le processus Python, exploitant le GPU unifié Apple Silicon via le framework MLX.
 
-| Usage                       | Opération                                    | Modèle configuré                                 |
-| --------------------------- | -------------------------------------------- | ------------------------------------------------ |
-| **Chat / RAG**              | Réponses aux questions sur le coffre         | `OLLAMA_CHAT_MODEL` (ex. `gemma3:4b`)          |
-| **Génération de questions** | Auto-learner — questions ancrées dans le champ sémantique de chaque note | Même modèle que le chat                          |
-| **Synapses & synthèses**    | Connexions implicites, synthèse hebdomadaire | Même modèle que le chat                          |
-| **Embeddings**              | Vectorisation des notes et des requêtes      | `OLLAMA_EMBED_MODEL` (ex. `nomic-embed-text`)  |
+| Usage | Opération | Modèle configuré |
+| --- | --- | --- |
+| **Chat / RAG** | Réponses aux questions sur le coffre | `MLX_CHAT_MODEL` (ex. `mlx-community/Qwen2.5-7B-Instruct-4bit`) |
+| **Génération de questions** | Auto-learner — questions ancrées dans le champ sémantique | Même modèle que le chat |
+| **Synapses & synthèses** | Connexions implicites, synthèse hebdomadaire | Même modèle que le chat |
+| **Embeddings** | Vectorisation des notes et des requêtes | `sentence-transformers` local — `paraphrase-multilingual-MiniLM-L12-v2` (384 dimensions) |
 
-> Un seul modèle de chat suffit pour tout. Configurer `OLLAMA_CHAT_MODEL` dans `.env` avec le nom exact du modèle Ollama.
+> Un seul modèle de chat suffit pour tout. Configurer `MLX_CHAT_MODEL` dans `.env` avec le nom HuggingFace de la forme `mlx-community/<modele>-4bit`. Le modèle est téléchargé automatiquement au premier démarrage.
 
-Le modèle doit avoir une fenêtre de contexte d'au moins **4096 tokens**. 8192+ est recommandé pour les coffres volumineux. Ajuster `OLLAMA_CONTEXT_SIZE` en conséquence.
+Les modèles de la communauté `mlx-community` sur HuggingFace sont déjà convertis et quantizés pour MLX — aucune conversion manuelle n'est nécessaire.
 
-Les embeddings sont gérés par Ollama via `OLLAMA_EMBED_MODEL` (`nomic-embed-text` par défaut, 768 dimensions) — les calculs s'effectuent sur le GPU/ANE du Mac.
+### Performances observées (M5, 16 Go)
 
-### Gestion automatique de la mémoire par Ollama
-
-Ollama adopte un comportement **load-on-demand** : le modèle de chat n'est chargé en RAM que lorsqu'un appel est effectué, puis automatiquement déchargé après une période d'inactivité (paramètre `OLLAMA_KEEP_ALIVE`, défaut : **5 minutes**).
-
-Concrètement, pour ObsiRAG :
-- Pendant une session de chat active, les appels sont rapprochés → le modèle reste en mémoire, les réponses sont immédiates.
-- Après 5 minutes d'inactivité (plus de chat, plus d'auto-learner en cours), le modèle libère ses ~3–5 GB de RAM unifiée automatiquement.
-- Au prochain appel, un délai de **2–3 secondes** est observé le temps du rechargement (visible dans le spinner de l'interface).
-
-Ce mécanisme garantit que la machine hôte n'est jamais saturée en mémoire en fond de tâche. Il n'y a rien à configurer — c'est le comportement natif d'Ollama.
-
-> Pour allonger la fenêtre d'inactivité (ex. sessions de travail avec pauses fréquentes), vous pouvez définir `OLLAMA_KEEP_ALIVE=10m` via `launchctl setenv OLLAMA_KEEP_ALIVE 10m` sur macOS.
+| Opération | Ollama (avant) | MLX-LM (actuel) | Gain |
+|---|---|---|---|
+| Génération (tokens/s) | ~13 tok/s | ~27 tok/s | **×2** |
+| Chargement du modèle | 30–60 s | ~2 s | **×20** |
+| Dépendance serveur | Ollama daemon requis | Aucune | ✅ |
 
 ---
 
@@ -380,11 +373,11 @@ Ce mécanisme garantit que la machine hôte n'est jamais saturée en mémoire en
 
 | Composant          | Technologie                                                        |
 | ------------------ | ------------------------------------------------------------------ |
-| Langage            | Python 3.11                                                        |
+| Langage            | Python 3.12                                                        |
 | Déploiement        | macOS natif (launchd + Python venv)                                |
-| IA                 | Ollama (API locale, compatible OpenAI)                             |
+| IA                 | MLX-LM (Apple Silicon, sans serveur)                               |
 | Base vectorielle   | ChromaDB                                                           |
-| Embeddings         | Ollama — `nomic-embed-text` (768 dimensions, Metal/ANE)            |
+| Embeddings         | sentence-transformers — `paraphrase-multilingual-MiniLM-L12-v2` (384 dim, CPU) |
 | Interface          | Streamlit                                                          |
 | Graphe             | NetworkX + Pyvis                                                   |
 | Recherche web      | DuckDuckGo Search (sources fiables)                                |
@@ -399,11 +392,11 @@ Ce mécanisme garantit que la machine hôte n'est jamais saturée en mémoire en
 
 | Paramètre `.env` | Valeur par défaut | Rôle |
 |---|---|---|
-| `AUTOLEARN_INTERVAL_MINUTES` | **60 min** | Fréquence du cycle — l'auto-learner se réveille toutes les heures |
+| `AUTOLEARN_INTERVAL_MINUTES` | **15 min** | Fréquence du cycle — l'auto-learner se réveille toutes les 15 minutes |
 | `AUTOLEARN_LOOKBACK_HOURS` | **24 h** | Fenêtre de détection — seules les notes modifiées dans les dernières 24h sont candidates |
 | `AUTOLEARN_MIN_REPROCESS_DAYS` | **7 jours** | Délai de grâce — une note déjà traitée ne sera pas retraitée avant 7 jours |
 
-Le premier cycle démarre **5 minutes après le démarrage de l'application**, pour laisser le temps à Ollama d'être prêt.
+Le premier cycle démarre **5 minutes après le démarrage de l'application**, pour laisser le temps au modèle MLX de se charger.
 
 > Ces trois paramètres permettent d'adapter le comportement selon l'usage : un intervalle plus court (ex. 30 min) pour un coffre très actif, un lookback plus large (ex. 48h) pour rattraper des notes modifiées en dehors des heures habituelles, et un `MIN_REPROCESS_DAYS` plus court si vous souhaitez qu'une note soit ré-enrichie plus fréquemment.
 
@@ -412,20 +405,13 @@ Le premier cycle démarre **5 minutes après le démarrage de l'application**, p
 ## Installation
 
 ```bash
-# Installer Ollama (si ce n'est pas déjà fait)
-brew install ollama
-
-# Télécharger les modèles nécessaires
-ollama pull qwen2.5:7b         # modèle chat (~4.7 GB)
-ollama pull nomic-embed-text   # modèle embedding (~274 MB)
-
 # Cloner le dépôt
 git clone https://github.com/PatrickOstertagCH/obsirag.git
 cd obsirag
 
 # Configurer l'environnement
 cp .env.example .env
-# Éditer .env : renseigner VAULT_PATH, OLLAMA_CHAT_MODEL, etc.
+# Éditer .env : renseigner VAULT_PATH, MLX_CHAT_MODEL, etc.
 
 # Installer les dépendances Python et configurer le service
 ./setup.sh
@@ -433,6 +419,10 @@ cp .env.example .env
 # Démarrer l'application
 ./start.sh
 ```
+
+L'interface est accessible sur [http://localhost:8501](http://localhost:8501).
+
+> Le modèle MLX est téléchargé automatiquement depuis HuggingFace au premier démarrage (~4 Go pour `Qwen2.5-7B-Instruct-4bit`).
 
 L'interface est accessible sur [http://localhost:8501](http://localhost:8501).
 
