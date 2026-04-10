@@ -248,23 +248,13 @@ class AutoLearner:
             self._bulk_initial_done.set()
             return
         try:
-            # Warm-up : attendre qu'Ollama et le modèle d'embedding soient prêts
-            for attempt in range(10):
-                try:
-                    self._chroma.search("warm-up", top_k=1)
-                    logger.info("Auto-learner mode accéléré — Ollama prêt, démarrage du bulk")
-                    break
-                except Exception as warm_exc:
-                    logger.info(f"Auto-learner : attente Ollama ({attempt + 1}/10) : {warm_exc}")
-                    time.sleep(3)
-
+            # Pré-calcul immédiat de pending_total (list_notes n'utilise pas les embeddings)
+            # → bulk_pending_total visible dans le panel Insights dès le lancement du thread,
+            #   sans attendre la fin du warm-up.
             all_notes = [
                 n for n in self._chroma.list_notes()
                 if not self._is_obsirag_generated(n["file_path"])
             ]
-            total = len(all_notes)
-            logger.info(f"Auto-learner mode accéléré — {total} note(s) à traiter")
-
             processed_map = self._load_processed()
             already_done = sum(1 for n in all_notes if n["file_path"] in processed_map)
             pending_notes = [n for n in all_notes if n["file_path"] not in processed_map]
@@ -273,6 +263,16 @@ class AutoLearner:
             self.processing_status["bulk_pending_total"] = pending_total
             self.processing_status["bulk_new_done"] = 0
             logger.info(f"Auto-learner mode accéléré — {pending_total} note(s) à traiter ({already_done} déjà traitées)")
+
+            # Warm-up : attendre que le modèle d'embedding soit prêt pour la recherche
+            for attempt in range(10):
+                try:
+                    self._chroma.search("warm-up", top_k=1)
+                    logger.info("Auto-learner mode accéléré — embedding prêt, démarrage du bulk")
+                    break
+                except Exception as warm_exc:
+                    logger.info(f"Auto-learner : attente embedding ({attempt + 1}/10) : {warm_exc}")
+                    time.sleep(3)
 
             for note_meta in pending_notes:
                 try:
