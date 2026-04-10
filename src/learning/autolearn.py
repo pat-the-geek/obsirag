@@ -209,8 +209,10 @@ class AutoLearner:
                 pass
 
     def _is_first_insight_run(self) -> bool:
-        """Vrai s'il reste beaucoup de notes non traitées (rattrapage nécessaire).
-        Se déclenche tant que >= 10 notes du coffre n'ont pas encore d'insight."""
+        """Vrai si le bulk initial n'a jamais été complété.
+        Une fois le bulk terminé, le fichier bulk_done.flag est créé et cette méthode retourne False."""
+        if settings.bulk_done_flag_file.exists():
+            return False
         processed_map = self._load_processed()
         try:
             all_notes = [
@@ -245,6 +247,13 @@ class AutoLearner:
             already_done = sum(1 for n in all_notes if n["file_path"] in processed_map)
             pending_notes = [n for n in all_notes if n["file_path"] not in processed_map]
             pending_total = len(pending_notes)
+            bulk_max = settings.autolearn_bulk_max_notes
+            if bulk_max > 0 and len(pending_notes) > bulk_max:
+                logger.info(
+                    f"Auto-learner mode accéléré — limité à {bulk_max} notes sur {pending_total} en attente"
+                )
+                pending_notes = pending_notes[:bulk_max]
+                pending_total = len(pending_notes)
             new_done = 0
             self.processing_status["bulk_pending_total"] = pending_total
             self.processing_status["bulk_new_done"] = 0
@@ -304,6 +313,13 @@ class AutoLearner:
             # sur le calcul standard basé sur processed_map
             self.processing_status["bulk_pending_total"] = 0
             self.processing_status["bulk_new_done"] = 0
+            # Marquer le bulk comme terminé pour ne plus le relancer aux prochains démarrages
+            try:
+                f = settings.bulk_done_flag_file
+                f.parent.mkdir(parents=True, exist_ok=True)
+                f.touch()
+            except Exception:
+                pass
             self._bulk_initial_done.set()
             self._clear_status()
 
@@ -311,10 +327,15 @@ class AutoLearner:
         interval = settings.autolearn_interval_minutes
 
         if self._is_first_insight_run():
-            logger.info("Auto-learner : première utilisation détectée — lancement du mode accéléré")
-            # Le cycle normal démarre seulement après la passe initiale
+            logger.info("Auto-learner : première utilisation détectée — mode accéléré dans 120s")
+            # Délai de 120s avant de charger MLX : laisse Streamlit démarrer complètement
+            # et évite le crash Metal GPU lors des redémarrages rapides par launchd.
+            def _delayed_bulk():
+                import time as _time
+                _time.sleep(120)
+                self._run_bulk_initial()
             bulk_thread = threading.Thread(
-                target=self._run_bulk_initial,
+                target=_delayed_bulk,
                 daemon=True,
                 name="autolearn-bulk-initial",
             )
@@ -400,9 +421,24 @@ class AutoLearner:
             if len(log) > 20:  # garder les 20 derniers messages
                 log.pop(0)
         self.processing_status.update({"active": active, "note": note, "step": step})
+        self._persist_status()
 
     def _clear_status(self) -> None:
         self.processing_status.update({"active": False, "note": "", "step": ""})
+        self._persist_status()
+
+    def _persist_status(self) -> None:
+        """Écrit processing_status dans un fichier JSON pour survivre aux redémarrages."""
+        try:
+            f = settings.processing_status_file
+            f.parent.mkdir(parents=True, exist_ok=True)
+            content = json.dumps(self.processing_status, ensure_ascii=False)
+            tmp_fd, tmp_path = tempfile.mkstemp(dir=f.parent, suffix=".tmp")
+            with os.fdopen(tmp_fd, "w", encoding="utf-8") as fh:
+                fh.write(content)
+            os.replace(tmp_path, f)
+        except Exception:
+            pass
 
     @staticmethod
     def _is_obsirag_generated(file_path: str) -> bool:
@@ -412,6 +448,16 @@ class AutoLearner:
         return "/obsirag/" in p or p.startswith("obsirag/")
 
     def _run_cycle(self) -> None:
+        # Vérification de la plage horaire autorisée
+        current_hour = datetime.now().hour
+        h_start = settings.autolearn_active_hour_start
+        h_end = settings.autolearn_active_hour_end
+        if not (h_start <= current_hour < h_end):
+            logger.info(
+                f"Auto-learner : cycle ignoré (heure {current_hour:02d}h hors plage {h_start:02d}h-{h_end:02d}h)"
+            )
+            return
+
         logger.info("Auto-learner : début du cycle")
         # Chargement du modèle LLM avant le cycle.
         try:

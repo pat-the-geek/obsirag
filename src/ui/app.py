@@ -379,8 +379,16 @@ def _autolearn_live_status():
     else:
         st.caption(f"{_processed}/{_total} notes · 💡 {_insights} insights · ⚡ {_synapses} synapses")
 
-    # Statut traitement en cours
+    # Statut traitement en cours — in-memory (même process) ou fichier (après redémarrage)
     ps = svc.learner.processing_status
+    if not ps.get("log") and not ps.get("active"):
+        # Lire depuis le fichier persisté si la mémoire est vide
+        try:
+            _sf = _s.processing_status_file
+            if _sf.exists():
+                ps = _json.loads(_sf.read_text(encoding="utf-8"))
+        except Exception:
+            pass
     if ps.get("active"):
         note = ps.get("note", "")
         step = ps.get("step", "")
@@ -591,16 +599,68 @@ for mi, msg in enumerate(st.session_state.messages):
                                       help="Ouvrir la note",
                                       on_click=_open_note_cb, args=(fp,))
 
-# Suggestions de démarrage
-if not st.session_state.messages:
-    st.markdown("#### Exemples de questions")
-    cols = st.columns(2)
-    suggestions = [
+# ---- Génération des suggestions dynamiques ----
+
+def _generate_suggestions() -> list[str]:
+    """Génère 4 questions, une par note tirée aléatoirement parmi les notes récentes."""
+    import random
+
+    fallback = [
         "Quelles sont mes dernières notes ? Fais une synthèse de la semaine.",
         "Quelles sont les notes où je parle de machine learning ?",
         "Fais le point sur ce que j'ai appris ce mois-ci.",
         "Quelles connexions vois-tu entre mes notes récentes ?",
     ]
+
+    try:
+        notes = svc.chroma.list_notes()
+        if not notes:
+            return fallback
+
+        # 4 notes distinctes tirées aléatoirement parmi les 30 plus récentes
+        recent = notes[:30]
+        sample = random.sample(recent, min(4, len(recent)))
+
+        questions: list[str] = []
+        for note in sample:
+            prompt = (
+                f"Voici le titre d'une note : « {note['title']} »\n\n"
+                "Génère UNE seule question courte et pertinente en français que l'utilisateur "
+                "pourrait poser à un assistant IA sur le contenu de cette note. "
+                "La question doit obligatoirement se terminer par '?'. "
+                "Réponds uniquement avec la question, rien d'autre."
+            )
+            answer = svc.llm.chat(
+                [{"role": "user", "content": prompt}],
+                temperature=0.7,
+                max_tokens=60,
+                operation="suggestions",
+            ).strip()
+            # Garder uniquement la première ligne non vide
+            q = next((l.strip() for l in answer.splitlines() if l.strip()), "")
+            if q:
+                q = q if q.endswith("?") else re.sub(r"[.!]+$", "", q) + "?"
+                questions.append(q)
+
+        if len(questions) < 4:
+            questions += fallback[len(questions):]
+
+        return questions
+    except Exception:
+        return fallback
+
+
+# Suggestions de démarrage
+if not st.session_state.messages:
+    st.markdown("#### Exemples de questions")
+    cols = st.columns(2)
+
+    if "suggested_questions" not in st.session_state:
+        with st.spinner("Génération des suggestions…"):
+            st.session_state.suggested_questions = _generate_suggestions()
+
+    suggestions = st.session_state.suggested_questions
+
     for i, sug in enumerate(suggestions):
         with cols[i % 2]:
             if st.button(sug, use_container_width=True, key=f"sug_{i}"):

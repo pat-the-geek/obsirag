@@ -7,11 +7,14 @@ Couche d'accès ChromaDB.
 """
 from __future__ import annotations
 
+import shutil
 import time
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 import chromadb
+from chromadb.errors import InternalError
 from chromadb.utils.embedding_functions import EmbeddingFunction
 from loguru import logger
 
@@ -54,20 +57,47 @@ class ChromaStore:
         persist_dir = settings.chroma_persist_dir
         logger.info(f"Initialisation ChromaDB → {persist_dir}")
 
-        self._client = chromadb.PersistentClient(path=persist_dir)
-
         embed_fn = _build_embedding_function()
-
-        self._collection = self._client.get_or_create_collection(
-            name=settings.chroma_collection,
-            embedding_function=embed_fn,
-            metadata={"hnsw:space": "cosine"},
+        self._client, self._collection = self._init_with_recovery(
+            persist_dir, embed_fn
         )
 
         logger.info(
             f"Collection '{settings.chroma_collection}' — "
             f"{self._collection.count()} chunks existants"
         )
+
+    def _init_with_recovery(self, persist_dir: str, embed_fn: EmbeddingFunction):
+        """Ouvre ChromaDB. En cas de corruption HNSW, efface et repart à zéro."""
+        for attempt in range(2):
+            try:
+                client = chromadb.PersistentClient(path=persist_dir)
+                collection = client.get_or_create_collection(
+                    name=settings.chroma_collection,
+                    embedding_function=embed_fn,
+                    metadata={"hnsw:space": "cosine"},
+                )
+                # Force un count() pour détecter la corruption dès maintenant
+                collection.count()
+                return client, collection
+            except InternalError as e:
+                if attempt == 0:
+                    logger.warning(
+                        f"ChromaDB corrompu ({e}) — suppression et recréation de la base"
+                    )
+                    chroma_path = Path(persist_dir)
+                    if chroma_path.exists():
+                        shutil.rmtree(chroma_path)
+                    # Réinitialiser aussi le fichier d'état d'indexation
+                    try:
+                        idx_state = settings.index_state_file
+                        if idx_state.exists():
+                            idx_state.write_text("{}", encoding="utf-8")
+                    except Exception:
+                        pass
+                    logger.info("Base ChromaDB réinitialisée — une réindexation est nécessaire")
+                else:
+                    raise
 
     # ---- Écriture ----
 

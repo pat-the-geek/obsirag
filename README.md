@@ -105,6 +105,16 @@ Le système est conçu pour fonctionner **sans pénaliser l'utilisation normale 
 
 **Gestion du cycle de vie du modèle LLM :** l'auto-learner charge le modèle MLX au début de chaque cycle et le décharge à la fin si l'interface web est inactive — libérant ainsi la mémoire GPU/Metal entre les cycles. Si l'interface est ouverte, le modèle reste chargé pour répondre immédiatement aux requêtes chat.
 
+#### Traitements automatiques
+
+| # | Traitement | Déclenchement | Description |
+|---|-----------|---------------|-------------|
+| 1 | **Bulk initial** | Une seule fois au 1er démarrage (après 120 s de délai) | Traite toutes les notes non-traitées (max `AUTOLEARN_BULK_MAX_NOTES`, défaut 20) : génère un insight Q&A et renomme la note avec un titre en français |
+| 2 | **Cycle autolearn** | Toutes les `AUTOLEARN_INTERVAL_MINUTES` min (défaut 60), 5 min après le démarrage, uniquement entre `AUTOLEARN_ACTIVE_HOUR_START` et `AUTOLEARN_ACTIVE_HOUR_END` (défaut 8h–22h) | Pass 1 : jusqu'à `AUTOLEARN_MAX_NOTES_PER_RUN` notes récentes (modifiées dans les 24 h). Pass 2 : jusqu'à `AUTOLEARN_FULLSCAN_PER_RUN` notes jamais traitées (full-scan) |
+| 3 | **Découverte de synapses** | À la fin de chaque cycle autolearn | Trouve `AUTOLEARN_SYNAPSE_PER_RUN` paires de notes sémantiquement proches sans lien existant et génère une note de connexion dans `obsirag/synapses/` |
+| 4 | **Synthèse hebdomadaire** | Chaque **dimanche à 20 h UTC** (avec rattrapage si le Mac était en veille) | Résume les notes modifiées dans la semaine et crée une note dans `obsirag/synthesis/` |
+| 5 | **Watcher de coffre** | En **temps réel** (watchdog filesystem) | Détecte les créations / modifications / suppressions / renommages de fichiers `.md` et re-indexe dans ChromaDB avec un debounce |
+
 #### Alignement sémantique des questions
 
 Avant de générer des questions, l'auto-learner extrait le champ sémantique de la note :

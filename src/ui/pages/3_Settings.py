@@ -55,10 +55,12 @@ with tab_config:
 
     st.divider()
     st.markdown("### Auto-apprentissage")
-    c1, c2, c3 = st.columns(3)
+    c1, c2, c3, c4, c5 = st.columns(5)
     c1.metric("Activé", "Oui" if settings.autolearn_enabled else "Non")
     c2.metric("Intervalle", f"{settings.autolearn_interval_minutes} min")
     c3.metric("Notes / cycle", settings.autolearn_max_notes_per_run)
+    c4.metric("Plage horaire", f"{settings.autolearn_active_hour_start:02d}h – {settings.autolearn_active_hour_end:02d}h")
+    c5.metric("Bulk max notes", settings.autolearn_bulk_max_notes if settings.autolearn_bulk_max_notes > 0 else "∞")
 
     st.divider()
     st.markdown("### Modèles IA locaux")
