@@ -295,6 +295,55 @@ Une note Obsidian peut être longue et couvrir plusieurs sujets. Pour permettre 
 
 Le découpage respecte la structure de la note : d'abord par section (`## Titre`), puis par paragraphe, puis par mots si nécessaire. Chaque chunk hérite des métadonnées de la note (titre, tags, dates, wikilinks, entités NER…).
 
+#### Qu'est-ce qu'un chunk ?
+
+Un **chunk** est un fragment de texte extrait d'une note, avec ses métadonnées associées. Il contient le texte brut, un identifiant unique `{file_hash}_{index}`, et toutes les métadonnées de la note source (titre, section, tags, dates, wikilinks, entités NER…). C'est l'unité atomique de recherche dans ChromaDB.
+
+#### Algorithme de découpage
+
+Le chunking est implémenté en Python pur — aucune API externe, aucune dépendance réseau. C'est du découpage de chaînes de caractères (`split()`, `split("\n\n")`) : rapide, déterministe, 100% local.
+
+```
+Note Obsidian
+    │
+    ▼
+[Parser] → liste de sections (chaque ## titre + son contenu)
+    │
+    ▼
+Pour chaque section :
+    │
+    ├─ Section courte (≤ chunk_size mots) ?
+    │       └─→ 1 chunk direct
+    │
+    ├─ Section longue avec plusieurs paragraphes (\n\n) ?
+    │       └─→ Fusion de paragraphes :
+    │               Accumuler les paragraphes un par un.
+    │               Quand le total dépasse chunk_size :
+    │                 → fermer le chunk
+    │                 → repartir avec les N derniers mots (overlap)
+    │                   + le paragraphe suivant
+    │
+    └─ Section longue sans paragraphes (un seul bloc) ?
+            └─→ Fenêtre glissante :
+                    Fenêtre de chunk_size mots,
+                    avance de (chunk_size - overlap) mots à chaque pas
+    │
+    ▼
+Chaque chunk reçoit :
+  - le texte
+  - chunk_id = {file_hash}_{index}
+  - toutes les métadonnées de la note (titre, tags, dates, wikilinks, NER…)
+```
+
+**Le principe clé : l'overlap**
+
+À chaque rupture de chunk, les `overlap` derniers mots du chunk précédent sont répétés en tête du suivant. Cela évite de couper une phrase en deux et de perdre le fil du contexte lors de la recherche sémantique.
+
+| Paramètre | Rôle |
+|---|---|
+| `chunk_size_words` | taille max d'un chunk en mots (~300) |
+| `chunk_overlap_words` | chevauchement entre chunks (~30) |
+
 ### 2. Vectorisation (embedding)
 
 Chaque chunk est transformé en un **vecteur numérique** — une liste de ~384 nombres — par le modèle `paraphrase-multilingual-MiniLM-L12-v2` via **sentence-transformers** (calculs en local, CPU). Ce vecteur encode le *sens* du texte : deux passages sémantiquement proches produisent des vecteurs proches dans l'espace mathématique, même s'ils n'ont aucun mot en commun.

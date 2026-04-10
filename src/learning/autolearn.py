@@ -90,26 +90,11 @@ def _normalize_entity_name(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
-_SEMANTIC_FIELD_PROMPT = """<contenu>
+_QUESTION_PROMPT = """<contenu>
 {content}
 </contenu>
-
-Identifie le champ sémantique de ce contenu. Réponds UNIQUEMENT avec cette ligne au format exact :
-"Domaine: [domaine principal] | Concepts: [concept1, concept2, concept3] | Angle: [angle spécifique traité]"
-Rien d'autre."""
-
-_QUESTION_PROMPT = """<champ_semantique>
-{semantic_field}
-</champ_semantique>
-
-<contenu>
-{content}
-</contenu>
-
-En te basant STRICTEMENT sur ce champ sémantique et ce contenu, génère 3 questions en français pour approfondir CE SUJET PRÉCIS avec des données externes récentes (chiffres, études, comparaisons, impacts mesurables, évolutions). Chaque question doit rester alignée avec le domaine et les concepts identifiés dans le champ sémantique. Une par ligne, rien d'autre.
-Q1:
-Q2:
-Q3:"""
+{already_asked_section}
+Analyse ce contenu et génère UNE SEULE question en français, la plus pertinente pour approfondir ce sujet précis avec des données externes récentes (chiffres, études, comparaisons, impacts mesurables, évolutions). La question doit être ancrée dans le domaine principal du contenu et cibler un fait mesurable ou une évolution récente. Réponds UNIQUEMENT avec la question, rien d'autre."""
 
 _WEB_ANSWER_PROMPT = """Question : {question}
 
@@ -142,6 +127,7 @@ class AutoLearner:
     _FAST_SLEEP_BETWEEN_NOTES = 0    # secondes entre deux notes en mode accéléré
     _FAST_SLEEP_BETWEEN_QUESTIONS = 0  # pas de pause entre questions en mode accéléré
     _FAST_SLEEP_AFTER_SEMANTIC = 0     # pas de pause après extraction sémantique
+    _MAX_QUESTION_RETRIES = 3          # tentatives max si la réponse est insuffisante
 
     def __init__(self, chroma, rag, indexer, ui_active_fn=None) -> None:
         self._chroma = chroma
@@ -284,7 +270,6 @@ class AutoLearner:
                     self._process_note(
                         note_meta,
                         sleep_between_questions=self._FAST_SLEEP_BETWEEN_QUESTIONS,
-                        sleep_after_semantic=self._FAST_SLEEP_AFTER_SEMANTIC,
                     )
                     self._mark_processed(note_meta["file_path"])
                     new_done += 1
@@ -319,8 +304,6 @@ class AutoLearner:
             # sur le calcul standard basé sur processed_map
             self.processing_status["bulk_pending_total"] = 0
             self.processing_status["bulk_new_done"] = 0
-                except Exception as exc:
-                    logger.warning(f"Auto-learner bulk : erreur déchargement modèle : {exc}")
             self._bulk_initial_done.set()
             self._clear_status()
 
@@ -529,7 +512,6 @@ class AutoLearner:
         self,
         note_meta: dict,
         sleep_between_questions: int | None = None,
-        sleep_after_semantic: int = 5,
     ) -> None:
         _sleep_q = sleep_between_questions if sleep_between_questions is not None else self._SLEEP_BETWEEN_QUESTIONS
         title = note_meta.get("title", note_meta["file_path"])
@@ -543,26 +525,27 @@ class AutoLearner:
             return
 
         content_preview = "\n\n".join(c["text"] for c in chunks[:3])
-        self._set_status(note=title, step="Extraction du champ sémantique…")
-        semantic_field = self._extract_semantic_field(content_preview)
-        if sleep_after_semantic > 0:
-            time.sleep(sleep_after_semantic)
-        self._set_status(note=title, step="Génération des questions…")
-        questions = self._generate_questions(content_preview, semantic_field)
-        if not questions:
-            logger.warning(f"Auto-learner : aucune question générée pour '{title}'")
-            self._set_status(note=title, step="⚠️ Aucune question générée")
-            return
 
-        logger.info(f"Auto-learner : {len(questions)} question(s) générée(s) pour '{title}'")
+        asked_questions: list[str] = []
         qa_pairs: list[dict] = []
-        for i, question in enumerate(questions, 1):
-            self._set_status(note=title, step=f"Question {i}/{len(questions)} : recherche web + RAG…")
-            if _sleep_q > 0:
+
+        for attempt in range(1, self._MAX_QUESTION_RETRIES + 1):
+            self._set_status(note=title, step=f"Génération de la question (tentative {attempt}/{self._MAX_QUESTION_RETRIES})…")
+            questions = self._generate_questions(content_preview, already_asked=asked_questions if asked_questions else None)
+            if not questions:
+                logger.warning(f"Auto-learner : aucune question générée pour '{title}' (tentative {attempt})")
+                break
+
+            question = questions[0]
+            asked_questions.append(question)
+            logger.info(f"Auto-learner : question générée (tentative {attempt}) : '{question[:80]}'")
+
+            if _sleep_q > 0 and attempt > 1:
                 time.sleep(_sleep_q)
+
             try:
                 # 1. Web en premier — source principale de connaissance nouvelle
-                self._set_status(note=title, step=f"Q{i} — Recherche web : {question[:60]}…")
+                self._set_status(note=title, step=f"Tentative {attempt} — Recherche web : {question[:60]}…")
                 web_results = self._web_search(question)
                 web_snippets = [r["body"] for r in web_results if r.get("body")]
 
@@ -603,10 +586,10 @@ class AutoLearner:
                     web_results = []
                     provenance = "Coffre"
 
-                # Rejeter les réponses faibles ou génériques
+                # Réponse faible → nouvelle question à la prochaine itération
                 if self._is_weak_answer(answer):
-                    self._set_status(note=title, step=f"Q{i} — Réponse insuffisante, ignorée")
-                    logger.debug(f"Réponse faible ignorée pour '{question[:60]}'")
+                    self._set_status(note=title, step=f"Tentative {attempt} — Réponse insuffisante, nouvelle question…")
+                    logger.debug(f"Réponse faible (tentative {attempt}), nouvelle question demandée pour '{title}'")
                     continue
 
                 qa_pairs.append({
@@ -616,8 +599,11 @@ class AutoLearner:
                     "web_refs": [{"title": r.get("title", r.get("href", "")), "url": r.get("href", "")} for r in web_results],
                     "provenance": provenance,
                 })
+                break  # réponse satisfaisante obtenue
+
             except Exception as exc:
-                logger.warning(f"Auto-learner QA failed pour '{title}' : {exc}")
+                logger.warning(f"Auto-learner QA failed pour '{title}' (tentative {attempt}) : {exc}")
+                break
 
         if qa_pairs:
             self._set_status(note=title, step=f"Sauvegarde de l'insight ({len(qa_pairs)} Q&A)…")
@@ -835,47 +821,31 @@ class AutoLearner:
             logger.debug(f"Enrichissement web échoué : {exc}")
             return rag_answer
 
-    def _extract_semantic_field(self, content: str) -> str:
-        """Détermine le champ sémantique du contenu pour contraindre la génération de questions."""
+    def _generate_questions(self, content: str, already_asked: list[str] | None = None) -> list[str]:
         try:
-            prompt = _SEMANTIC_FIELD_PROMPT.format(content=content[:2000])
-            result = self._rag._llm.chat(
-                [{"role": "user", "content": prompt}],
-                temperature=0.1,
-                max_tokens=150,
-                operation="autolearn_semantic_field",
-            )
-            field = result.strip().strip('"')
-            logger.debug(f"Champ sémantique détecté : {field[:120]}")
-            return field
-        except Exception as exc:
-            logger.debug(f"Extraction du champ sémantique échouée : {exc}")
-            return ""
-
-    def _generate_questions(self, content: str, semantic_field: str = "") -> list[str]:
-        try:
+            if already_asked:
+                lines = "\n".join(f"- {q}" for q in already_asked)
+                already_asked_section = f"\n<deja_posees>\nCes questions ont déjà été posées et ont obtenu une réponse insuffisante. Génère une question DIFFÉRENTE :\n{lines}\n</deja_posees>\n"
+            else:
+                already_asked_section = ""
             prompt = _QUESTION_PROMPT.format(
                 content=content[:3000],
-                semantic_field=semantic_field or "Non déterminé",
+                already_asked_section=already_asked_section,
             )
             answer = self._rag._llm.chat(
                 [{"role": "user", "content": prompt}],
                 temperature=0.7,
-                max_tokens=1000,
+                max_tokens=150,
                 operation="autolearn_questions",
             )
             _prefix = re.compile(r"^[•\*\-]?\s*(?:Q\d+[.:）]|Question\s*\d*[.:]|\d+[.)]\s*)?\s*", re.I)
-            questions: list[str] = []
             for line in answer.strip().splitlines():
-                stripped = line.strip()
-                if not stripped:
-                    continue
-                cleaned = _prefix.sub("", stripped).strip()
+                cleaned = _prefix.sub("", line.strip()).strip()
                 if len(cleaned) > 10 and cleaned.endswith("?"):
-                    questions.append(cleaned)
-            return questions[:3]
+                    return [cleaned]
+            return []
         except Exception as exc:
-            logger.debug(f"Génération de questions échouée : {exc}")
+            logger.debug(f"Génération de question échouée : {exc}")
             return []
 
     def _load_wuddai_entities(self) -> list[dict]:
@@ -1529,10 +1499,11 @@ class AutoLearner:
         prompt = (
             f"Voici un extrait d'une note personnelle intitulée actuellement : \"{current_title}\"\n\n"
             f"<extrait>\n{content_preview[:1500]}\n</extrait>\n\n"
-            f"Propose un titre court (3 à 7 mots maximum) en français, représentatif du contenu réel, "
+            f"Propose un titre court (3 à 7 mots maximum) OBLIGATOIREMENT EN FRANÇAIS, représentatif du contenu réel, "
             f"sans guillemets, sans ponctuation finale, sans préfixe comme 'Titre :'. "
+            f"IMPORTANT : le titre doit être en français, même si le contenu est dans une autre langue. "
             f"Si le titre actuel est déjà représentatif, réponds exactement : CONSERVER\n"
-            f"Sinon, réponds uniquement avec le nouveau titre."
+            f"Sinon, réponds uniquement avec le nouveau titre en français."
         )
         try:
             result = self._rag._llm.chat(
@@ -1546,6 +1517,9 @@ class AutoLearner:
                 return None
             # Rejeter si trop long (>80 chars) ou identique au titre actuel
             if len(candidate) > 80:
+                return None
+            # Rejeter si le titre contient des caractères non-latins (CJK, arabe, cyrillique…)
+            if re.search(r"[\u0400-\u04FF\u0600-\u06FF\u4E00-\u9FFF\u3040-\u30FF\uAC00-\uD7AF]", candidate):
                 return None
             if candidate.lower().strip() == current_title.lower().strip():
                 return None

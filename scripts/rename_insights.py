@@ -84,10 +84,11 @@ def _suggest_title(llm, content: str, current_stem: str) -> str | None:
         f"Voici le début d'une note générée automatiquement, "
         f"dont le nom de fichier actuel est : \"{current_stem}\"\n\n"
         f"<contenu>\n{excerpt}\n</contenu>\n\n"
-        f"Propose un titre court (3 à 7 mots) en français représentatif du contenu, "
+        f"Propose un titre court (3 à 7 mots) OBLIGATOIREMENT EN FRANÇAIS représentatif du contenu, "
         f"sans guillemets, sans ponctuation finale, sans préfixe. "
+        f"IMPORTANT : le titre doit être en français, même si le contenu est dans une autre langue. "
         f"Si le titre actuel est déjà clair et court, réponds exactement : CONSERVER\n"
-        f"Sinon, réponds uniquement avec le nouveau titre."
+        f"Sinon, réponds uniquement avec le nouveau titre en français."
     )
     try:
         result = llm.chat(
@@ -100,6 +101,9 @@ def _suggest_title(llm, content: str, current_stem: str) -> str | None:
         if not candidate or candidate.upper() == "CONSERVER":
             return None
         if len(candidate) > 100:
+            return None
+        # Rejeter si le titre contient des caractères non-latins (CJK, arabe, cyrillique…)
+        if re.search(r"[\u0400-\u04FF\u0600-\u06FF\u4E00-\u9FFF\u3040-\u30FF\uAC00-\uD7AF]", candidate):
             return None
         if candidate.lower().strip() == current_stem.lower().replace("_", " ").strip():
             return None
@@ -256,13 +260,12 @@ def main() -> None:
     indexer = None
     if not args.dry_run and not args.no_llm:
         try:
-            from src.ai.ollama_client import OllamaClient
-            llm = OllamaClient()
-            if not llm.is_available():
-                print("⚠ Ollama non disponible — mode --no-llm activé")
-                llm = None
+            from src.ai.mlx_client import MlxClient
+            llm = MlxClient()
+            llm.load()
+            print(f"✓ MLX chargé : {settings.mlx_chat_model}")
         except Exception as exc:
-            print(f"⚠ LLM init failed: {exc} — mode --no-llm activé")
+            print(f"⚠ MLX init failed: {exc} — mode --no-llm activé")
             llm = None
 
     if not args.dry_run:
@@ -319,6 +322,13 @@ def main() -> None:
             skipped += 1
 
     print(f"\n{'[DRY-RUN] ' if args.dry_run else ''}Terminé : {renamed} renommé(s), {skipped} conservé(s)")
+
+    # Décharger le modèle MLX pour libérer la mémoire
+    if llm is not None:
+        try:
+            llm.unload()
+        except Exception:
+            pass
 
 
 if __name__ == "__main__":
