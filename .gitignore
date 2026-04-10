@@ -38,3 +38,6 @@ src/ui/pages/__pycache__/
 
 # macOS
 .DS_Store
+
+# PID
+.obsirag.pid
