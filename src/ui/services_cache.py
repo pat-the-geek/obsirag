@@ -119,11 +119,14 @@ def get_services() -> ServiceManager:
 
     # Chemin rapide : services déjà prêts ET session déjà vue
     if st.session_state.get("_svc_ready") and _services_instance is not None:
+        # Signale l'activité UI à chaque rerun (navigation, interaction…)
+        _services_instance.signal_ui_active()
         return _services_instance
 
     # Services déjà créés par une autre session → marquer et retourner
     if _services_instance is not None:
         st.session_state["_svc_ready"] = True
+        _services_instance.signal_ui_active()
         return _services_instance
 
     # Première initialisation : afficher la progression
@@ -138,4 +141,5 @@ def get_services() -> ServiceManager:
         status.update(label="✅ ObsiRAG prêt", state="complete", expanded=False)
 
     st.session_state["_svc_ready"] = True
+    _services_instance.signal_ui_active()
     return _services_instance

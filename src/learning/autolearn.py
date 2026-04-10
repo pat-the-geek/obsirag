@@ -143,10 +143,11 @@ class AutoLearner:
     _FAST_SLEEP_BETWEEN_QUESTIONS = 0  # pas de pause entre questions en mode accéléré
     _FAST_SLEEP_AFTER_SEMANTIC = 0     # pas de pause après extraction sémantique
 
-    def __init__(self, chroma, rag, indexer) -> None:
+    def __init__(self, chroma, rag, indexer, ui_active_fn=None) -> None:
         self._chroma = chroma
         self._rag = rag
         self._indexer = indexer
+        self._ui_active_fn = ui_active_fn or (lambda: True)  # par défaut : considère l'UI active
         self._last_user_activity: float = 0.0  # timestamp epoch
         self._activity_lock = threading.Lock()
         self._processed_lock = threading.Lock()
@@ -237,6 +238,13 @@ class AutoLearner:
         """Passe initiale accélérée : traite toutes les notes non traitées sans limite de quota
         et avec des pauses minimales. Appelée une seule fois au premier démarrage.
         Le cycle normal prend le relai une fois cette passe terminée."""
+        # Chargement du modèle LLM avant la passe bulk.
+        try:
+            self._rag._llm.load()
+        except Exception as exc:
+            logger.error(f"Auto-learner bulk : impossible de charger le modèle LLM : {exc}")
+            self._bulk_initial_done.set()
+            return
         try:
             # Warm-up : attendre qu'Ollama et le modèle d'embedding soient prêts
             for attempt in range(10):
@@ -285,6 +293,18 @@ class AutoLearner:
         except Exception as exc:
             logger.error(f"Auto-learner bulk initial error : {exc}")
         finally:
+            try:
+                import mlx.core as mx
+                mx.metal.clear_cache()
+                logger.debug("Cache Metal MLX libéré (fin mode accéléré)")
+            except Exception:
+                pass
+            if not self._ui_active_fn():
+                logger.info("Auto-learner bulk : UI inactif — déchargement du modèle MLX")
+                try:
+                    self._rag._llm.unload()
+                except Exception as exc:
+                    logger.warning(f"Auto-learner bulk : erreur déchargement modèle : {exc}")
             self._bulk_initial_done.set()
             self._clear_status()
 
@@ -322,7 +342,10 @@ class AutoLearner:
                 next_run_time=datetime.utcnow() + timedelta(minutes=5),
             )
 
-        # Synthèse hebdomadaire le dimanche à 20h UTC
+        # Synthèse hebdomadaire le dimanche à 20h UTC.
+        # misfire_grace_time = 7 jours : si le Mac était en veille au moment
+        # du déclenchement prévu, APScheduler exécutera la synthèse dès le réveil
+        # plutôt que de l'ignorer.
         self._scheduler.add_job(
             self._weekly_synthesis,
             "cron",
@@ -330,6 +353,7 @@ class AutoLearner:
             hour=20,
             minute=0,
             id="weekly_synthesis",
+            misfire_grace_time=7 * 24 * 3600,  # 7 jours en secondes
         )
         self._scheduler.start()
         logger.info(f"Auto-learner démarré — cycle toutes les {interval} min")
@@ -390,6 +414,12 @@ class AutoLearner:
 
     def _run_cycle(self) -> None:
         logger.info("Auto-learner : début du cycle")
+        # Chargement du modèle LLM avant le cycle.
+        try:
+            self._rag._llm.load()
+        except Exception as exc:
+            logger.error(f"Auto-learner : impossible de charger le modèle LLM : {exc}")
+            return
         try:
             # Vérifier qu'Ollama est prêt avant de démarrer le cycle
             try:
@@ -471,6 +501,12 @@ class AutoLearner:
         except Exception as exc:
             logger.error(f"Auto-learner cycle error : {exc}")
         finally:
+            try:
+                import mlx.core as mx
+                mx.metal.clear_cache()
+                logger.debug("Cache Metal MLX libéré (fin cycle)")
+            except Exception:
+                pass
             self._clear_status()
 
     def _process_note(

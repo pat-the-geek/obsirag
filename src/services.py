@@ -2,11 +2,16 @@
 ServiceManager — point d'entrée unique pour tous les composants ObsiRAG.
 Instancié une seule fois via @st.cache_resource dans l'UI.
 """
+import time
 import threading
 from loguru import logger
 
 from src.config import settings
 from src.logger import configure_logging
+
+# Durée d'inactivité UI (en secondes) avant déchargement automatique du modèle.
+# Le watchdog vérifie toutes les 30 s — mettre > 30 pour un déclenchement fiable.
+_UI_IDLE_TIMEOUT = 120
 
 
 class ServiceManager:
@@ -19,6 +24,7 @@ class ServiceManager:
         """
         _step = on_step or (lambda msg: None)
         self.indexing_status = {"running": False, "processed": 0, "total": 0, "current": ""}
+        self._last_ui_activity: float = 0.0
 
         configure_logging(settings.log_level, settings.log_dir)
         logger.info("=== Démarrage ObsiRAG ===")
@@ -33,6 +39,7 @@ class ServiceManager:
         _step("🤖 Chargement du modèle MLX (peut prendre 30-60 s)…")
         from src.ai.mlx_client import MlxClient
         self.llm = MlxClient()
+        self.llm.load()
 
         _step("🔗 Initialisation du pipeline RAG…")
         from src.ai.rag import RAGPipeline
@@ -48,7 +55,7 @@ class ServiceManager:
 
         _step("📚 Initialisation de l'auto-learner…")
         from src.learning.autolearn import AutoLearner
-        self.learner = AutoLearner(self.chroma, self.rag, self.indexer)
+        self.learner = AutoLearner(self.chroma, self.rag, self.indexer, ui_active_fn=self.is_ui_active)
 
         _step("👁️ Démarrage du watcher de coffre…")
         from src.vault.watcher import VaultWatcher
@@ -89,6 +96,51 @@ class ServiceManager:
             name="initial-indexer",
         )
         thread.start()
+
+        self._start_model_watchdog()
+
+    # ---- Gestion du cycle de vie du modèle LLM ----
+
+    def signal_ui_active(self) -> None:
+        """Marque l'UI comme active et charge le modèle si nécessaire."""
+        self._last_ui_activity = time.monotonic()
+        if not self.llm.is_loaded():
+            logger.info("Activité UI détectée — chargement du modèle MLX…")
+            threading.Thread(target=self.llm.load, daemon=True, name="llm-autoload").start()
+
+    def is_ui_active(self) -> bool:
+        """Retourne True si une session UI a été active dans la fenêtre d'inactivité."""
+        return (time.monotonic() - self._last_ui_activity) < _UI_IDLE_TIMEOUT
+
+    def is_scheduler_active(self) -> bool:
+        """Retourne True si l'auto-learner est en cours d'exécution."""
+        return (
+            settings.autolearn_enabled
+            and hasattr(self, "learner")
+            and self.learner.processing_status.get("active", False)
+        )
+
+    def _start_model_watchdog(self) -> None:
+        """Lance un thread de surveillance qui décharge le modèle quand personne ne l'utilise."""
+        def _watch() -> None:
+            while True:
+                time.sleep(30)
+                try:
+                    if (
+                        self.llm.is_loaded()
+                        and not self.is_ui_active()
+                        and not self.is_scheduler_active()
+                    ):
+                        logger.info(
+                            "Watchdog : UI inactif + aucun scheduler actif — déchargement du modèle MLX"
+                        )
+                        self.llm.unload()
+                except Exception as exc:
+                    logger.warning(f"Watchdog modèle erreur : {exc}")
+
+        t = threading.Thread(target=_watch, daemon=True, name="model-watchdog")
+        t.start()
+        logger.info("Watchdog modèle démarré")
 
     def _initial_index(self) -> None:
         def _on_progress(current: str, processed: int, total: int) -> None:

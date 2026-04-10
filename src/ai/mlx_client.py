@@ -2,10 +2,13 @@
 Client MLX-LM — génération locale sans serveur via Apple MLX (Apple Silicon).
 Interface identique à OllamaClient : chat(), stream(), is_available()
 
-Le modèle est chargé une seule fois dans le constructeur (~30-60 s).
+Le modèle est chargé à la demande (chargement différé) et peut être déchargé
+quand il n'est pas utilisé pour libérer la mémoire GPU/Metal.
 """
 from __future__ import annotations
 
+import gc
+import threading
 from collections.abc import Iterator
 from typing import Any
 
@@ -17,13 +20,48 @@ from src.logger import log_token_usage
 
 class MlxClient:
     def __init__(self) -> None:
-        from mlx_lm import load
+        self._model = None
+        self._tokenizer = None
+        self._model_name = settings.mlx_chat_model
+        self._load_lock = threading.Lock()
+        logger.info(f"MlxClient initialisé (chargement différé) — modèle : {self._model_name}")
 
-        model_name = settings.mlx_chat_model
-        logger.info(f"Chargement du modèle MLX : {model_name} (peut prendre 30-60 s)…")
-        self._model, self._tokenizer = load(model_name)
-        self._model_name = model_name
-        logger.info(f"Modèle MLX prêt : {model_name}")
+    # ---- Gestion du cycle de vie du modèle ----
+
+    def load(self) -> None:
+        """Charge le modèle en mémoire GPU/Metal (idempotent, thread-safe)."""
+        with self._load_lock:
+            if self._model is not None:
+                return
+            from mlx_lm import load as mlx_load
+            logger.info(f"Chargement du modèle MLX : {self._model_name} (peut prendre 30-60 s)…")
+            self._model, self._tokenizer = mlx_load(self._model_name)
+            logger.info(f"Modèle MLX prêt : {self._model_name}")
+
+    def unload(self) -> None:
+        """Libère le modèle de la mémoire GPU/Metal (idempotent, thread-safe)."""
+        with self._load_lock:
+            if self._model is None:
+                return
+            self._model = None
+            self._tokenizer = None
+            try:
+                gc.collect()
+                import mlx.core as mx
+                mx.metal.clear_cache()
+            except Exception:
+                pass
+            logger.info(f"Modèle MLX déchargé : {self._model_name}")
+
+    def is_loaded(self) -> bool:
+        """Retourne True si le modèle est actuellement en mémoire."""
+        return self._model is not None
+
+    def _ensure_loaded(self) -> None:
+        """Charge le modèle s'il ne l'est pas déjà (mécanisme try-load automatique)."""
+        if self._model is None:
+            logger.info("Modèle MLX non chargé — chargement automatique en cours…")
+            self.load()
 
     # ---- API publique ----
 
@@ -35,6 +73,7 @@ class MlxClient:
         operation: str = "chat",
     ) -> str:
         """Appel bloquant — retourne la réponse complète."""
+        self._ensure_loaded()
         from mlx_lm import stream_generate
         from mlx_lm.sample_utils import make_sampler
 
@@ -64,6 +103,7 @@ class MlxClient:
         operation: str = "stream",
     ) -> Iterator[str]:
         """Générateur de tokens — pour l'affichage streaming dans l'UI."""
+        self._ensure_loaded()
         from mlx_lm import stream_generate
         from mlx_lm.sample_utils import make_sampler
 
@@ -83,7 +123,8 @@ class MlxClient:
             self._track_tokens(last, operation)
 
     def is_available(self) -> bool:
-        return self._model is not None
+        """Retourne True — le modèle est toujours disponible via chargement à la demande."""
+        return True
 
     # ---- helpers privés ----
 

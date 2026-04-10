@@ -97,11 +97,13 @@ Un processus léger tourne en arrière-plan et :
 4. Répond via RAG sur le coffre — et **complète avec le web** si la réponse est insuffisante
 5. N'utilise que des **sources fiables** (Wikipédia, presse de référence, institutions, revues scientifiques…)
 6. Sauvegarde les insights en Markdown dans `obsirag/insights/` avec indication de provenance et **références citées**
-7. Génère une **synthèse hebdomadaire** le dimanche dans `obsirag/synthesis/`
+7. Génère une **synthèse hebdomadaire** le dimanche dans `obsirag/synthesis/` — si le Mac était en veille au moment prévu, la synthèse est lancée automatiquement **dès le réveil**
 
 > Les artefacts générés sont indexés et deviennent eux-mêmes interrogeables dans le chat.
 
 Le système est conçu pour fonctionner **sans pénaliser l'utilisation normale de la machine** : les appels LLM sont espacés (pause configurable entre chaque note et chaque question), le nombre de notes traitées par cycle est limité, et tout tourne dans un thread d'arrière-plan isolé. La machine reste pleinement disponible pendant le traitement.
+
+**Gestion du cycle de vie du modèle LLM :** l'auto-learner charge le modèle MLX au début de chaque cycle et le décharge à la fin si l'interface web est inactive — libérant ainsi la mémoire GPU/Metal entre les cycles. Si l'interface est ouverte, le modèle reste chargé pour répondre immédiatement aux requêtes chat.
 
 #### Alignement sémantique des questions
 
@@ -347,6 +349,21 @@ Pour les détails de débit, temps de traitement par note et choix du modèle : 
 ## Modèle IA utilisé via MLX-LM
 
 ObsiRAG utilise **MLX-LM** pour la génération locale, sans serveur externe. Le modèle tourne directement dans le processus Python, exploitant le GPU unifié Apple Silicon via le framework MLX.
+
+### Chargement et déchargement automatiques
+
+Le modèle est géré dynamiquement pour minimiser l'empreinte mémoire :
+
+| Événement | Comportement |
+|---|---|
+| **Ouverture de l'interface web** | Chargement immédiat du modèle (~2 s sur M5) |
+| **Utilisation du chat** | Modèle maintenu en mémoire tant que l'UI est active |
+| **Inactivité UI > 2 min** | Déchargement automatique (watchdog toutes les 30 s) |
+| **Début d'un cycle auto-learner** | Chargement automatique si absent |
+| **Fin d'un cycle auto-learner** | Déchargement si l'UI est inactive |
+| **Appel LLM sans modèle chargé** | Chargement à la volée transparent (try-load automatique) |
+
+Ce mécanisme garantit que le modèle ne consomme pas de mémoire GPU/Metal inutilement entre les sessions, tout en restant disponible instantanément dès qu'une requête arrive.
 
 | Usage | Opération | Modèle configuré |
 | --- | --- | --- |
