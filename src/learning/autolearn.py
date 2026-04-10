@@ -136,6 +136,10 @@ class AutoLearner:
     _SLEEP_BETWEEN_NOTES = 30        # secondes entre deux notes
     _SLEEP_BETWEEN_QUESTIONS = 15    # secondes entre deux questions
     _USER_IDLE_SECONDS = 120         # pause auto-learner si activité chat < N secondes
+    # Mode accéléré (première génération d'insights)
+    _FAST_SLEEP_BETWEEN_NOTES = 0    # secondes entre deux notes en mode accéléré
+    _FAST_SLEEP_BETWEEN_QUESTIONS = 0  # pas de pause entre questions en mode accéléré
+    _FAST_SLEEP_AFTER_SEMANTIC = 0     # pas de pause après extraction sémantique
 
     def __init__(self, chroma, rag, indexer) -> None:
         self._chroma = chroma
@@ -143,6 +147,7 @@ class AutoLearner:
         self._indexer = indexer
         self._last_user_activity: float = 0.0  # timestamp epoch
         self._activity_lock = threading.Lock()
+        self._bulk_initial_done = threading.Event()  # signalé quand la passe initiale est finie
         # Statut lisible depuis l'UI (thread-safe via dict atomique Python)
         self.processing_status: dict = {
             "active": False,
@@ -177,15 +182,97 @@ class AutoLearner:
         processed[file_path] = datetime.utcnow().isoformat()
         self._save_processed(processed)
 
+    def _is_first_insight_run(self) -> bool:
+        """Vrai s'il reste beaucoup de notes non traitées (rattrapage nécessaire).
+        Se déclenche tant que >= 10 notes du coffre n'ont pas encore d'insight."""
+        processed_map = self._load_processed()
+        try:
+            all_notes = [
+                n for n in self._chroma.list_notes()
+                if not self._is_obsirag_generated(n["file_path"])
+            ]
+            unprocessed = sum(1 for n in all_notes if n["file_path"] not in processed_map)
+            return unprocessed >= 10
+        except Exception:
+            return False
+
+    def _run_bulk_initial(self) -> None:
+        """Passe initiale accélérée : traite toutes les notes non traitées sans limite de quota
+        et avec des pauses minimales. Appelée une seule fois au premier démarrage.
+        Le cycle normal prend le relai une fois cette passe terminée."""
+        try:
+            all_notes = [
+                n for n in self._chroma.list_notes()
+                if not self._is_obsirag_generated(n["file_path"])
+            ]
+            total = len(all_notes)
+            logger.info(f"Auto-learner mode accéléré — {total} note(s) à traiter")
+
+            processed_map = self._load_processed()
+            already_done = sum(1 for n in all_notes if n["file_path"] in processed_map)
+            pending_notes = [n for n in all_notes if n["file_path"] not in processed_map]
+            pending_total = len(pending_notes)
+            new_done = 0
+            logger.info(f"Auto-learner mode accéléré — {pending_total} note(s) à traiter ({already_done} déjà traitées)")
+
+            for note_meta in pending_notes:
+                try:
+                    self._set_status(
+                        note=note_meta.get("title", note_meta["file_path"]),
+                        step=f"[Accéléré] {new_done + 1}/{pending_total}",
+                    )
+                    self._process_note(
+                        note_meta,
+                        sleep_between_questions=self._FAST_SLEEP_BETWEEN_QUESTIONS,
+                        sleep_after_semantic=self._FAST_SLEEP_AFTER_SEMANTIC,
+                    )
+                    self._mark_processed(note_meta["file_path"])
+                    new_done += 1
+                    time.sleep(self._FAST_SLEEP_BETWEEN_NOTES)
+                except Exception as exc:
+                    logger.warning(f"Auto-learner accéléré : erreur sur {note_meta['file_path']} : {exc}")
+
+            logger.info(f"Auto-learner mode accéléré terminé — {new_done}/{pending_total} note(s) traitée(s)")
+        except Exception as exc:
+            logger.error(f"Auto-learner bulk initial error : {exc}")
+        finally:
+            self._bulk_initial_done.set()
+            self._clear_status()
+
     def start(self) -> None:
         interval = settings.autolearn_interval_minutes
-        self._scheduler.add_job(
-            self._run_cycle,
-            "interval",
-            minutes=interval,
-            id="autolearn_cycle",
-            next_run_time=datetime.utcnow() + timedelta(minutes=5),
-        )
+
+        if self._is_first_insight_run():
+            logger.info("Auto-learner : première utilisation détectée — lancement du mode accéléré")
+            # Le cycle normal démarre seulement après la passe initiale
+            bulk_thread = threading.Thread(
+                target=self._run_bulk_initial,
+                daemon=True,
+                name="autolearn-bulk-initial",
+            )
+            bulk_thread.start()
+            # Premier cycle normal différé : après la fin du bulk OU au bout de 24h max
+            def _wait_and_schedule():
+                self._bulk_initial_done.wait(timeout=86400)
+                self._scheduler.add_job(
+                    self._run_cycle,
+                    "interval",
+                    minutes=interval,
+                    id="autolearn_cycle",
+                    next_run_time=datetime.utcnow() + timedelta(minutes=5),
+                )
+                logger.info("Auto-learner mode accéléré terminé — cycle normal activé")
+            threading.Thread(target=_wait_and_schedule, daemon=True, name="autolearn-scheduler-init").start()
+        else:
+            self._bulk_initial_done.set()  # pas de passe initiale nécessaire
+            self._scheduler.add_job(
+                self._run_cycle,
+                "interval",
+                minutes=interval,
+                id="autolearn_cycle",
+                next_run_time=datetime.utcnow() + timedelta(minutes=5),
+            )
+
         # Synthèse hebdomadaire le dimanche à 20h UTC
         self._scheduler.add_job(
             self._weekly_synthesis,
@@ -326,7 +413,13 @@ class AutoLearner:
         finally:
             self._clear_status()
 
-    def _process_note(self, note_meta: dict) -> None:
+    def _process_note(
+        self,
+        note_meta: dict,
+        sleep_between_questions: int | None = None,
+        sleep_after_semantic: int = 5,
+    ) -> None:
+        _sleep_q = sleep_between_questions if sleep_between_questions is not None else self._SLEEP_BETWEEN_QUESTIONS
         title = note_meta.get("title", note_meta["file_path"])
         logger.info(f"Auto-learner : traitement de '{title}'")
         self._set_status(note=title, step="Récupération des chunks…")
@@ -340,7 +433,8 @@ class AutoLearner:
         content_preview = "\n\n".join(c["text"] for c in chunks[:3])
         self._set_status(note=title, step="Extraction du champ sémantique…")
         semantic_field = self._extract_semantic_field(content_preview)
-        time.sleep(5)
+        if sleep_after_semantic > 0:
+            time.sleep(sleep_after_semantic)
         self._set_status(note=title, step="Génération des questions…")
         questions = self._generate_questions(content_preview, semantic_field)
         if not questions:
@@ -352,7 +446,8 @@ class AutoLearner:
         qa_pairs: list[dict] = []
         for i, question in enumerate(questions, 1):
             self._set_status(note=title, step=f"Question {i}/{len(questions)} : recherche web + RAG…")
-            time.sleep(self._SLEEP_BETWEEN_QUESTIONS)
+            if _sleep_q > 0:
+                time.sleep(_sleep_q)
             try:
                 # 1. Web en premier — source principale de connaissance nouvelle
                 self._set_status(note=title, step=f"Q{i} — Recherche web : {question[:60]}…")

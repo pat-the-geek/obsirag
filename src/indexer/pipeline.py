@@ -12,12 +12,13 @@ from pathlib import Path
 from loguru import logger
 
 from src.config import settings
-from src.indexer.chunker import TextChunker
+from src.indexer.chunker import Chunk, TextChunker
 from src.vault.parser import NoteParser
 
 
 class IndexingPipeline:
-    _SLEEP_BETWEEN_NOTES = 0.1  # secondes — doux pour le CPU
+    _SLEEP_BETWEEN_NOTES = 0.1  # secondes — mode normal, doux pour le CPU
+    _FAST_BATCH_SIZE = 500       # chunks par lot en mode accéléré (première indexation)
 
     def __init__(self, chroma_store) -> None:
         self._chroma = chroma_store
@@ -29,6 +30,10 @@ class IndexingPipeline:
 
     def index_vault(self, on_progress: Callable[[str, int, int], None] | None = None) -> dict:
         """Indexe (ou met à jour) l'ensemble du coffre. Retourne les stats.
+
+        Première exécution (état vide + ChromaDB vide) : mode accéléré automatique —
+        les chunks sont regroupés en lots avant envoi à ChromaDB, sans pause entre notes.
+        Les exécutions suivantes utilisent le mode normal incrémental.
 
         on_progress(current_note, processed, total) — appelé après chaque note traitée.
         """
@@ -53,7 +58,40 @@ class IndexingPipeline:
             self._delete_from_index(rel_path)
             stats["deleted"] += 1
 
-        # Indexation des notes nouvelles / modifiées
+        # ---- Mode accéléré (première indexation uniquement) ----
+        if self._is_first_run():
+            logger.info(
+                f"Mode accéléré activé — première indexation de {total} note(s). "
+                f"Lot : {self._FAST_BATCH_SIZE} chunks."
+            )
+            chunk_buffer: list[Chunk] = []
+
+            for rel_path, abs_path in all_md.items():
+                try:
+                    chunks = self._prepare_chunks(abs_path, rel_path)
+                    chunk_buffer.extend(chunks)
+                    stats["added"] += 1
+
+                    if len(chunk_buffer) >= self._FAST_BATCH_SIZE:
+                        self._chroma.add_chunks(chunk_buffer)
+                        chunk_buffer.clear()
+
+                except Exception as exc:
+                    logger.error(f"Erreur d'indexation pour {rel_path} : {exc}")
+                    stats["errors"] += 1
+
+                processed += 1
+                if on_progress:
+                    on_progress(rel_path, processed, total)
+
+            if chunk_buffer:
+                self._chroma.add_chunks(chunk_buffer)
+
+            self._save_state()
+            logger.info(f"index_vault (accéléré) → {stats}")
+            return stats
+
+        # ---- Mode normal (incrémental) ----
         for rel_path, abs_path in all_md.items():
             try:
                 current_hash = self._file_hash(abs_path)
@@ -98,6 +136,20 @@ class IndexingPipeline:
         self._save_state()
 
     # ---- helpers privés ----
+
+    def _is_first_run(self) -> bool:
+        """Vrai si le coffre n'a jamais été indexé (état vide et ChromaDB vide).
+        Déclenche le mode accéléré dans index_vault()."""
+        return len(self._state) == 0 and self._chroma.count() == 0
+
+    def _prepare_chunks(self, abs_path: Path, rel_path: str) -> list[Chunk]:
+        """Parse et découpe une note sans l'envoyer à ChromaDB.
+        Utilisé en mode accéléré pour accumuler les chunks avant envoi par lots."""
+        note = self._parser.parse(abs_path)
+        if note is None:
+            return []
+        self._state[rel_path] = note.metadata.file_hash
+        return self._chunker.chunk_note(note.metadata, note.sections)
 
     def _index_file(self, abs_path: Path, rel_path: str) -> None:
         note = self._parser.parse(abs_path)

@@ -3,7 +3,7 @@ port = 8501
 address = "0.0.0.0"
 headless = true
 maxUploadSize = 50
-staticFilesPath = "/app/src/ui/static"
+fileWatcherType = "none"
 
 [browser]
 gatherUsageStats = false
