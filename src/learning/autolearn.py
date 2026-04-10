@@ -158,6 +158,8 @@ class AutoLearner:
             "note": "",
             "step": "",
             "log": [],  # liste de str (derniers messages)
+            "bulk_pending_total": 0,  # notes à traiter dans le batch courant
+            "bulk_new_done": 0,       # notes traitées dans le batch courant
         }
         self._scheduler = BackgroundScheduler(
             job_defaults={"coalesce": True, "max_instances": 1},
@@ -268,6 +270,8 @@ class AutoLearner:
             pending_notes = [n for n in all_notes if n["file_path"] not in processed_map]
             pending_total = len(pending_notes)
             new_done = 0
+            self.processing_status["bulk_pending_total"] = pending_total
+            self.processing_status["bulk_new_done"] = 0
             logger.info(f"Auto-learner mode accéléré — {pending_total} note(s) à traiter ({already_done} déjà traitées)")
 
             for note_meta in pending_notes:
@@ -284,6 +288,7 @@ class AutoLearner:
                     )
                     self._mark_processed(note_meta["file_path"])
                     new_done += 1
+                    self.processing_status["bulk_new_done"] = new_done
                     # Mise à jour du statut APRÈS marquage → cohérence avec Insights
                     self._set_status(
                         note=note_meta.get("title", note_meta["file_path"]),
@@ -308,6 +313,12 @@ class AutoLearner:
                 logger.info("Auto-learner bulk : UI inactif — déchargement du modèle MLX")
                 try:
                     self._rag._llm.unload()
+                except Exception as exc:
+                    logger.warning(f"Auto-learner bulk : erreur déchargement modèle : {exc}")
+            # Remettre bulk_pending_total à zéro : la page Insights retombe
+            # sur le calcul standard basé sur processed_map
+            self.processing_status["bulk_pending_total"] = 0
+            self.processing_status["bulk_new_done"] = 0
                 except Exception as exc:
                     logger.warning(f"Auto-learner bulk : erreur déchargement modèle : {exc}")
             self._bulk_initial_done.set()
@@ -627,6 +638,14 @@ class AutoLearner:
                     self._set_status(note=title, step=f"Renommage : '{new_title}'…")
                     result = self._rename_note_in_vault(abs_path, new_title, fp)
                     if result:
+                        # Mettre à jour note_meta avec le nouveau chemin relatif
+                        # pour que _mark_processed (appelé par le caller) utilise
+                        # le chemin cohérent avec ChromaDB
+                        try:
+                            new_rel = str(result.relative_to(settings.vault))
+                            note_meta["file_path"] = new_rel
+                        except Exception:
+                            pass
                         self._set_status(note=new_title, step=f"✅ Note renommée → '{new_title}'")
                     else:
                         self._set_status(note=title, step="⚠️ Renommage annulé (conflit ou erreur)")
@@ -1619,6 +1638,18 @@ class AutoLearner:
         except Exception:
             pass
         self._indexer.index_note(new_abs)
+
+        # Migrer l'entrée dans processed_map : ancien chemin → nouveau chemin
+        # Évite que la note apparaisse comme non traitée après renommage
+        try:
+            new_rel = str(new_abs.relative_to(vault))
+            processed = self._load_processed()
+            if note_rel in processed:
+                processed[new_rel] = processed.pop(note_rel)
+                self._save_processed(processed)
+                logger.debug(f"processed_map migré : '{note_rel}' → '{new_rel}'")
+        except Exception as exc:
+            logger.warning(f"processed_map migration rename : {exc}")
 
         return new_abs
 

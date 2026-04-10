@@ -39,10 +39,27 @@ with st.expander("⏱️ Progression & estimation du temps restant", expanded=Tr
         if "/obsirag/" not in n["file_path"].replace("\\", "/")
         and not n["file_path"].replace("\\", "/").startswith("obsirag/")
     ]
-    total_notes = len(user_notes)
     user_fps = {n["file_path"] for n in user_notes}
     processed_count = len([fp for fp in processed_map if fp in user_fps])
-    remaining = max(0, total_notes - processed_count)
+
+    # Pendant un bulk initial, utiliser les compteurs exposés par l'auto-learner
+    # (bulk_pending_total / bulk_new_done) plutôt que le total ChromaDB.
+    bulk_pending = 0
+    bulk_done = 0
+    if hasattr(svc, "learner") and svc.learner is not None:
+        bulk_pending = svc.learner.processing_status.get("bulk_pending_total", 0)
+        bulk_done = svc.learner.processing_status.get("bulk_new_done", 0)
+
+    if bulk_pending > 0:
+        # Mode bulk : "à traiter" = lot initial, "traitées" = avancement dans ce lot
+        total_notes = bulk_pending
+        processed_in_view = bulk_done
+        remaining = max(0, bulk_pending - bulk_done)
+    else:
+        # Mode normal : base sur processed_map vs ChromaDB
+        total_notes = len(user_notes)
+        processed_in_view = processed_count
+        remaining = max(0, total_notes - processed_count)
 
     # Durée réelle moyenne par note (historique glissant)
     _FALLBACK_SECS_PER_NOTE = 125  # valeur par défaut avant les premières mesures
@@ -78,8 +95,8 @@ with st.expander("⏱️ Progression & estimation du temps restant", expanded=Tr
         return f"{h}h{m:02d}"
 
     col1, col2, col3, col4 = st.columns(4)
-    col1.metric("Notes totales", total_notes)
-    col2.metric("Notes traitées", processed_count)
+    col1.metric("Notes à traiter", total_notes)
+    col2.metric("Notes traitées", processed_in_view)
     col3.metric("Notes restantes", remaining)
     col4.metric(
         "Temps estimé restant",
@@ -91,7 +108,7 @@ with st.expander("⏱️ Progression & estimation du temps restant", expanded=Tr
     )
 
     if remaining > 0 and total_notes > 0:
-        st.progress(processed_count / total_notes, text=f"{processed_count}/{total_notes} notes")
+        st.progress(processed_in_view / total_notes, text=f"{processed_in_view}/{total_notes} notes")
 
     # Prochaine exécution du cycle
     if hasattr(svc, "learner") and svc.learner is not None:
