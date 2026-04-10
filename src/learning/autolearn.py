@@ -275,7 +275,7 @@ class AutoLearner:
                     _t0 = time.perf_counter()
                     self._set_status(
                         note=note_meta.get("title", note_meta["file_path"]),
-                        step=f"[Accéléré] {new_done + 1}/{pending_total}",
+                        step=f"[Accéléré] {new_done + 1}/{pending_total} — en cours…",
                     )
                     self._process_note(
                         note_meta,
@@ -284,6 +284,11 @@ class AutoLearner:
                     )
                     self._mark_processed(note_meta["file_path"])
                     new_done += 1
+                    # Mise à jour du statut APRÈS marquage → cohérence avec Insights
+                    self._set_status(
+                        note=note_meta.get("title", note_meta["file_path"]),
+                        step=f"[Accéléré] {new_done}/{pending_total} ✓",
+                    )
                     time.sleep(self._FAST_SLEEP_BETWEEN_NOTES)
                     self._record_processing_time(time.perf_counter() - _t0)
                 except Exception as exc:

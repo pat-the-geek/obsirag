@@ -28,8 +28,6 @@ inject_theme()
 svc = get_services()
 
 # Pending query (depuis sidebar historique ou suggestions) — capturé dès le début
-if "prompt_history" not in st.session_state:
-    st.session_state.prompt_history = []
 _pending = st.session_state.pop("_pending_query", None)
 
 
@@ -464,24 +462,6 @@ with st.sidebar:
         )
         st.rerun()
 
-    # ---- Historique des prompts dans la sidebar ----
-    if "prompt_history" not in st.session_state:
-        st.session_state.prompt_history = []
-
-    st.divider()
-    ph_label = f"📜 Prompts ({len(st.session_state.prompt_history)})" if st.session_state.prompt_history else "📜 Historique prompts"
-    with st.expander(ph_label, expanded=False):
-        if not st.session_state.prompt_history:
-            st.caption("Aucun prompt pour l'instant.")
-        for _pi, _ph in enumerate(st.session_state.prompt_history):
-            _col_t, _col_b = st.columns([5, 1])
-            with _col_t:
-                st.caption(_ph[:80] + ("…" if len(_ph) > 80 else ""))
-            with _col_b:
-                if st.button("↩", key=f"ph_{_pi}", help="Réutiliser",
-                             on_click=lambda p=_ph: st.session_state.update({"_pending_query": p})):
-                    pass
-
     render_theme_toggle()
 
 # ---- Sauvegarde de conversation ----
@@ -635,12 +615,6 @@ if user_input:
     if not llm_ok:
         st.error("Ollama n'est pas disponible.")
         st.stop()
-
-    # Mémorise dans l'historique sidebar (dédupliqué, max 20, en tête de liste)
-    ph = st.session_state.prompt_history
-    if user_input not in ph:
-        ph.insert(0, user_input)
-        st.session_state.prompt_history = ph[:20]
 
     svc.learner.log_user_query(user_input)
 
