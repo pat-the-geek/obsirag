@@ -62,7 +62,7 @@ with st.expander("⏱️ Progression & estimation du temps restant", expanded=Tr
         remaining = max(0, total_notes - processed_count)
 
     # Durée réelle moyenne par note (historique glissant)
-    _FALLBACK_SECS_PER_NOTE = 125  # valeur par défaut avant les premières mesures
+    _FALLBACK_SECS_PER_NOTE = 270  # ~4-5 min/note observé en pratique sur M5
     secs_per_note = _FALLBACK_SECS_PER_NOTE
     avg_source = "estimation par défaut"
     if settings.processing_times_file.exists():
@@ -70,7 +70,7 @@ with st.expander("⏱️ Progression & estimation du temps restant", expanded=Tr
             _times: list[float] = json.loads(
                 settings.processing_times_file.read_text(encoding="utf-8")
             )
-            if _times:
+            if len(_times) >= 3:  # au moins 3 mesures pour une moyenne fiable
                 _recent = _times[-20:]  # moyenne glissante sur les 20 dernières notes
                 secs_per_note = sum(_recent) / len(_recent)
                 avg_source = f"moyenne réelle ({len(_recent)} notes)"
@@ -80,9 +80,18 @@ with st.expander("⏱️ Progression & estimation du temps restant", expanded=Tr
     notes_per_cycle = settings.autolearn_max_notes_per_run + settings.autolearn_fullscan_per_run
     cycle_minutes = settings.autolearn_interval_minutes
 
-    cycles_needed = math.ceil(remaining / notes_per_cycle) if notes_per_cycle > 0 else 0
-    time_in_cycle_secs = notes_per_cycle * secs_per_note
-    total_secs = cycles_needed * max(cycle_minutes * 60, time_in_cycle_secs)
+    if bulk_pending > 0:
+        # Mode bulk : pas de cycles, traitement séquentiel continu
+        total_secs = remaining * secs_per_note
+        cycles_needed = 0
+        time_in_cycle_secs = secs_per_note
+    else:
+        # Mode normal : notes_per_cycle notes par cycle, intervalle cycle_minutes entre chaque
+        # Temps réel = nb_cycles × (intervalle_cycle + temps_traitement_par_cycle)
+        cycles_needed = math.ceil(remaining / notes_per_cycle) if notes_per_cycle > 0 else 0
+        time_in_cycle_secs = notes_per_cycle * secs_per_note
+        # L'intervalle entre cycles s'ajoute au temps de traitement
+        total_secs = cycles_needed * (cycle_minutes * 60 + time_in_cycle_secs)
 
     def _fmt_duration(secs: float) -> str:
         secs = int(secs)
@@ -101,10 +110,12 @@ with st.expander("⏱️ Progression & estimation du temps restant", expanded=Tr
     col4.metric(
         "Temps estimé restant",
         _fmt_duration(total_secs) if remaining > 0 else "✅ Complet",
-        help=f"{cycles_needed} cycle(s) × ~{_fmt_duration(time_in_cycle_secs)} / cycle · "
-             f"intervalle cycle : {cycle_minutes} min · "
-             f"{notes_per_cycle} notes/cycle · "
-             f"~{_fmt_duration(int(secs_per_note))}/note ({avg_source})"
+        help=(
+            f"Mode bulk : {remaining} notes × ~{_fmt_duration(int(secs_per_note))}/note ({avg_source})"
+            if bulk_pending > 0
+            else f"{cycles_needed} cycle(s) × (intervalle {cycle_minutes} min + ~{_fmt_duration(int(time_in_cycle_secs))} traitement) · "
+                 f"{notes_per_cycle} notes/cycle · ~{_fmt_duration(int(secs_per_note))}/note ({avg_source})"
+        )
     )
 
     if remaining > 0 and total_notes > 0:
