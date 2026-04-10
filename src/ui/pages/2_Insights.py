@@ -2,7 +2,6 @@
 Page Insights — Artefacts générés par l'auto-learner + historique des requêtes.
 """
 import json
-import math
 from datetime import datetime
 
 from pathlib import Path
@@ -21,119 +20,6 @@ svc = get_services()
 render_theme_toggle()
 st.title("💡 Insights")
 st.caption("Connaissances générées automatiquement et historique de vos questions")
-
-# ---- Estimation du temps de traitement ----
-with st.expander("⏱️ Progression & estimation du temps restant", expanded=True):
-    # Données de traitement
-    processed_map: dict = {}
-    if settings.processed_notes_file.exists():
-        try:
-            processed_map = json.loads(settings.processed_notes_file.read_text(encoding="utf-8"))
-        except Exception:
-            processed_map = {}
-
-    total_notes_raw = svc.chroma.list_notes() if hasattr(svc, "chroma") else []
-    # Exclure les notes générées par ObsiRAG (insights, synthesis, synapses)
-    user_notes = [
-        n for n in total_notes_raw
-        if "/obsirag/" not in n["file_path"].replace("\\", "/")
-        and not n["file_path"].replace("\\", "/").startswith("obsirag/")
-    ]
-    user_fps = {n["file_path"] for n in user_notes}
-    processed_count = len([fp for fp in processed_map if fp in user_fps])
-
-    # Pendant un bulk initial, utiliser les compteurs exposés par l'auto-learner
-    # (bulk_pending_total / bulk_new_done) plutôt que le total ChromaDB.
-    bulk_pending = 0
-    bulk_done = 0
-    if hasattr(svc, "learner") and svc.learner is not None:
-        bulk_pending = svc.learner.processing_status.get("bulk_pending_total", 0)
-        bulk_done = svc.learner.processing_status.get("bulk_new_done", 0)
-
-    if bulk_pending > 0:
-        # Mode bulk : "à traiter" = lot initial, "traitées" = avancement dans ce lot
-        total_notes = bulk_pending
-        processed_in_view = bulk_done
-        remaining = max(0, bulk_pending - bulk_done)
-    else:
-        # Mode normal : base sur processed_map vs ChromaDB
-        total_notes = len(user_notes)
-        processed_in_view = processed_count
-        remaining = max(0, total_notes - processed_count)
-
-    # Durée réelle moyenne par note (historique glissant)
-    _FALLBACK_SECS_PER_NOTE = 270  # ~4-5 min/note observé en pratique sur M5
-    secs_per_note = _FALLBACK_SECS_PER_NOTE
-    avg_source = "estimation par défaut"
-    if settings.processing_times_file.exists():
-        try:
-            _times: list[float] = json.loads(
-                settings.processing_times_file.read_text(encoding="utf-8")
-            )
-            if len(_times) >= 3:  # au moins 3 mesures pour une moyenne fiable
-                _recent = _times[-20:]  # moyenne glissante sur les 20 dernières notes
-                secs_per_note = sum(_recent) / len(_recent)
-                avg_source = f"moyenne réelle ({len(_recent)} notes)"
-        except Exception:
-            pass
-
-    notes_per_cycle = settings.autolearn_max_notes_per_run + settings.autolearn_fullscan_per_run
-    cycle_minutes = settings.autolearn_interval_minutes
-
-    if bulk_pending > 0:
-        # Mode bulk : pas de cycles, traitement séquentiel continu
-        total_secs = remaining * secs_per_note
-        cycles_needed = 0
-        time_in_cycle_secs = secs_per_note
-    else:
-        # Mode normal : notes_per_cycle notes par cycle, intervalle cycle_minutes entre chaque
-        # Temps réel = nb_cycles × (intervalle_cycle + temps_traitement_par_cycle)
-        cycles_needed = math.ceil(remaining / notes_per_cycle) if notes_per_cycle > 0 else 0
-        time_in_cycle_secs = notes_per_cycle * secs_per_note
-        # L'intervalle entre cycles s'ajoute au temps de traitement
-        total_secs = cycles_needed * (cycle_minutes * 60 + time_in_cycle_secs)
-
-    def _fmt_duration(secs: float) -> str:
-        secs = int(secs)
-        if secs < 60:
-            return f"{secs}s"
-        if secs < 3600:
-            return f"{secs // 60} min"
-        h = secs // 3600
-        m = (secs % 3600) // 60
-        return f"{h}h{m:02d}"
-
-    col1, col2, col3, col4 = st.columns(4)
-    col1.metric("Notes à traiter", total_notes)
-    col2.metric("Notes traitées", processed_in_view)
-    col3.metric("Notes restantes", remaining)
-    col4.metric(
-        "Temps estimé restant",
-        _fmt_duration(total_secs) if remaining > 0 else "✅ Complet",
-        help=(
-            f"Mode bulk : {remaining} notes × ~{_fmt_duration(int(secs_per_note))}/note ({avg_source})"
-            if bulk_pending > 0
-            else f"{cycles_needed} cycle(s) × (intervalle {cycle_minutes} min + ~{_fmt_duration(int(time_in_cycle_secs))} traitement) · "
-                 f"{notes_per_cycle} notes/cycle · ~{_fmt_duration(int(secs_per_note))}/note ({avg_source})"
-        )
-    )
-
-    if remaining > 0 and total_notes > 0:
-        st.progress(processed_in_view / total_notes, text=f"{processed_in_view}/{total_notes} notes")
-
-    # Prochaine exécution du cycle
-    if hasattr(svc, "learner") and svc.learner is not None:
-        try:
-            import os
-            from zoneinfo import ZoneInfo
-            job = svc.learner._scheduler.get_job("autolearn_cycle")
-            if job and job.next_run_time:
-                tz = ZoneInfo(os.environ.get("TZ", "UTC"))
-                next_run = job.next_run_time.astimezone(tz).strftime("%H:%M:%S")
-                tz_label = os.environ.get("TZ", "UTC")
-                st.caption(f"Prochain cycle auto-learner : **{next_run}** ({tz_label})")
-        except Exception:
-            pass
 
 tab_knowledge, tab_synapses, tab_synthesis, tab_queries = st.tabs(
     ["🧩 Artefacts de connaissance", "⚡ Synapses", "📋 Synthèses hebdomadaires", "🔍 Historique requêtes"]
