@@ -278,6 +278,40 @@ class ChromaStore:
                 pass
         return results[:top_k]
 
+    def search_by_note_title(self, title: str, top_k: int = 10) -> list[dict]:
+        """Récupère les chunks d'une note dont le titre (métadonnée note_title)
+        contient la chaîne donnée (insensible à la casse, correspondance partielle)."""
+        results = []
+        seen_ids: set[str] = set()
+        for variant in {title, title.lower(), title.title(), title.upper()}:
+            try:
+                with self._lock:
+                    raw = self._collection.get(
+                        where={"note_title": {"$eq": variant}},
+                        include=["documents", "metadatas"],
+                        limit=top_k * 2,
+                    )
+                for chunk_id, doc, meta in zip(
+                    raw.get("ids", []),
+                    raw.get("documents", []),
+                    raw.get("metadatas", []),
+                ):
+                    if chunk_id not in seen_ids:
+                        seen_ids.add(chunk_id)
+                        results.append({
+                            "chunk_id": chunk_id,
+                            "text": doc,
+                            "metadata": meta,
+                            "score": 0.98,  # correspondance exacte de titre
+                        })
+            except Exception:
+                pass
+        # Fallback : recherche partielle par contenu du titre via keyword
+        if not results:
+            results = self.search_by_keyword(title, top_k=top_k)
+        return results[:top_k]
+
+
     def count(self) -> int:
         now = time.monotonic()
         if self._count_cache is not None and (now - self._count_ts) < _LIST_NOTES_TTL:

@@ -12,11 +12,52 @@ from src.config import settings
 from src.ui.services_cache import get_services
 from src.ui.theme import inject_theme, render_theme_toggle
 
+_PAGE_SIZE = 15  # nombre d'items par page
+
+
+@st.cache_data(ttl=60)
+def _list_md_files(directory: str) -> list[tuple[str, float]]:
+    """Retourne la liste triée (path_str, mtime) — mise en cache 60 s."""
+    d = Path(directory)
+    if not d.exists():
+        return []
+    entries = []
+    for p in d.rglob("*.md"):
+        try:
+            entries.append((str(p), p.stat().st_mtime))
+        except OSError:
+            pass
+    entries.sort(key=lambda x: x[1], reverse=True)
+    return entries
+
 
 @st.cache_data(ttl=120)
 def _read_md_file(path_str: str, mtime: float) -> str:
     """Lecture mise en cache du fichier Markdown (TTL 2 min, invalidée si mtime change)."""
     return Path(path_str).read_text(encoding="utf-8")
+
+
+def _paginate(key: str, items: list, page_size: int) -> list:
+    """Affiche une navigation par pages et retourne la tranche visible."""
+    total = len(items)
+    n_pages = max(1, (total + page_size - 1) // page_size)
+    page = st.session_state.get(key, 0)
+    page = max(0, min(page, n_pages - 1))
+
+    start = page * page_size
+    slice_ = items[start: start + page_size]
+
+    if n_pages > 1:
+        col_info, col_prev, col_next = st.columns([4, 1, 1])
+        col_info.caption(f"Page {page + 1} / {n_pages}  ({total} total)")
+        if col_prev.button("← Précédent", key=f"{key}_prev", disabled=(page == 0)):
+            st.session_state[key] = page - 1
+            st.rerun()
+        if col_next.button("Suivant →", key=f"{key}_next", disabled=(page == n_pages - 1)):
+            st.session_state[key] = page + 1
+            st.rerun()
+
+    return slice_
 
 _icon = str(Path(__file__).parent.parent / "static" / "favicon-32x32.png")
 st.set_page_config(page_title="Insights — ObsiRAG", page_icon=_icon, layout="wide")
@@ -33,9 +74,7 @@ tab_knowledge, tab_synapses, tab_synthesis, tab_queries = st.tabs(
 
 # ---- Artefacts de connaissance (vault/obsirag/insights/) ----
 with tab_knowledge:
-    insights_dir = settings.insights_dir
-    artifacts = sorted(insights_dir.rglob("*.md"), key=lambda p: p.stat().st_mtime, reverse=True) \
-        if insights_dir.exists() else []
+    artifacts = _list_md_files(str(settings.insights_dir))
 
     if not artifacts:
         st.info(
@@ -48,17 +87,15 @@ with tab_knowledge:
             f"{len(artifacts)} artefact(s) · "
             f"Visibles dans Obsidian sous `obsirag/insights/`"
         )
-        for art_path in artifacts[:30]:
-            mtime = art_path.stat().st_mtime
+        for path_str, mtime in _paginate("insights_page", artifacts, _PAGE_SIZE):
             date_str = datetime.fromtimestamp(mtime).strftime("%Y-%m-%d %H:%M")
-            with st.expander(f"📄 {art_path.stem} — {date_str}", expanded=False):
-                st.markdown(_read_md_file(str(art_path), mtime))
+            stem = Path(path_str).stem
+            with st.expander(f"📄 {stem} — {date_str}", expanded=False):
+                st.markdown(_read_md_file(path_str, mtime))
 
 # ---- Synapses (vault/obsirag/synapses/) ----
 with tab_synapses:
-    synapses_dir = settings.synapses_dir
-    synapses = sorted(synapses_dir.rglob("*.md"), key=lambda p: p.stat().st_mtime, reverse=True) \
-        if synapses_dir.exists() else []
+    synapses = _list_md_files(str(settings.synapses_dir))
 
     if not synapses:
         st.info(
@@ -71,11 +108,11 @@ with tab_synapses:
             f"{len(synapses)} synapse(s) découverte(s) · "
             f"Visibles dans Obsidian sous `obsirag/synapses/`"
         )
-        for syn_path in synapses[:50]:
-            mtime = syn_path.stat().st_mtime
+        for path_str, mtime in _paginate("synapses_page", synapses, _PAGE_SIZE):
             date_str = datetime.fromtimestamp(mtime).strftime("%Y-%m-%d %H:%M")
-            with st.expander(f"⚡ {syn_path.stem} — {date_str}", expanded=False):
-                st.markdown(_read_md_file(str(syn_path), mtime))
+            stem = Path(path_str).stem
+            with st.expander(f"⚡ {stem} — {date_str}", expanded=False):
+                st.markdown(_read_md_file(path_str, mtime))
 
 # ---- Synthèses hebdomadaires (vault/obsirag/synthesis/) ----
 with tab_synthesis:

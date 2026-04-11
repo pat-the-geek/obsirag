@@ -32,13 +32,42 @@ Exemples de requêtes :
 
 ---
 
+## Documentation technique
+
+- [docs/conversation-management.md](docs/conversation-management.md) — gestion des conversations, relances, note dominante, garde-fous anti hors-sujet et formatage des réponses
+- [docs/performances.md](docs/performances.md) — mesures de performances, comparaison MLX/Ollama et recommandations matérielles
+
+---
+
 ## Fonctionnalités
 
 ### Chat avec le coffre
 
 Interface conversationnelle connectée à **MLX-LM** (inférence locale Apple Silicon, sans serveur externe) et au moteur de recherche du coffre. Les requêtes sont traitées en combinant récupération sémantique et synthèse par l'IA.
 
+#### Comportement conversationnel
+
+Le chat conserve maintenant un **contexte conversationnel exploitable pour la récupération** et pas seulement pour la génération finale.
+
+- **Relances résolues dans le fil** : une question courte comme *"tu as plus de détail sur les objectifs"* ou *"et la durée de la mission ?"* est rattachée automatiquement au sujet précédent si ce sujet est identifiable dans l'échange
+- **Note principale** : pour les questions mono-sujet, ObsiRAG identifie la note la plus dominante sur le thème et la fait remonter en priorité dans le contexte envoyé au modèle
+- **Sources plus lisibles** : la réponse affiche désormais la **note principale** au-dessus des sources, et cette note est marquée comme *Principale* dans la liste détaillée
+- **Garde-fou anti hors-sujet** : si une requête mono-sujet ne retrouve aucun chunk lexicalement fiable, ObsiRAG répond directement *"Cette information n'est pas dans ton coffre."* au lieu de laisser partir le modèle sur un faux contexte
+
+#### Format des réponses
+
+Les réponses mono-sujet sont désormais structurées en Markdown avec des intertitres courts pour améliorer la lisibilité dans le chat :
+
+- `### Aperçu de ...`
+- `### Détails utiles`
+
+Les synthèses multi-thèmes conservent leur structure d'étude existante avec plusieurs chapitres.
+
 ![](<docs/Screen-Captures/Chat - IA - RAG depuis coffre.png>)
+
+#### Documentation dédiée
+
+Le mécanisme de gestion des conversations, des relances et de la note dominante est documenté dans [docs/conversation-management.md](docs/conversation-management.md).
 
 #### Diagrammes Mermaid
 

@@ -145,13 +145,43 @@ class IndexingPipeline:
     def _prepare_chunks(self, abs_path: Path, rel_path: str) -> list[Chunk]:
         """Parse et découpe une note sans l'envoyer à ChromaDB.
         Utilisé en mode accéléré pour accumuler les chunks avant envoi par lots."""
+        # Ignorer les notes trop volumineuses
+        try:
+            size = abs_path.stat().st_size
+        except OSError:
+            size = 0
+        if size > settings.max_note_size_bytes:
+            logger.warning(
+                f"Note ignorée (trop grande {size // 1024} KB > "
+                f"{settings.max_note_size_bytes // 1024} KB) : {rel_path}"
+            )
+            return []
         note = self._parser.parse(abs_path)
         if note is None:
             return []
         self._state[rel_path] = note.metadata.file_hash
-        return self._chunker.chunk_note(note.metadata, note.sections)
+        chunks = self._chunker.chunk_note(note.metadata, note.sections)
+        cap = settings.max_chunks_per_note
+        if len(chunks) > cap:
+            logger.warning(
+                f"Note tronquée à {cap} chunks (était {len(chunks)}) : {rel_path}"
+            )
+            chunks = chunks[:cap]
+        return chunks
 
     def _index_file(self, abs_path: Path, rel_path: str) -> None:
+        # Ignorer les notes trop volumineuses
+        try:
+            size = abs_path.stat().st_size
+        except OSError:
+            size = 0
+        if size > settings.max_note_size_bytes:
+            logger.warning(
+                f"Note ignorée (trop grande {size // 1024} KB > "
+                f"{settings.max_note_size_bytes // 1024} KB) : {rel_path}"
+            )
+            return
+
         note = self._parser.parse(abs_path)
         if note is None:
             return
@@ -161,6 +191,12 @@ class IndexingPipeline:
             self._chroma.delete_by_file(rel_path)
 
         chunks = self._chunker.chunk_note(note.metadata, note.sections)
+        cap = settings.max_chunks_per_note
+        if len(chunks) > cap:
+            logger.warning(
+                f"Note tronquée à {cap} chunks (était {len(chunks)}) : {rel_path}"
+            )
+            chunks = chunks[:cap]
         if chunks:
             self._chroma.add_chunks(chunks)
 

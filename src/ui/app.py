@@ -4,12 +4,14 @@ ObsiRAG — Page principale : Chat
 import base64
 import json
 import re
+import threading
 import time
 import unicodedata
 from datetime import datetime
 from pathlib import Path
 import streamlit as st
 import streamlit.components.v1 as components
+from loguru import logger
 
 # Cache module-level pour les comptages de fichiers (évite rglob toutes les 5s)
 _dir_count_cache: dict[str, tuple[int, float]] = {}
@@ -30,6 +32,7 @@ def _count_md_cached(path: Path, key: str) -> int:
 from src.ui.services_cache import get_services
 from src.ui.components.note_bridge_component import note_bridge as _note_bridge
 from src.ui.theme import inject_theme, render_theme_toggle
+from src.ai.web_search import enrich_sync, is_not_in_vault
 
 # ---- Configuration de la page ----
 _icon = str(Path(__file__).parent / "static" / "favicon-32x32.png")
@@ -45,6 +48,8 @@ svc = get_services()
 
 # Pending query (depuis sidebar historique ou suggestions) — capturé dès le début
 _pending = st.session_state.pop("_pending_query", None)
+# Pending web search — déclenché par le bouton "Rechercher sur le web"
+_pending_web = st.session_state.pop("_pending_web_query", None)
 
 
 # ---- Helpers rendu ----
@@ -119,6 +124,61 @@ def _open_note_cb(fp: str) -> None:
     st.session_state.viewing_note = fp
     st.session_state.note_nav_request = fp
     st.session_state._goto_note = True
+
+
+def _dedupe_sources_keep_primary(sources: list[dict]) -> list[dict]:
+    seen: dict[str, dict] = {}
+    for src in sources:
+        metadata = src.get("metadata") or {}
+        fp = metadata.get("file_path", "")
+        if not fp:
+            continue
+        current = seen.get(fp)
+        if current is None:
+            seen[fp] = src
+            continue
+        current_primary = bool((current.get("metadata") or {}).get("is_primary"))
+        src_primary = bool(metadata.get("is_primary"))
+        if src_primary and not current_primary:
+            seen[fp] = src
+    return list(seen.values())
+
+
+def _render_sources_block(sources: list[dict], expander_label: str, key_prefix: str) -> None:
+    unique_sources = _dedupe_sources_keep_primary(sources)
+    if not unique_sources:
+        return
+
+    primary_src = next(
+        (src for src in unique_sources if (src.get("metadata") or {}).get("is_primary")),
+        None,
+    )
+    if primary_src:
+        primary_meta = primary_src.get("metadata") or {}
+        primary_title = primary_meta.get("note_title", primary_meta.get("file_path", ""))
+        st.caption(f"🎯 Note principale : {primary_title}")
+
+    with st.expander(expander_label, expanded=False):
+        for i, src in enumerate(unique_sources):
+            _m = src.get("metadata") or {}
+            title = _m.get("note_title", _m.get("file_path", ""))
+            fp = _m.get("file_path", "")
+            primary_badge = " · Principale" if _m.get("is_primary") else ""
+            col_info, col_btn = st.columns([8, 1])
+            with col_info:
+                st.caption(
+                    f"**{title}**{primary_badge} · {_m.get('date_modified','')[:10]}"
+                    f" · Score `{src.get('score',0):.2f}`"
+                )
+            with col_btn:
+                if fp:
+                    st.button(
+                        "📖",
+                        key=f"{key_prefix}_{i}_{fp[-20:]}",
+                        help="Ouvrir la note",
+                        on_click=_open_note_cb,
+                        args=(fp,),
+                    )
 
 
 def _render_user_bubble(text: str) -> None:
@@ -609,28 +669,21 @@ for mi, msg in enumerate(st.session_state.messages):
                 f"⚡ {s['tokens']} tokens · TTFT {s['ttft']:.1f}s · "
                 f"{s['total']:.1f}s total · {s['tps']:.0f} tok/s"
             )
-        if msg.get("sources"):
-            with st.expander(f"📚 {len(msg['sources'])} source(s)", expanded=False):
-                for hi, src in enumerate(msg["sources"]):
-                    _m = src.get("metadata", {})
-                    title = _m.get("note_title", _m.get("file_path", ""))
-                    fp = _m.get("file_path", "")
-                    col_info, col_btn = st.columns([8, 1])
-                    with col_info:
-                        st.caption(
-                            f"**{title}** · {_m.get('date_modified','')[:10]}"
-                            f" · Score `{src.get('score',0):.2f}`"
-                        )
-                    with col_btn:
-                        if fp:
-                            st.button("📖", key=f"hist_src_{mi}_{hi}_{fp[-20:]}",
-                                      help="Ouvrir la note",
-                                      on_click=_open_note_cb, args=(fp,))
+        _hist_not_in_vault = msg.get("content", "").strip().lower().startswith(
+            "cette information n'est pas dans ton coffre"
+        )
+        if msg.get("sources") and not _hist_not_in_vault:
+            unique_hist = _dedupe_sources_keep_primary(msg["sources"])
+            _render_sources_block(
+                msg["sources"],
+                f"📚 {len(unique_hist)} source(s)",
+                f"hist_src_{mi}",
+            )
 
 # ---- Génération des suggestions dynamiques ----
 
 def _generate_suggestions() -> list[str]:
-    """Génère 4 questions, une par note tirée aléatoirement parmi les notes récentes."""
+    """Génère 4 questions, basées sur un extrait réel de 4 notes tirées aléatoirement parmi les 30 plus récentes."""
     import random
 
     fallback = [
@@ -651,12 +704,42 @@ def _generate_suggestions() -> list[str]:
 
         questions: list[str] = []
         for note in sample:
+            # Récupérer un extrait réel depuis ChromaDB plutôt que de n'utiliser que le titre
+            snippet = ""
+            try:
+                raw = svc.chroma._collection.get(
+                    where={"file_path": note["file_path"]},
+                    include=["documents"],
+                    limit=2,
+                )
+                docs = raw.get("documents") or []
+                if docs:
+                    snippet = " ".join(docs[:2])[:600]
+            except Exception:
+                pass
+
+            if snippet:
+                context_part = (
+                    f"Titre de la note : « {note['title']} »\n"
+                    f"Extrait : {snippet}"
+                )
+            else:
+                context_part = f"Titre de la note : « {note['title']} »"
+
             prompt = (
-                f"Voici le titre d'une note : « {note['title']} »\n\n"
-                "Génère UNE seule question courte et pertinente en français que l'utilisateur "
+                f"{context_part}\n\n"
+                "Génère UNE seule question courte en FRANÇAIS que l'utilisateur "
                 "pourrait poser à un assistant IA sur le contenu de cette note. "
-                "La question doit obligatoirement se terminer par '?'. "
-                "Réponds uniquement avec la question, rien d'autre."
+                "RÈGLES IMPORTANTES :\n"
+                "- La question doit OBLIGATOIREMENT être entièrement rédigée en français, "
+                "même si la note est en anglais ou dans une autre langue.\n"
+                "- La question doit être directement et entièrement répondable à partir de l'extrait fourni.\n"
+                "- Ne pose PAS de questions sur des données chiffrées précises (altitudes, dates, pourcentages, distances…) "
+                "sauf si ces valeurs apparaissent explicitement dans l'extrait.\n"
+                "- Préfère les formulations du type 'Quels sont mes apprentissages sur…', "
+                "'Que retiens-je de…', 'Qu'est-ce que mes notes disent sur…', 'Quels sont les points clés de…'.\n"
+                "- La question doit obligatoirement se terminer par '?'.\n"
+                "Réponds uniquement avec la question en français, rien d'autre."
             )
             answer = svc.llm.chat(
                 [{"role": "user", "content": prompt}],
@@ -668,7 +751,13 @@ def _generate_suggestions() -> list[str]:
             q = next((l.strip() for l in answer.splitlines() if l.strip()), "")
             if q:
                 q = q if q.endswith("?") else re.sub(r"[.!]+$", "", q) + "?"
-                questions.append(q)
+                # Rejeter si la question contient des mots anglais courants (pas en français)
+                _EN_MARKERS = {"what", "how", "why", "when", "where", "who", "which",
+                               "is", "are", "the", "of", "in", "and", "or", "do",
+                               "does", "can", "could", "would", "should"}
+                words_lower = set(re.sub(r"[^\w\s]", "", q.lower()).split())
+                if not (words_lower & _EN_MARKERS):
+                    questions.append(q)
 
         if len(questions) < 4:
             questions += fallback[len(questions):]
@@ -678,26 +767,100 @@ def _generate_suggestions() -> list[str]:
         return fallback
 
 
-# Suggestions de démarrage
-if not st.session_state.messages:
-    st.markdown("#### Exemples de questions")
-    cols = st.columns(2)
+# Suggestions de démarrage — générées en arrière-plan (non-bloquant)
+# @st.cache_resource persiste à travers tous les reruns Streamlit (process-level)
+@st.cache_resource
+def _get_sug_state() -> dict:
+    """Retourne un état partagé persistant pour la génération des suggestions."""
+    return {"lock": threading.Lock(), "result": None, "generating": False}
 
-    if "suggested_questions" not in st.session_state:
-        with st.spinner("Génération des suggestions…"):
-            st.session_state.suggested_questions = _generate_suggestions()
 
-    suggestions = st.session_state.suggested_questions
+def _ensure_suggestions_bg() -> None:
+    """Lance la génération des suggestions dans un thread daemon si pas déjà fait."""
+    state = _get_sug_state()
+    with state["lock"]:
+        if state["result"] is not None or state["generating"]:
+            return
+        state["generating"] = True
 
-    for i, sug in enumerate(suggestions):
-        with cols[i % 2]:
-            if st.button(sug, use_container_width=True, key=f"sug_{i}"):
-                st.session_state._pending_query = sug
-                st.rerun()
+    def _run() -> None:
+        try:
+            result = _generate_suggestions()
+        except Exception:
+            result = []
+        s = _get_sug_state()
+        with s["lock"]:
+            s["result"] = result
+            s["generating"] = False
+
+    threading.Thread(target=_run, daemon=True).start()
+
 
 pending = _pending
 
+# st.chat_input doit TOUJOURS être rendu avant tout st.rerun() pour éviter les erreurs de widget
 user_input = st.chat_input("Posez une question sur votre coffre…") or pending
+
+if not st.session_state.messages and not user_input:
+    _ensure_suggestions_bg()
+    state = _get_sug_state()
+    with state["lock"]:
+        _sug_ready = state["result"] is not None
+        _sug_result = list(state["result"]) if _sug_ready else []
+
+    st.markdown("#### Exemples de questions")
+    if _sug_ready:
+        cols = st.columns(2)
+        for i, sug in enumerate(_sug_result):
+            with cols[i % 2]:
+                if st.button(sug, use_container_width=True, key=f"sug_{i}"):
+                    st.session_state._pending_query = sug
+                    st.rerun()
+    else:
+        st.caption("⏳ Génération des suggestions…")
+        time.sleep(0.4)
+        st.rerun()
+
+# Recherche web déclenchée par le bouton (indépendamment du chat input)
+if _pending_web:
+    if not llm_ok:
+        st.error("Ollama n'est pas disponible.")
+        st.stop()
+    st.session_state.messages.append({"role": "user", "content": f"🌐 Recherche web : {_pending_web}"})
+    _render_user_bubble(f"🌐 Recherche web : {_pending_web}")
+    with st.chat_message("assistant"):
+        web_status = st.empty()
+        web_status.markdown("🌐 *Recherche web en cours…*")
+        web_answer, web_path, web_results, web_quality = enrich_sync(_pending_web, svc.llm)
+        if web_answer:
+            sources_md = "\n".join(
+                f"- [{r.get('title', r.get('href', ''))}]({r.get('href', '')})"
+                for r in web_results
+            )
+            web_full = (
+                f"🌐 **Résultat de la recherche web :**\n\n{web_answer}"
+                + (f"\n\n---\n{sources_md}" if sources_md else "")
+            )
+            web_status.markdown(web_full)
+            _q_badge = "✅ Bonne qualité" if web_quality else "⚠️ Résultat partiel"
+            if web_path:
+                st.caption(f"{_q_badge} · 💾 Insight sauvegardé : `{web_path.name}`")
+            else:
+                st.caption(_q_badge)
+            st.session_state.messages.append({
+                "role": "assistant",
+                "content": web_full,
+                "sources": [],
+                "stats": {},
+            })
+        else:
+            web_status.warning("🌐 Aucun résultat web trouvé pour cette question.")
+            st.session_state.messages.append({
+                "role": "assistant",
+                "content": "🌐 Aucun résultat web trouvé pour cette question.",
+                "sources": [],
+                "stats": {},
+            })
 
 if user_input:
     if not llm_ok:
@@ -794,24 +957,37 @@ if user_input:
             status.empty()
             sources = []
 
-        # Sources
-        if sources:
-            with st.expander(f"📚 {len(sources)} source(s)", expanded=False):
-                for i, src in enumerate(sources[:8]):
-                    _m = src.get("metadata") or {}
-                    title = _m.get("note_title", _m.get("file_path", ""))
-                    fp = _m.get("file_path", "")
-                    col_info, col_btn = st.columns([8, 1])
-                    with col_info:
-                        st.caption(
-                            f"**{title}** · {_m.get('date_modified','')[:10]}"
-                            f" · Score `{src.get('score',0):.2f}`"
-                        )
-                    with col_btn:
-                        if fp:
-                            st.button("📖", key=f"open_src_{i}_{fp[-20:]}",
-                                      help="Ouvrir la note",
-                                      on_click=_open_note_cb, args=(fp,))
+        status.caption(
+                f"✅ {token_count} tokens · "
+                f"TTFT {ttft_val:.1f}s · "
+                f"{total:.1f}s total · "
+                f"{tps_val:.0f} tok/s"
+            )
+
+        # Sources — dédupliquées par note (file_path), une seule entrée par note
+        # Ne pas afficher les sources seulement si la réponse est un sentinel pur.
+        _NOT_IN_VAULT = "cette information n'est pas dans ton coffre"
+        _SOFT_SENTINEL = "n'est pas consignée dans ton coffre"
+        _low = full_response.strip().lower().rstrip(".")
+        _response_is_sentinel = _low == _NOT_IN_VAULT or _low == _SOFT_SENTINEL
+        if sources and not _response_is_sentinel:
+            unique_sources = _dedupe_sources_keep_primary(sources)
+            _render_sources_block(
+                sources,
+                f"📚 {len(unique_sources)} source(s)",
+                "open_src",
+            )
+
+        # Bouton "Rechercher sur le web" — disponible après chaque réponse (hors résultat web)
+        _is_web_result = full_response.startswith("🌐 **Résultat")
+        if not _response_is_sentinel and not _is_web_result:
+            def _trigger_web_search(_q=user_input):
+                st.session_state["_pending_web_query"] = _q
+            st.button(
+                "🌐 Rechercher sur le web",
+                key=f"web_btn_{len(st.session_state.messages)}",
+                on_click=_trigger_web_search,
+            )
 
     # Sauvegarde dans l'historique et les stats sidebar
     st.session_state.messages.append({
@@ -822,6 +998,41 @@ if user_input:
     })
     if gen_stats:
         st.session_state.last_gen_stats = gen_stats
+
+    # Enrichissement web : si la réponse est "pas dans ton coffre",
+    # lancer une recherche DuckDuckGo synchrone et afficher la réponse dans le chat
+    if is_not_in_vault(full_response):
+        logger.info("UI decision: fallback web déclenché (sentinel pur détecté)")
+        with st.chat_message("assistant"):
+            web_status = st.empty()
+            web_status.markdown("🌐 *Information absente du coffre — recherche web en cours…*")
+            web_answer, web_path, web_results, web_quality = enrich_sync(user_input, svc.llm)
+
+            if web_answer:
+                sources_md = "\n".join(
+                    f"- [{r.get('title', r.get('href',''))}]({r.get('href','')})"
+                    for r in web_results
+                )
+                web_full = (
+                    f"🌐 **Résultat de la recherche web :**\n\n{web_answer}"
+                    + (f"\n\n---\n{sources_md}" if sources_md else "")
+                )
+                web_status.markdown(web_full)
+                _q_badge = "✅ Bonne qualité" if web_quality else "⚠️ Résultat partiel"
+                if web_path:
+                    st.caption(f"{_q_badge} · 💾 Insight sauvegardé : `{web_path.name}`")
+                else:
+                    st.caption(_q_badge)
+                st.session_state.messages.append({
+                    "role": "assistant",
+                    "content": web_full,
+                    "sources": [],
+                    "stats": {},
+                })
+            else:
+                web_status.warning("🌐 Aucun résultat web trouvé pour cette question.")
+    else:
+        logger.info("UI decision: réponse du coffre conservée (pas de fallback web)")
 
 if st.session_state.messages:
     col_clear, col_save = st.columns([1, 1])

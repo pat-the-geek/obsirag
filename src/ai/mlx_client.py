@@ -24,6 +24,8 @@ class MlxClient:
         self._tokenizer = None
         self._model_name = settings.mlx_chat_model
         self._load_lock = threading.Lock()
+        # Verrou global d'inférence : MLX/Metal ne supporte pas les appels GPU concurrents
+        self._infer_lock = threading.Lock()
         logger.info(f"MlxClient initialisé (chargement différé) — modèle : {self._model_name}")
 
     # ---- Gestion du cycle de vie du modèle ----
@@ -82,13 +84,14 @@ class MlxClient:
         parts: list[str] = []
         last: Any = None
 
-        for chunk in stream_generate(
-            self._model, self._tokenizer,
-            prompt=prompt, max_tokens=max_tokens, sampler=sampler,
-        ):
-            if chunk.text:
-                parts.append(chunk.text)
-            last = chunk
+        with self._infer_lock:
+            for chunk in stream_generate(
+                self._model, self._tokenizer,
+                prompt=prompt, max_tokens=max_tokens, sampler=sampler,
+            ):
+                if chunk.text:
+                    parts.append(chunk.text)
+                last = chunk
 
         answer = "".join(parts)
         if last:
@@ -111,13 +114,14 @@ class MlxClient:
         sampler = make_sampler(temp=temperature)
         last: Any = None
 
-        for chunk in stream_generate(
-            self._model, self._tokenizer,
-            prompt=prompt, max_tokens=max_tokens, sampler=sampler,
-        ):
-            if chunk.text:
-                yield chunk.text
-            last = chunk
+        with self._infer_lock:
+            for chunk in stream_generate(
+                self._model, self._tokenizer,
+                prompt=prompt, max_tokens=max_tokens, sampler=sampler,
+            ):
+                if chunk.text:
+                    yield chunk.text
+                last = chunk
 
         if last:
             self._track_tokens(last, operation)

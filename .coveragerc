@@ -1,0 +1,15 @@
+[run]
+source = src
+omit =
+    src/ui/*
+    src/graph/*
+    src/learning/*
+    src/services.py
+    src/logger.py
+
+[report]
+exclude_lines =
+    pragma: no cover
+    def __repr__
+    raise NotImplementedError
+    if TYPE_CHECKING:

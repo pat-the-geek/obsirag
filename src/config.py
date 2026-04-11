@@ -59,6 +59,13 @@ class Settings(BaseSettings):
     max_context_chunks: int = 6
     max_context_chars: int = 6000
     max_chunk_chars: int = 800
+    # Plafond de chunks par note — les notes ultra-larges (insights en boucle, etc.)
+    # sont tronquées à max_chunks_per_note pour éviter un crash SIGSEGV ChromaDB.
+    max_chunks_per_note: int = 300
+    # Taille maximale d'un fichier Markdown indexé (en octets). Au-delà : ignoré.
+    max_note_size_bytes: int = 500_000  # 500 KB
+    # Taille maximale d'un artefact insight/synapse avant création d'un nouveau fichier
+    max_insight_size_bytes: int = 200_000  # 200 KB
 
     # ---- Propriétés dérivées ----
 

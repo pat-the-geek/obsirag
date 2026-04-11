@@ -660,8 +660,10 @@ class AutoLearner:
             logger.warning(f"Auto-learner : aucune réponse QA pour '{title}', artefact non créé")
 
         # ---- Auto-renommage : titre représentatif via IA ----
+        # Restriction : uniquement les notes dans obsirag/ (insights, rapports internes…)
+        # Les notes personnelles (hors obsirag/) ne sont JAMAIS renommées.
         fp = note_meta.get("file_path", "")
-        if fp and not self._is_obsirag_generated(fp):
+        if fp and self._is_obsirag_generated(fp):
             abs_path = settings.vault / fp
             if abs_path.exists():
                 self._set_status(note=title, step="Suggestion d'un titre représentatif…")
@@ -1299,10 +1301,22 @@ class AutoLearner:
             ]
 
         path.write_text(content.rstrip() + "\n" + "\n".join(new_lines), encoding="utf-8")
-        logger.info(
-            f"Artefact mis à jour : {path.name} "
-            f"(+{len(qa_pairs)} Q&A → total {existing_count + len(qa_pairs)})"
-        )
+
+        # Vérifier la taille après écriture — si elle dépasse le plafond,
+        # archiver le fichier et signaler qu'un nouveau sera créé au prochain cycle.
+        current_size = path.stat().st_size
+        if current_size > settings.max_insight_size_bytes:
+            archive_path = path.with_stem(path.stem + f"_archive_{datetime.now().strftime('%Y%m%d_%H%M%S')}")
+            path.rename(archive_path)
+            logger.warning(
+                f"Artefact archivé (trop grand {current_size // 1024} KB > "
+                f"{settings.max_insight_size_bytes // 1024} KB) : {path.name} → {archive_path.name}"
+            )
+        else:
+            logger.info(
+                f"Artefact mis à jour : {path.name} "
+                f"(+{len(qa_pairs)} Q&A → total {existing_count + len(qa_pairs)})"
+            )
 
     # ---- Sauvegarde / création d'artefact ----
 
