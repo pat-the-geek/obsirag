@@ -141,6 +141,13 @@ def _clear_chat_draft() -> None:
     _persist_active_chat_thread()
 
 
+def _clear_chat_history_cb() -> None:
+    st.session_state.messages = []
+    st.session_state["chat_thread_draft"] = ""
+    st.session_state.pop("last_gen_stats", None)
+    _persist_active_chat_thread()
+
+
 _restore_active_chat_thread()
 
 
@@ -1198,12 +1205,12 @@ if user_input:
 if st.session_state.messages:
     col_clear, col_save = st.columns([1, 1])
     with col_clear:
-        if st.button("🗑 Effacer l'historique", key="clear_history", use_container_width=True):
-            st.session_state.messages = []
-            st.session_state["chat_thread_draft"] = ""
-            st.session_state.pop("last_gen_stats", None)
-            _persist_active_chat_thread()
-            st.rerun()
+        st.button(
+            "🗑 Effacer l'historique",
+            key="clear_history",
+            use_container_width=True,
+            on_click=_clear_chat_history_cb,
+        )
     with col_save:
         if st.button("💾 Sauvegarder cette conversation", key="save_conv", use_container_width=True):
             _save_conversation()
