@@ -342,6 +342,19 @@ class TestChromaNoteHelpers:
 
         assert notes == [{"file_path": "notes/source.md", "title": "Source", "wikilinks": ["Target"]}]
 
+    def test_list_recent_notes_orders_by_date_descending_and_limits(self, chroma):
+        from src.database.chroma_store import ChromaStore
+
+        chroma.list_notes = MagicMock(return_value=[
+            {"file_path": "old.md", "title": "Old", "date_modified": "2026-04-01T10:00:00"},
+            {"file_path": "missing.md", "title": "Missing", "date_modified": ""},
+            {"file_path": "new.md", "title": "New", "date_modified": "2026-04-03T10:00:00"},
+        ])
+
+        notes = ChromaStore.list_recent_notes(chroma, limit=2)
+
+        assert [note["file_path"] for note in notes] == ["new.md", "old.md"]
+
     def test_keyword_partial_match(self, chroma):
         chroma.add_chunks([_make_chunk(0)])
         results = chroma.search_by_keyword("numéro")

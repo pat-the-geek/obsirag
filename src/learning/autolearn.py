@@ -581,7 +581,7 @@ class AutoLearner:
                     processed_count += 1
 
             # Pass 2 — full-scan progressif : notes jamais traitées ou les plus anciennes
-            all_notes = self._chroma.list_notes()
+            all_notes = self._list_user_notes()
             processed_in_pass1 = {n["file_path"] for n in recent_filtered[: settings.autolearn_max_notes_per_run]}
             pending = self._fullscan_cycle_notes(
                 all_notes,

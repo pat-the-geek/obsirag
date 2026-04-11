@@ -87,6 +87,8 @@ class TestGraphBuilder:
         assert "Vault Test" in html
         assert "waitForNetwork" in html
         assert "obsirag-open-note" in html
+        assert "obsirag-open-obsidian" in html
+        assert "document.createElement('iframe')" in html
         fake_net.add_node.assert_called_once()
 
     def test_to_pyvis_html_colors_semantic_edges_in_green(self):

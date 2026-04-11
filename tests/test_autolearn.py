@@ -88,6 +88,10 @@ class TestAutoLearner:
         chroma.get_recently_modified.return_value = [
             {"file_path": "recent.md", "title": "Recent"},
         ]
+        chroma.list_user_notes.return_value = [
+            {"file_path": "recent.md", "title": "Recent"},
+            {"file_path": "older.md", "title": "Older"},
+        ]
         chroma.list_notes.return_value = [
             {"file_path": "recent.md", "title": "Recent"},
             {"file_path": "older.md", "title": "Older"},
@@ -121,7 +125,10 @@ class TestAutoLearner:
         assert process_note.call_count == 2
         mark_processed.assert_any_call("recent.md")
         mark_processed.assert_any_call("older.md")
-        discover_synapses.assert_called_once()
+        discover_synapses.assert_called_once_with([
+            {"file_path": "recent.md", "title": "Recent"},
+            {"file_path": "older.md", "title": "Older"},
+        ])
         assert learner.processing_status["active"] is False
 
     def test_process_note_saves_artifact_when_answer_is_strong(self):

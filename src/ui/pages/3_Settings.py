@@ -189,6 +189,7 @@ with tab_index:
     st.caption(f"Stocké dans le volume Docker `obsirag-app-data` — pas dans iCloud")
 
     notes = svc.chroma.list_notes()
+    recent_notes = svc.chroma.list_recent_notes(limit=20)
     user_notes = svc.chroma.list_user_notes()
     generated_notes = svc.chroma.list_generated_notes()
     c1, c2, c3 = st.columns(3)
@@ -197,7 +198,7 @@ with tab_index:
     c3.metric("Artefacts générés", len(generated_notes))
     st.caption(f"Chunks total : {svc.chroma.count()}")
 
-    if notes:
+    if recent_notes:
         st.markdown("#### 20 notes les plus récentes")
         import pandas as pd
         df = pd.DataFrame([
@@ -207,7 +208,7 @@ with tab_index:
                 "Modifié le": n["date_modified"][:10],
                 "Tags": ", ".join(n.get("tags", [])[:3]),
             }
-            for n in notes[:20]
+            for n in recent_notes
         ])
         st.dataframe(df, use_container_width=True, hide_index=True)
 

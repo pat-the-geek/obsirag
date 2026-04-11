@@ -311,6 +311,15 @@ class ChromaStore:
             key=lambda note: str(note.get("title") or Path(note["file_path"]).stem).lower(),
         )
 
+    def list_recent_notes(self, limit: int = 20) -> list[dict]:
+        notes = sorted(
+            self.list_notes(),
+            key=lambda note: str(note.get("date_modified") or ""),
+            reverse=True,
+        )
+        notes = sorted(notes, key=lambda note: not bool(note.get("date_modified")))
+        return notes[:limit] if limit > 0 else notes
+
     def list_user_notes(self) -> list[dict]:
         return [
             note for note in self.list_notes()

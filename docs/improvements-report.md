@@ -22,6 +22,8 @@ Ce document suit les ameliorations recentes appliquees a ObsiRAG, leur portee fo
 - Ajout de `list_generated_notes()` dans `ChromaStore` pour exposer explicitement les artefacts generes par ObsiRAG.
 - Simplification de la page Parametres, qui s'appuie maintenant sur cette API au lieu d'un calcul indirect a partir de toutes les notes.
 - Propagation continue des helpers Chroma explicites dans l'UI pour reduire les parcours bruts de listes de notes.
+- Ajout de `list_recent_notes()` pour exposer explicitement les notes les plus recentes sans tri ad hoc dans l'UI.
+- Le cycle normal de l'auto-learner repart maintenant d'une liste de notes utilisateur plutot que d'un `list_notes()` brut pour son full-scan et la decouverte de synapses.
 
 ### Rendu HTML et compatibilite Streamlit
 
@@ -29,6 +31,7 @@ Ce document suit les ameliorations recentes appliquees a ObsiRAG, leur portee fo
 - Introduction du helper partage `src/ui/html_embed.py`.
 - Debut d'extraction des generateurs HTML UI vers des helpers purs testables hors runtime Streamlit.
 - Extraction du rendu Mermaid du chat vers un helper dedie, en plus du visualiseur de note.
+- Renforcement de la verification du HTML Pyvis genere pour le graphe et de ses hooks d'interaction Obsidian/UI.
 - Rendu des documents HTML complets via `st.iframe` avec URL `data:` encodee en base64.
 - Execution des scripts inline via `st.html` pour les cas limites de navigation et synchronisation de theme.
 - Migration des pages Chat, Cerveau, Note et Theme vers ce point d'entree unique.
@@ -37,11 +40,12 @@ Ce document suit les ameliorations recentes appliquees a ObsiRAG, leur portee fo
 
 - Ajout de tests cibles pour la persistance des statistiques de generation des threads de chat.
 - Ajout de tests cibles pour `list_generated_notes()`.
+- Ajout de tests cibles pour `list_recent_notes()` et pour l'usage exclusif des notes utilisateur dans le cycle normal de l'auto-learner.
 - Ajout d'une verification minimale du HTML genere pour Mermaid et pour le graphe Pyvis.
 - Ajout de tests dedies pour `src/ui/html_embed.py`.
 - Ajout de tests dedies pour les helpers Mermaid du chat et du visualiseur.
-- Validation complete de la suite `pytest --no-cov` : 442 tests passes.
-- Validation complementaire ciblee sur les changements recents : 68 tests passes.
+- Validation complete de la suite `pytest --no-cov` : 452 tests passes.
+- Validation complementaire ciblee sur les changements recents : 121 tests passes.
 
 ### Exploitation locale
 
@@ -53,6 +57,7 @@ Ce document suit les ameliorations recentes appliquees a ObsiRAG, leur portee fo
 
 - `9711f0d` - Persist chat stats and modernize HTML embeds
 - `ba18d71` - Add tests for HTML embed helper
+- `98e59ea` - Extract Mermaid UI helpers and expand Chroma note APIs
 
 ## Impact produit
 
@@ -60,9 +65,10 @@ Ce document suit les ameliorations recentes appliquees a ObsiRAG, leur portee fo
 - Le suivi des conversations est plus coherent pour l'utilisateur.
 - Les ecrans d'administration et d'exploration s'appuient sur des API plus explicites.
 - Le risque de regression sur le rendu HTML integre est maintenant couvert par des tests dedies.
+- Le cycle d'auto-apprentissage evite mieux de rebalayer les artefacts internes comme s'il s'agissait de notes source.
 
-## Prochaines ameliorations naturelles
+## Prochaines ameliorations a poursuivre
 
-1. Ajouter une verification visuelle automatisee minimale sur les rendus Mermaid et graphe dans l'UI.
-2. Continuer a remplacer les parcours de notes ad hoc par des helpers Chroma specialises la ou il en reste.
-3. Documenter plus finement la strategie de hot reload Streamlit et les contournements retenus pour les imports.
+1. Etendre la verification visuelle minimale aux autres rendus UI encore non couverts directement par des helpers purs ou des assertions HTML.
+2. Continuer a remplacer les derniers parcours de notes ad hoc par des helpers Chroma specialises, notamment hors pages deja migrees.
+3. Completer la documentation hot reload Streamlit avec un protocole operatoire de diagnostic, purge de cache et redemarrage local.
