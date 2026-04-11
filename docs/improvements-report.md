@@ -14,6 +14,7 @@ Ce document suit les ameliorations recentes appliquees a ObsiRAG, leur portee fo
 ### Graphe et navigation dans le coffre
 
 - Stabilisation de la page Cerveau apres des erreurs d'import a chaud dans Streamlit en passant par un import de module plus robuste.
+- Durcissement complementaire de la page Cerveau face aux objets `ChromaStore` obsoletes conserves par le hot reload Streamlit.
 - Ajout de filtres par type de note et de resumes associes dans l'exploration du graphe.
 - Uniformisation de l'affichage des badges de type et des couleurs associees aux notes.
 
@@ -35,6 +36,8 @@ Ce document suit les ameliorations recentes appliquees a ObsiRAG, leur portee fo
 - Rendu des documents HTML complets via `st.iframe` avec URL `data:` encodee en base64.
 - Execution des scripts inline via `st.html` pour les cas limites de navigation et synchronisation de theme.
 - Migration des pages Chat, Cerveau, Note et Theme vers ce point d'entree unique.
+- Ajout d'une invalidation de cache dans `src/ui/services_cache.py` pour reconstruire automatiquement les services si le runtime conserve une instance Chroma incompatible.
+- Ajout de wrappers de compatibilite UI dans `src/ui/chroma_compat.py` pour tolerer temporairement des objets `chroma` ne portant pas encore les helpers recents lors d'un rechargement a chaud.
 
 ### Qualite et tests
 
@@ -44,20 +47,24 @@ Ce document suit les ameliorations recentes appliquees a ObsiRAG, leur portee fo
 - Ajout d'une verification minimale du HTML genere pour Mermaid et pour le graphe Pyvis.
 - Ajout de tests dedies pour `src/ui/html_embed.py`.
 - Ajout de tests dedies pour les helpers Mermaid du chat et du visualiseur.
+- Ajout de tests dedies pour `src/ui/services_cache.py` et `src/ui/chroma_compat.py` afin de couvrir le correctif de compatibilite runtime Streamlit.
 - Validation complete de la suite `pytest --no-cov` : 452 tests passes.
 - Validation complementaire ciblee sur les changements recents : 121 tests passes.
+- Validation ciblee du correctif de compatibilite runtime : 72 tests passes.
 
 ### Exploitation locale
 
 - Nettoyage du redemarrage local des services apres les changements UI.
 - Verification du redemarrage de l'application : reponse HTTP 200 sur `http://127.0.0.1:8501`.
 - Verification des logs de demarrage : pas de nouvelle erreur bloquante observee sur la derniere relance.
+- Verification complementaire apres reconstruction des services : la page Cerveau rebati correctement un graphe de 527 noeuds et 640 aretes apres redemarrage.
 
 ## Commits associes
 
 - `9711f0d` - Persist chat stats and modernize HTML embeds
 - `ba18d71` - Add tests for HTML embed helper
 - `98e59ea` - Extract Mermaid UI helpers and expand Chroma note APIs
+- `019b960` - Refine note listing helpers and autolearn filtering
 
 ## Impact produit
 
@@ -66,6 +73,7 @@ Ce document suit les ameliorations recentes appliquees a ObsiRAG, leur portee fo
 - Les ecrans d'administration et d'exploration s'appuient sur des API plus explicites.
 - Le risque de regression sur le rendu HTML integre est maintenant couvert par des tests dedies.
 - Le cycle d'auto-apprentissage evite mieux de rebalayer les artefacts internes comme s'il s'agissait de notes source.
+- Un hot reload Streamlit laisse maintenant moins facilement l'UI dans un etat incoherent quand des helpers Chroma ont evolue entre deux rechargements.
 
 ## Prochaines ameliorations a poursuivre
 

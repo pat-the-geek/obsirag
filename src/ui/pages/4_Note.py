@@ -9,6 +9,7 @@ from pathlib import Path
 
 import streamlit as st
 
+from src.ui.chroma_compat import get_backlinks, list_notes_sorted_by_title
 from src.config import settings
 from src.ui.html_embed import render_html_document, run_inline_script
 from src.ui.mermaid_embed import build_mermaid_html_document, estimate_mermaid_height
@@ -78,7 +79,7 @@ def render_note(content: str, anchor_lines: set[int] | None = None) -> None:
 # Sidebar — sélecteur de note
 # ---------------------------------------------------------------------------
 
-notes = svc.chroma.list_notes_sorted_by_title()
+notes = list_notes_sorted_by_title(svc.chroma)
 notes_by_path = {note["file_path"]: note for note in notes}
 
 with st.sidebar:
@@ -202,7 +203,7 @@ summary_cols = st.columns(4)
 summary_cols[0].metric("Sections", len(outline))
 summary_cols[1].metric("Diagrammes", count_mermaid_blocks(content))
 summary_cols[2].metric("Liens sortants", len(wikilinks))
-backlinks = svc.chroma.get_backlinks(selected_fp)
+backlinks = get_backlinks(svc.chroma, selected_fp)
 summary_cols[3].metric("Rétroliens", len(backlinks))
 
 if outline:

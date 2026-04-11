@@ -24,6 +24,25 @@ _init_error: Exception | None = None
 _step_queue: "queue.Queue[str]" = queue.Queue()
 
 
+def _is_services_instance_compatible(instance: ServiceManager) -> bool:
+  chroma = getattr(instance, "chroma", None)
+  required_chroma_methods = (
+    "list_notes_sorted_by_title",
+    "list_recent_notes",
+    "get_backlinks",
+  )
+  return chroma is not None and all(callable(getattr(chroma, name, None)) for name in required_chroma_methods)
+
+
+def _reset_cached_services() -> None:
+  global _services_instance, _init_thread, _init_error
+  with _lock:
+    _services_instance = None
+    _init_thread = None
+    _init_error = None
+    _init_done.clear()
+
+
 _COMPACT_CSS = """
 <style>
 /* Header transparent (conserve la hauteur pour le bouton sidebar) */
@@ -156,6 +175,13 @@ def get_services() -> ServiceManager:
 
     # Chemin rapide : init terminée avec succès
     if _services_instance is not None:
+      if not _is_services_instance_compatible(_services_instance):
+        _reset_cached_services()
+        st.session_state["_startup_steps"] = [
+          "Compatibilite runtime detectee — reconstruction des services…"
+        ]
+        _ensure_init_started()
+      else:
         _services_instance.signal_ui_active()
         st.session_state["_svc_ready"] = True
         return _services_instance

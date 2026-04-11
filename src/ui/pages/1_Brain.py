@@ -8,6 +8,7 @@ from pathlib import Path
 import streamlit as st
 
 from src.ui import brain_explorer
+from src.ui.chroma_compat import list_notes_sorted_by_title
 from src.ui.note_badges import get_note_type_options, prefix_note_label, render_note_badge
 from src.ui.services_cache import get_services
 from src.ui.components.note_bridge_component import note_bridge as _note_bridge
@@ -31,7 +32,7 @@ st.markdown(
 )
 st.caption("Carte interactive des connexions entre vos notes")
 
-notes = svc.chroma.list_notes_sorted_by_title()
+notes = list_notes_sorted_by_title(svc.chroma)
 
 if not notes:
     st.info("Aucune note indexée. Lancez une indexation depuis la page Chat.")
