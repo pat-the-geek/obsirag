@@ -11,6 +11,7 @@ import streamlit as st
 
 from src.config import settings
 from src.ui.html_embed import render_html_document, run_inline_script
+from src.ui.mermaid_embed import build_mermaid_html_document, estimate_mermaid_height
 from src.ui.note_viewer import (
     count_mermaid_blocks,
     extract_note_outline,
@@ -27,66 +28,6 @@ _icon = str(Path(__file__).parent.parent / "static" / "favicon-32x32.png")
 st.set_page_config(page_title="Note — ObsiRAG", page_icon=_icon, layout="wide")
 inject_theme()
 svc = get_services()
-
-# ---------------------------------------------------------------------------
-# Rendu Mermaid
-# ---------------------------------------------------------------------------
-
-def _mermaid_html(code: str, idx: int) -> str:
-    """HTML autonome pour un diagramme Mermaid rendu via CDN.
-
-    Le code est sérialisé en JSON pour éviter tout problème d'échappement
-    (balises HTML, backticks, guillemets dans le code Mermaid).
-    On utilise mermaid.render() explicitement plutôt que startOnLoad.
-    """
-    import json
-    code_json = json.dumps(code)   # serialisation sûre, gère tous les caractères spéciaux
-
-    return f"""<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
-  <style>
-    * {{ box-sizing: border-box; margin: 0; padding: 0; }}
-    body  {{ background: #16213E; padding: 12px; }}
-    #out  {{ display: flex; justify-content: center; align-items: flex-start; }}
-    #out svg {{ max-width: 100%; height: auto; }}
-    #err  {{ color: #F87171; font-family: monospace; font-size: 12px;
-             white-space: pre-wrap; padding: 8px;
-             background: #1f1f2e; border-radius: 4px; }}
-  </style>
-</head>
-<body>
-  <div id="out"></div>
-  <div id="err"></div>
-  <script>
-    (async function() {{
-      const code = {code_json};
-      try {{
-        mermaid.initialize({{
-          startOnLoad: false,
-          theme: 'dark',
-          securityLevel: 'loose',
-          fontFamily: 'ui-sans-serif, system-ui, sans-serif',
-          fontSize: 14
-        }});
-        const {{ svg }} = await mermaid.render('mg{idx}', code);
-        document.getElementById('out').innerHTML = svg;
-      }} catch(e) {{
-        document.getElementById('err').textContent =
-          '⚠ Erreur Mermaid\\n' + e.message + '\\n\\n' + code;
-      }}
-    }})();
-  </script>
-</body>
-</html>"""
-
-
-def _estimate_mermaid_height(code: str) -> int:
-    lines = len(code.strip().splitlines())
-    return max(200, min(600, 120 + lines * 22))
-
 
 # ---------------------------------------------------------------------------
 # Rendu Markdown + Mermaid
@@ -122,9 +63,9 @@ def render_note(content: str, anchor_lines: set[int] | None = None) -> None:
             st.markdown(before, unsafe_allow_html=True)
 
         mermaid_code = match.group(1).strip()
-        height = _estimate_mermaid_height(mermaid_code)
+        height = estimate_mermaid_height(mermaid_code)
         st.caption("📊 Diagramme Mermaid")
-        render_html_document(_mermaid_html(mermaid_code, idx), height=height)
+        render_html_document(build_mermaid_html_document(mermaid_code, idx), height=height)
         idx += 1
         last = match.end()
 
@@ -137,7 +78,7 @@ def render_note(content: str, anchor_lines: set[int] | None = None) -> None:
 # Sidebar — sélecteur de note
 # ---------------------------------------------------------------------------
 
-notes = sorted(svc.chroma.list_notes(), key=lambda n: n["title"].lower())
+notes = svc.chroma.list_notes_sorted_by_title()
 notes_by_path = {note["file_path"]: note for note in notes}
 
 with st.sidebar:
@@ -261,11 +202,8 @@ summary_cols = st.columns(4)
 summary_cols[0].metric("Sections", len(outline))
 summary_cols[1].metric("Diagrammes", count_mermaid_blocks(content))
 summary_cols[2].metric("Liens sortants", len(wikilinks))
-summary_cols[3].metric("Rétroliens", len([
-    n for n in notes
-    if note_abs.stem.lower() in [w.lower() for w in n.get("wikilinks", [])]
-    and n["file_path"] != selected_fp
-]))
+backlinks = svc.chroma.get_backlinks(selected_fp)
+summary_cols[3].metric("Rétroliens", len(backlinks))
 
 if outline:
     with st.expander("🧭 Structure de la note", expanded=False):
@@ -323,11 +261,6 @@ if wikilinks or True:
 
     with col_back:
         # Rétroliens : notes qui pointent vers cette note
-        backlinks = [
-            n for n in notes
-            if note_abs.stem.lower() in [w.lower() for w in n.get("wikilinks", [])]
-            and n["file_path"] != selected_fp
-        ]
         if backlinks:
             st.markdown("**🔙 Rétroliens**")
             for bl in backlinks[:10]:

@@ -37,6 +37,7 @@ Exemples de requêtes :
 - [docs/architecture.md](docs/architecture.md) — architecture actuelle, frontières entre modules, invariants et flux runtime
 - [docs/conversation-management.md](docs/conversation-management.md) — gestion des conversations, relances, note dominante, garde-fous anti hors-sujet et formatage des réponses
 - [docs/performances.md](docs/performances.md) — mesures de performances, comparaison MLX/Ollama et recommandations matérielles
+- [docs/improvements-report.md](docs/improvements-report.md) — rapport a jour des travaux d'amelioration, validations et impacts produit
 
 ---
 
@@ -94,6 +95,7 @@ Visualisation interactive du réseau de vos notes sous forme de graphe interacti
 
 - Par **dossier** (tous ou sélection multiple)
 - Par **tag** Obsidian (sélection multiple)
+- Par **type de note** (notes utilisateur, insights, synapses, synthèses, conversations...)
 - Sélecteur de note alphabétique pour ouvrir directement une note dans le visualiseur
 
 Le graphe est mis en cache 5 minutes et recalculé à la demande via le bouton 🔄. Il est également exporté en JSON (`data/graph/knowledge_graph.json`) pour un usage externe éventuel.

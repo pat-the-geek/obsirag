@@ -31,7 +31,7 @@ st.markdown(
 )
 st.caption("Carte interactive des connexions entre vos notes")
 
-notes = svc.chroma.list_notes()
+notes = svc.chroma.list_notes_sorted_by_title()
 
 if not notes:
     st.info("Aucune note indexée. Lancez une indexation depuis la page Chat.")
@@ -80,8 +80,7 @@ with st.sidebar:
     st.divider()
     st.markdown("### Ouvrir une note")
     # Tri alphabétique pour que la liste soit navigable
-    sorted_notes = sorted(notes, key=lambda n: n["title"].lower())
-    note_opts = {prefix_note_label(n["title"], n["file_path"]): n["file_path"] for n in sorted_notes}
+    note_opts = {prefix_note_label(n["title"], n["file_path"]): n["file_path"] for n in notes}
     selected_note_title = st.selectbox(
         "Note (ordre alphabétique)",
         options=list(note_opts.keys()),

@@ -69,6 +69,25 @@ Responsabilité : orchestration runtime uniquement.
 - garder les composants injectés une seule fois,
 - conserver le rôle de point d'entrée unique côté UI.
 
+### UI Streamlit, hot reload et stratégie d'import
+
+Responsabilité : garder les pages Streamlit robustes malgré les rechargements partiels du runtime.
+
+Constat pratique : en développement, Streamlit peut conserver un état de modules intermédiaire lors d'un hot reload. Cela peut produire des `ImportError` transitoires sur des imports nommés depuis des modules UI récemment modifiés, alors même qu'un import Python propre fonctionne hors runtime Streamlit.
+
+Conventions retenues :
+
+- pour les pages Streamlit qui consomment plusieurs helpers d'un même module UI en évolution rapide, préférer `from src.ui import module_x` puis `module_x.helper(...)` plutôt que multiplier les imports nommés,
+- extraire les générateurs HTML purs ou helpers de rendu testables dans de petits modules sans effet de bord de page,
+- éviter d'importer au niveau module des dépendances qui déclenchent du runtime lourd si elles ne sont utiles qu'au rendu,
+- centraliser les contournements Streamlit sensibles dans des helpers partagés comme `html_embed` ou les helpers Mermaid pour réduire la surface de reload fragile.
+
+Contournements déjà appliqués :
+
+- la page Cerveau s'appuie sur un import de module `brain_explorer` plutôt que sur plusieurs imports nommés,
+- les embeds HTML Streamlit sont centralisés dans `src/ui/html_embed.py`,
+- le rendu Mermaid du visualiseur de note est sorti dans un helper pur afin d'être testable sans charger toute la page Streamlit.
+
 ### `src/database/chroma_store.py`
 
 Responsabilité : unique façade d'accès à ChromaDB.

@@ -305,6 +305,12 @@ class ChromaStore:
         notes = self.get_notes_by_file_paths([file_path])
         return notes[0] if notes else None
 
+    def list_notes_sorted_by_title(self) -> list[dict]:
+        return sorted(
+            self.list_notes(),
+            key=lambda note: str(note.get("title") or Path(note["file_path"]).stem).lower(),
+        )
+
     def list_user_notes(self) -> list[dict]:
         return [
             note for note in self.list_notes()
@@ -315,6 +321,14 @@ class ChromaStore:
         return [
             note for note in self.list_notes()
             if ChromaStore._is_obsirag_generated_path(note["file_path"])
+        ]
+
+    def get_backlinks(self, file_path: str) -> list[dict]:
+        target_name = Path(file_path).stem.lower()
+        return [
+            note for note in self.list_notes()
+            if note["file_path"] != file_path
+            and target_name in [wikilink.lower() for wikilink in note.get("wikilinks", [])]
         ]
 
     # ---- Méta-informations ----

@@ -316,6 +316,32 @@ class TestChromaNoteHelpers:
             {"file_path": "folder/obsirag/synthesis/report.md", "title": "Report"},
         ]
 
+    def test_list_notes_sorted_by_title_uses_title_or_stem(self, chroma):
+        from src.database.chroma_store import ChromaStore
+
+        chroma.list_notes = MagicMock(return_value=[
+            {"file_path": "c.md", "title": "Zulu"},
+            {"file_path": "b/Beta.md"},
+            {"file_path": "a.md", "title": "Alpha"},
+        ])
+
+        notes = ChromaStore.list_notes_sorted_by_title(chroma)
+
+        assert [note["file_path"] for note in notes] == ["a.md", "b/Beta.md", "c.md"]
+
+    def test_get_backlinks_returns_notes_linking_to_target_stem(self, chroma):
+        from src.database.chroma_store import ChromaStore
+
+        chroma.list_notes = MagicMock(return_value=[
+            {"file_path": "notes/source.md", "title": "Source", "wikilinks": ["Target"]},
+            {"file_path": "notes/other.md", "title": "Other", "wikilinks": ["Else"]},
+            {"file_path": "notes/Target.md", "title": "Target", "wikilinks": []},
+        ])
+
+        notes = ChromaStore.get_backlinks(chroma, "notes/Target.md")
+
+        assert notes == [{"file_path": "notes/source.md", "title": "Source", "wikilinks": ["Target"]}]
+
     def test_keyword_partial_match(self, chroma):
         chroma.add_chunks([_make_chunk(0)])
         results = chroma.search_by_keyword("numéro")
