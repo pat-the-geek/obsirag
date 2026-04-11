@@ -355,6 +355,38 @@ class TestChromaNoteHelpers:
 
         assert [note["file_path"] for note in notes] == ["new.md", "old.md"]
 
+    def test_count_notes_returns_list_notes_length(self, chroma):
+        from src.database.chroma_store import ChromaStore
+
+        chroma.list_notes = MagicMock(return_value=[
+            {"file_path": "a.md"},
+            {"file_path": "b.md"},
+            {"file_path": "c.md"},
+        ])
+
+        assert ChromaStore.count_notes(chroma) == 3
+
+    def test_list_note_folders_returns_sorted_unique_parents(self, chroma):
+        from src.database.chroma_store import ChromaStore
+
+        chroma.list_notes = MagicMock(return_value=[
+            {"file_path": "notes/a.md"},
+            {"file_path": "archives/b.md"},
+            {"file_path": "notes/c.md"},
+        ])
+
+        assert ChromaStore.list_note_folders(chroma) == ["archives", "notes"]
+
+    def test_list_note_tags_returns_sorted_unique_tags(self, chroma):
+        from src.database.chroma_store import ChromaStore
+
+        chroma.list_notes = MagicMock(return_value=[
+            {"file_path": "notes/a.md", "tags": ["python", "ia"]},
+            {"file_path": "notes/b.md", "tags": ["ia", "ml"]},
+        ])
+
+        assert ChromaStore.list_note_tags(chroma) == ["ia", "ml", "python"]
+
     def test_keyword_partial_match(self, chroma):
         chroma.add_chunks([_make_chunk(0)])
         results = chroma.search_by_keyword("numéro")

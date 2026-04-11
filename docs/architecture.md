@@ -86,7 +86,32 @@ Contournements déjà appliqués :
 
 - la page Cerveau s'appuie sur un import de module `brain_explorer` plutôt que sur plusieurs imports nommés,
 - les embeds HTML Streamlit sont centralisés dans `src/ui/html_embed.py`,
-- le rendu Mermaid du visualiseur de note est sorti dans un helper pur afin d'être testable sans charger toute la page Streamlit.
+- le rendu Mermaid du visualiseur de note est sorti dans un helper pur afin d'être testable sans charger toute la page Streamlit,
+- `src/ui/services_cache.py` invalide désormais le singleton si le runtime conserve une instance `chroma` ne portant plus les helpers attendus,
+- `src/ui/chroma_compat.py` sert de filet de sécurité transitoire pour les pages qui peuvent survivre à un hot reload partiel.
+
+### Protocole opératoire hot reload Streamlit
+
+Quand une page UI casse juste après un refactor alors que l'import Python direct fonctionne, suivre cette séquence dans cet ordre :
+
+1. vérifier si le code source expose bien le helper ou symbole attendu via une lecture directe du fichier concerné,
+2. confirmer si l'erreur n'existe qu'en runtime Streamlit en comparant avec un import Python hors UI,
+3. consulter `logs/obsirag.log` pour distinguer une vraie régression source d'un objet singleton obsolète encore en mémoire,
+4. si l'erreur pointe un helper Chroma ou UI récemment ajouté, privilégier la reconstruction des services plutôt qu'un débogage métier prématuré.
+
+Procédure locale recommandée :
+
+1. arrêter proprement l'application via `./stop.sh`,
+2. relancer via `./start.sh`,
+3. vérifier la santé HTTP sur `http://127.0.0.1:8501`,
+4. relire les dernières lignes de `logs/obsirag.log`,
+5. recharger seulement ensuite la page Streamlit en cause.
+
+Signaux utiles de diagnostic :
+
+- si l'import Python direct voit la nouvelle méthode mais que Streamlit signale encore `AttributeError`, suspecter d'abord un objet mis en cache,
+- si `services_cache` déclenche une reconstruction et qu'un second rendu passe, conserver la correction côté compatibilité plutôt qu'ajouter un contournement spécifique de page,
+- si l'erreur persiste après redémarrage complet, traiter alors le problème comme une régression source classique.
 
 ### `src/database/chroma_store.py`
 

@@ -8,7 +8,7 @@ from datetime import datetime
 import streamlit as st
 
 from src.config import settings
-from src.ui.chroma_compat import list_recent_notes
+from src.ui.chroma_compat import count_notes, list_recent_notes
 from src.ui.services_cache import get_services
 from src.ui.theme import inject_theme, render_theme_toggle
 
@@ -189,12 +189,11 @@ with tab_index:
     st.markdown("### État de l'index vectoriel")
     st.caption(f"Stocké dans le volume Docker `obsirag-app-data` — pas dans iCloud")
 
-    notes = svc.chroma.list_notes()
     recent_notes = list_recent_notes(svc.chroma, limit=20)
     user_notes = svc.chroma.list_user_notes()
     generated_notes = svc.chroma.list_generated_notes()
     c1, c2, c3 = st.columns(3)
-    c1.metric("Notes indexées", len(notes))
+    c1.metric("Notes indexées", count_notes(svc.chroma))
     c2.metric("Notes utilisateur", len(user_notes))
     c3.metric("Artefacts générés", len(generated_notes))
     st.caption(f"Chunks total : {svc.chroma.count()}")

@@ -8,7 +8,7 @@ from pathlib import Path
 import streamlit as st
 
 from src.ui import brain_explorer
-from src.ui.chroma_compat import list_notes_sorted_by_title
+from src.ui.chroma_compat import list_note_folders, list_note_tags, list_notes_sorted_by_title
 from src.ui.note_badges import get_note_type_options, prefix_note_label, render_note_badge
 from src.ui.services_cache import get_services
 from src.ui.components.note_bridge_component import note_bridge as _note_bridge
@@ -49,14 +49,14 @@ with st.sidebar:
 
     st.markdown("### Filtres")
 
-    folders = sorted({str(Path(n["file_path"]).parent) for n in notes})
+    folders = list_note_folders(svc.chroma)
     selected_folders = st.multiselect(
         "Dossiers",
         options=["Tous"] + folders,
         default=["Tous"],
     )
 
-    all_tags = sorted({t for n in notes for t in n.get("tags", []) if t})
+    all_tags = list_note_tags(svc.chroma)
     selected_tags = st.multiselect("Tags", options=all_tags)
     type_options = get_note_type_options()
     type_labels = {option["label"]: option["key"] for option in type_options}

@@ -4,11 +4,23 @@ from types import SimpleNamespace
 
 import pytest
 
-from src.ui.chroma_compat import get_backlinks, list_notes_sorted_by_title, list_recent_notes
+from src.ui.chroma_compat import (
+    count_notes,
+    get_backlinks,
+    list_note_folders,
+    list_note_tags,
+    list_notes_sorted_by_title,
+    list_recent_notes,
+)
 
 
 @pytest.mark.unit
 class TestChromaCompat:
+    def test_count_notes_uses_helper_when_available(self):
+        chroma = SimpleNamespace(count_notes=lambda: 12)
+
+        assert count_notes(chroma) == 12
+
     def test_list_notes_sorted_by_title_uses_helper_when_available(self):
         chroma = SimpleNamespace(list_notes_sorted_by_title=lambda: [{"file_path": "a.md", "title": "A"}])
 
@@ -38,6 +50,17 @@ class TestChromaCompat:
         notes = list_recent_notes(chroma, limit=2)
 
         assert [note["file_path"] for note in notes] == ["new.md", "old.md"]
+
+    def test_list_note_folders_and_tags_fall_back_to_raw_notes(self):
+        chroma = SimpleNamespace(
+            list_notes=lambda: [
+                {"file_path": "notes/a.md", "tags": ["python", "ia"]},
+                {"file_path": "archive/b.md", "tags": ["ia"]},
+            ]
+        )
+
+        assert list_note_folders(chroma) == ["archive", "notes"]
+        assert list_note_tags(chroma) == ["ia", "python"]
 
     def test_get_backlinks_falls_back_to_wikilink_scan(self):
         chroma = SimpleNamespace(

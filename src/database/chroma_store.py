@@ -320,6 +320,15 @@ class ChromaStore:
         notes = sorted(notes, key=lambda note: not bool(note.get("date_modified")))
         return notes[:limit] if limit > 0 else notes
 
+    def count_notes(self) -> int:
+        return len(self.list_notes())
+
+    def list_note_folders(self) -> list[str]:
+        return sorted({str(Path(note["file_path"]).parent) for note in self.list_notes()})
+
+    def list_note_tags(self) -> list[str]:
+        return sorted({tag for note in self.list_notes() for tag in note.get("tags", []) if tag})
+
     def list_user_notes(self) -> list[dict]:
         return [
             note for note in self.list_notes()
