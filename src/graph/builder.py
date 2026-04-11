@@ -15,7 +15,7 @@ import json
 import os
 import threading
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 import networkx as nx
@@ -74,9 +74,10 @@ class GraphBuilder:
                 folder_index[folder] = len(folder_index)
 
             palette = _FOLDER_PALETTE[folder_index[folder] % len(_FOLDER_PALETTE)]
+            title = note.get("title") or Path(fp).stem
             g.add_node(
                 fp,
-                label=note["title"],
+                label=title,
                 title=self._node_tooltip(note),
                 date_modified=note.get("date_modified", ""),
                 tags=note.get("tags", []),
@@ -86,7 +87,10 @@ class GraphBuilder:
             )
 
         note_lookup = {n["file_path"]: n for n in notes}
-        title_lookup = {n["title"].lower(): n["file_path"] for n in notes}
+        title_lookup = {
+            (n.get("title") or Path(n["file_path"]).stem).lower(): n["file_path"]
+            for n in notes
+        }
 
         # 2. Arêtes structurelles (wikilinks)
         for note in notes:
@@ -110,7 +114,7 @@ class GraphBuilder:
             g.nodes[node]["size"] = max(10, min(40, 10 + degree * 2))
 
         self._graph = g
-        self._last_build = datetime.utcnow()
+        self._last_build = datetime.now(timezone.utc)
         self._save_json(g)
         logger.info(
             f"Graphe construit : {g.number_of_nodes()} nœuds, "
@@ -233,7 +237,7 @@ div.vis-network div.vis-navigation div.vis-button:hover {
 """
         import json as _json
         vault_name_js = _json.dumps(obsidian_vault or settings.obsidian_vault)
-        fixes = """
+        fixes = r"""
 <script>
 (function waitForNetwork() {
     if (typeof network === 'undefined') { setTimeout(waitForNetwork, 100); return; }
@@ -360,8 +364,9 @@ div.vis-network div.vis-navigation div.vis-button:hover {
         tags = ", ".join(note.get("tags", [])[:5])
         date = note.get("date_modified", "")[:10]
         fp = _html.escape(note.get("file_path", ""), quote=True)
+        title = _html.escape(note.get("title") or Path(fp).stem or "Note", quote=False)
         return (
-            f"<b>{note['title']}</b><br>"
+            f"<b>{title}</b><br>"
             f"📅 {date}<br>"
             f"{'🏷 ' + tags + '<br>' if tags else ''}"
             f'<div style="margin-top:8px;display:flex;gap:6px;">'
@@ -378,6 +383,7 @@ div.vis-network div.vis-navigation div.vis-button:hover {
         try:
             data = nx.node_link_data(graph)
             out = settings.graph_dir / "knowledge_graph.json"
+            out.parent.mkdir(parents=True, exist_ok=True)
             out.write_text(json.dumps(data, default=str, ensure_ascii=False), encoding="utf-8")
         except Exception as exc:
             logger.warning(f"Sauvegarde du graphe JSON échouée : {exc}")

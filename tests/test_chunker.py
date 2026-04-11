@@ -186,6 +186,17 @@ class TestChunkerLongSections:
             assert chunk.note_title == "Ma Note"
             assert chunk.file_hash == "xyz"
 
+    def test_chunk_note_serializes_entity_metadata(self):
+        chunker = TextChunker(chunk_size=10, overlap=2)
+        meta = _make_metadata(
+            entities=NoteEntities(persons=["Alice"], orgs=["ACME"], locations=["Paris"], misc=["MLX"])
+        )
+        chunks = chunker.chunk_note(meta, [_make_section(_words(12))])
+        assert chunks[0].ner_persons == "Alice"
+        assert chunks[0].ner_orgs == "ACME"
+        assert chunks[0].ner_locations == "Paris"
+        assert chunks[0].ner_misc == "MLX"
+
 
 # ---------------------------------------------------------------------------
 # Tests TextChunker — méthodes internes
@@ -217,3 +228,20 @@ class TestChunkerInternals:
         paras = [_words(4), _words(4), _words(4)]
         result = chunker._merge_paragraphs(paras)
         assert len(result) >= 2
+
+    def test_merge_paragraphs_reuses_overlap_words(self):
+        chunker = TextChunker(chunk_size=5, overlap=2)
+        result = chunker._merge_paragraphs([_words(3), _words(3), _words(3)])
+        assert len(result) >= 2
+        second_words = result[1].split()
+        assert second_words[0] in result[0].split()[-2:]
+
+    def test_split_section_returns_empty_for_blank_content(self):
+        chunker = TextChunker(chunk_size=5, overlap=1)
+        assert chunker._split_section(_make_section("   ")) == []
+
+    def test_sliding_window_returns_single_chunk_when_exact_size(self):
+        chunker = TextChunker(chunk_size=5, overlap=2)
+        result = chunker._sliding_window([str(i) for i in range(5)])
+        assert result[0] == "0 1 2 3 4"
+        assert result[-1] == "3 4"

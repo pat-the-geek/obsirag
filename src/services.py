@@ -8,6 +8,8 @@ from loguru import logger
 
 from src.config import settings
 from src.logger import configure_logging
+from src.metrics import MetricsRecorder
+from src.storage.json_state import JsonStateStore
 
 # Durée d'inactivité UI (en secondes) avant déchargement automatique du modèle.
 # Le watchdog vérifie toutes les 30 s — mettre > 30 pour un déclenchement fiable.
@@ -25,6 +27,8 @@ class ServiceManager:
         _step = on_step or (lambda msg: None)
         self.indexing_status = {"running": False, "processed": 0, "total": 0, "current": ""}
         self._last_ui_activity: float = 0.0
+        self.metrics = MetricsRecorder(lambda: settings.data_dir / "stats" / "metrics.json")
+        self._persist_indexing_status()
 
         configure_logging(settings.log_level, settings.log_dir)
         logger.info("=== Démarrage ObsiRAG ===")
@@ -43,7 +47,7 @@ class ServiceManager:
 
         _step("🔗 Initialisation du pipeline RAG…")
         from src.ai.rag import RAGPipeline
-        self.rag = RAGPipeline(self.chroma, self.llm)
+        self.rag = RAGPipeline(self.chroma, self.llm, metrics=self.metrics)
 
         _step("🗂️ Initialisation du pipeline d'indexation…")
         from src.indexer.pipeline import IndexingPipeline
@@ -55,7 +59,7 @@ class ServiceManager:
 
         _step("📚 Initialisation de l'auto-learner…")
         from src.learning.autolearn import AutoLearner
-        self.learner = AutoLearner(self.chroma, self.rag, self.indexer, ui_active_fn=self.is_ui_active)
+        self.learner = AutoLearner(self.chroma, self.rag, self.indexer, ui_active_fn=self.is_ui_active, metrics=self.metrics)
 
         _step("👁️ Démarrage du watcher de coffre…")
         from src.vault.watcher import VaultWatcher
@@ -142,13 +146,24 @@ class ServiceManager:
         t.start()
         logger.info("Watchdog modèle démarré")
 
+    def _status_store(self) -> JsonStateStore:
+        return JsonStateStore(settings.data_dir / "stats" / "service_manager_status.json")
+
+    def _persist_indexing_status(self) -> None:
+        try:
+            self._status_store().save(self.indexing_status, ensure_ascii=False)
+        except Exception:
+            pass
+
     def _initial_index(self) -> None:
         def _on_progress(current: str, processed: int, total: int) -> None:
             self.indexing_status.update({"running": True, "processed": processed, "total": total, "current": current})
+            self._persist_indexing_status()
 
         try:
             logger.info("Indexation initiale du coffre…")
             self.indexing_status = {"running": True, "processed": 0, "total": 0, "current": ""}
+            self._persist_indexing_status()
             stats = self.indexer.index_vault(on_progress=_on_progress)
             logger.info(
                 f"Indexation terminée — "
@@ -159,3 +174,4 @@ class ServiceManager:
             logger.error(f"Erreur lors de l'indexation initiale : {exc}")
         finally:
             self.indexing_status["running"] = False
+            self._persist_indexing_status()

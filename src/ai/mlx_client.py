@@ -1,6 +1,6 @@
 """
 Client MLX-LM — génération locale sans serveur via Apple MLX (Apple Silicon).
-Interface identique à OllamaClient : chat(), stream(), is_available()
+Interface commune du runtime LLM : chat(), stream(), is_available()
 
 Le modèle est chargé à la demande (chargement différé) et peut être déchargé
 quand il n'est pas utilisé pour libérer la mémoire GPU/Metal.

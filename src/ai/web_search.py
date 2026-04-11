@@ -23,7 +23,7 @@ from src.config import settings
 
 _SENTINEL = "cette information n'est pas dans ton coffre"
 _CHAT_PREFIX_RE = re.compile(
-    r"^\s*(?:parle(?:-?moi)?\s+de|dis(?:-?moi)?\s+.+?\s+sur|dis(?:-?moi)?\s+.+?\s+de|"
+    r"^\s*(?:parle(?:[-\s]?moi)?\s+de|dis(?:[-\s]?moi)?\s+.+?\s+sur|dis(?:[-\s]?moi)?\s+.+?\s+de|"
     r"que\s+sais[- ]?tu\s+de|qu['’]est[- ]?ce\s+que|c['’]est\s+quoi|qui\s+est|"
     r"que\s+peux[- ]?tu\s+me\s+dire\s+de)\s+",
     re.I,
@@ -174,6 +174,12 @@ def _build_search_query(user_question: str, llm) -> str:
                 f"WebSearch requête désambiguïsée : {disambiguated_query!r} (original: {user_question[:60]!r})"
             )
             return disambiguated_query
+        focus_terms = _extract_focus_terms(normalized_question)
+        if len(focus_terms) == 1 and len(normalized_question.split()) <= 2:
+            logger.info(
+                f"WebSearch requête courte conservée : {normalized_question!r} (original: {user_question[:60]!r})"
+            )
+            return normalized_question
         q = llm.chat(
             [{"role": "user", "content": prompt}],
             temperature=0.0,
@@ -186,7 +192,6 @@ def _build_search_query(user_question: str, llm) -> str:
         _META_WORDS = {"recherche", "chercher", "trouver", "comment", "search", "find",
                        "look", "how", "to", "do"}
         first_words = {w.lower() for w in q.split()[:3]}
-        focus_terms = _extract_focus_terms(normalized_question)
         is_short_but_valid = len(q) >= 3 and len(q.split()) <= 3 and any(term in q.lower() for term in focus_terms)
         if (len(q) < 5 and not is_short_but_valid) or first_words & _META_WORDS:
             fallback_query = normalized_question if focus_terms else user_question
@@ -222,6 +227,8 @@ def _ddg_search(query: str, max_results: int = 5) -> list[dict]:
 
     try:
         from duckduckgo_search import DDGS
+        best_results: list[dict] = []
+        best_score = -1
         for candidate_query in candidate_queries:
             with DDGS() as ddgs:
                 # region=fr-fr : priorité aux sources francophones/européennes
@@ -237,15 +244,47 @@ def _ddg_search(query: str, max_results: int = 5) -> list[dict]:
                 if _is_latin_text(r.get('title', '')) and _is_latin_text(r.get('body', ''))
             ]
             result = filtered[:max_results]
+            score = _score_search_results(query, candidate_query, result)
             logger.info(
-                f"WebSearch DDG: requête={candidate_query!r} {len(raw)} résultats bruts, {len(result)} après filtrage"
+                f"WebSearch DDG: requête={candidate_query!r} {len(raw)} résultats bruts, {len(result)} après filtrage, score={score}"
             )
-            if result:
-                return result
-        return []
+            if score > best_score:
+                best_score = score
+                best_results = result
+        return best_results
     except Exception as exc:
         logger.warning(f"WebSearch DDG error: {exc}")
         return []
+
+
+def _score_search_results(original_query: str, candidate_query: str, results: list[dict]) -> int:
+    if not results:
+        return -1
+
+    focus_terms = _extract_focus_terms(original_query)
+    corpus = " ".join(
+        f"{item.get('title', '')} {item.get('body', '')} {item.get('href', '')}"
+        for item in results
+    ).lower()
+    overlap = sum(1 for term in focus_terms if term in corpus)
+
+    encyclopedic_hits = sum(
+        1
+        for item in results
+        if any(marker in f"{item.get('title', '')} {item.get('href', '')}".lower() for marker in (
+            "wikipedia",
+            "britannica",
+            "larousse",
+            "universalis",
+        ))
+    )
+    candidate_bonus = 2 if "wikipedia" in candidate_query.lower() else 0
+    title_hits = sum(
+        1
+        for item in results
+        if any(term in (item.get('title', '') or '').lower() for term in focus_terms)
+    )
+    return overlap * 10 + encyclopedic_hits * 4 + title_hits * 2 + min(len(results), 3) + candidate_bonus
 
 
 # ---------------------------------------------------------------------------
@@ -335,6 +374,10 @@ def _check_quality(query: str, answer: str, results: list[dict], llm) -> bool:
             )
             return False
 
+    if _has_authoritative_exact_match(query, results):
+        logger.info(f"WebSearch qualité acceptée par heuristique autoritative pour : {query!r}")
+        return True
+
     snippets = _build_snippets(results)
     prompt = (
         f"Question posée : « {query} »\n\n"
@@ -357,6 +400,23 @@ def _check_quality(query: str, answer: str, results: list[dict], llm) -> bool:
     except Exception as exc:
         logger.warning(f"WebSearch quality check échoué : {exc}")
         return True  # en cas d'erreur, on affiche quand même
+
+
+def _has_authoritative_exact_match(query: str, results: list[dict]) -> bool:
+    focus_terms = _extract_focus_terms(query)
+    if len(focus_terms) != 1:
+        return False
+
+    subject = focus_terms[0]
+    authoritative_markers = ("wikipedia.org", "britannica.com", "larousse.fr", "universalis.fr")
+    for result in results:
+        title = (result.get("title") or "").lower()
+        href = (result.get("href") or "").lower()
+        if not any(marker in href for marker in authoritative_markers):
+            continue
+        if subject in title:
+            return True
+    return False
 
 
 def enrich_sync(query: str, llm) -> tuple[str | None, Path | None, list[dict], bool]:

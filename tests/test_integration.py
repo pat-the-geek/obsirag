@@ -40,6 +40,8 @@ def _make_settings(tmp_path: Path) -> MagicMock:
     s.index_state_file.parent.mkdir(parents=True)
     s.chunk_size_words = 50
     s.chunk_overlap_words = 10
+    s.max_note_size_bytes = 500_000
+    s.max_chunks_per_note = 300
     return s
 
 

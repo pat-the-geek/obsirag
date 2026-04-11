@@ -2,10 +2,6 @@
 source = src
 omit =
     src/ui/*
-    src/graph/*
-    src/learning/*
-    src/services.py
-    src/logger.py
 
 [report]
 exclude_lines =

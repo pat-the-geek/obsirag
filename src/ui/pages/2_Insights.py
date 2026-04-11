@@ -9,6 +9,14 @@ from pathlib import Path
 import streamlit as st
 
 from src.config import settings
+from src.ui.insights_browser import (
+    build_month_options,
+    build_query_day_options,
+    filter_markdown_entries,
+    filter_queries,
+    load_query_history,
+)
+from src.ui.note_badges import render_note_badge
 from src.ui.services_cache import get_services
 from src.ui.theme import inject_theme, render_theme_toggle
 
@@ -83,14 +91,32 @@ with tab_knowledge:
             f"dans `{settings.vault_obsirag_dir.relative_to(settings.vault)}/insights/`."
         )
     else:
+        search_col, month_col = st.columns([2, 1])
+        search_text = search_col.text_input(
+            "Rechercher dans les artefacts",
+            placeholder="Titre, fichier ou contenu…",
+            key="insights_search",
+        )
+        month_filter = month_col.selectbox(
+            "Mois",
+            build_month_options(artifacts),
+            key="insights_month_filter",
+        )
+        filtered_artifacts = filter_markdown_entries(
+            artifacts,
+            search_text=search_text,
+            month_filter=month_filter,
+            content_lookup=_read_md_file,
+        )
         st.caption(
-            f"{len(artifacts)} artefact(s) · "
+            f"{len(filtered_artifacts)} / {len(artifacts)} artefact(s) · "
             f"Visibles dans Obsidian sous `obsirag/insights/`"
         )
-        for path_str, mtime in _paginate("insights_page", artifacts, _PAGE_SIZE):
+        for path_str, mtime in _paginate("insights_page", filtered_artifacts, _PAGE_SIZE):
             date_str = datetime.fromtimestamp(mtime).strftime("%Y-%m-%d %H:%M")
             stem = Path(path_str).stem
-            with st.expander(f"📄 {stem} — {date_str}", expanded=False):
+            with st.expander(f"💡 {stem} — {date_str}", expanded=False):
+                st.markdown(render_note_badge(path_str), unsafe_allow_html=True)
                 st.markdown(_read_md_file(path_str, mtime))
 
 # ---- Synapses (vault/obsirag/synapses/) ----
@@ -104,14 +130,32 @@ with tab_synapses:
             f"Elles apparaîtront dans Obsidian sous `obsirag/synapses/`."
         )
     else:
+        search_col, month_col = st.columns([2, 1])
+        search_text = search_col.text_input(
+            "Rechercher dans les synapses",
+            placeholder="Titre, fichier ou contenu…",
+            key="synapses_search",
+        )
+        month_filter = month_col.selectbox(
+            "Mois",
+            build_month_options(synapses),
+            key="synapses_month_filter",
+        )
+        filtered_synapses = filter_markdown_entries(
+            synapses,
+            search_text=search_text,
+            month_filter=month_filter,
+            content_lookup=_read_md_file,
+        )
         st.caption(
-            f"{len(synapses)} synapse(s) découverte(s) · "
+            f"{len(filtered_synapses)} / {len(synapses)} synapse(s) découverte(s) · "
             f"Visibles dans Obsidian sous `obsirag/synapses/`"
         )
-        for path_str, mtime in _paginate("synapses_page", synapses, _PAGE_SIZE):
+        for path_str, mtime in _paginate("synapses_page", filtered_synapses, _PAGE_SIZE):
             date_str = datetime.fromtimestamp(mtime).strftime("%Y-%m-%d %H:%M")
             stem = Path(path_str).stem
             with st.expander(f"⚡ {stem} — {date_str}", expanded=False):
+                st.markdown(render_note_badge(path_str), unsafe_allow_html=True)
                 st.markdown(_read_md_file(path_str, mtime))
 
 # ---- Synthèses hebdomadaires (vault/obsirag/synthesis/) ----
@@ -125,11 +169,30 @@ with tab_synthesis:
             f"Elle apparaîtra dans Obsidian sous `obsirag/synthesis/`."
         )
     else:
-        st.caption(f"Visibles dans Obsidian sous `obsirag/synthesis/`")
-        for s_path in syntheses[:10]:
-            mtime = s_path.stat().st_mtime
-            with st.expander(f"📊 {s_path.stem}", expanded=(s_path == syntheses[0])):
-                st.markdown(_read_md_file(str(s_path), mtime))
+        synthesis_entries = [(str(s_path), s_path.stat().st_mtime) for s_path in syntheses]
+        search_col, month_col = st.columns([2, 1])
+        search_text = search_col.text_input(
+            "Rechercher dans les synthèses",
+            placeholder="Titre, fichier ou contenu…",
+            key="synthesis_search",
+        )
+        month_filter = month_col.selectbox(
+            "Mois",
+            build_month_options(synthesis_entries),
+            key="synthesis_month_filter",
+        )
+        filtered_syntheses = filter_markdown_entries(
+            synthesis_entries,
+            search_text=search_text,
+            month_filter=month_filter,
+            content_lookup=_read_md_file,
+        )
+        st.caption(f"{len(filtered_syntheses)} / {len(syntheses)} synthèse(s) · Visibles dans Obsidian sous `obsirag/synthesis/`")
+        for path_str, mtime in _paginate("synthesis_page", filtered_syntheses, _PAGE_SIZE):
+            s_path = Path(path_str)
+            with st.expander(f"📋 {s_path.stem}", expanded=(s_path == syntheses[0])):
+                st.markdown(render_note_badge(path_str), unsafe_allow_html=True)
+                st.markdown(_read_md_file(path_str, mtime))
 
 # ---- Historique des requêtes (volume Docker) ----
 with tab_queries:
@@ -138,14 +201,7 @@ with tab_queries:
         st.info("Aucune requête enregistrée.")
     else:
         lines = q_file.read_text(encoding="utf-8").strip().splitlines()
-        queries = []
-        for line in lines:
-            try:
-                queries.append(json.loads(line))
-            except Exception:
-                pass
-
-        queries.sort(key=lambda x: x.get("ts", ""), reverse=True)
+        queries = load_query_history(lines)
         st.caption(f"{len(queries)} requête(s) enregistrée(s)")
 
         if queries:
@@ -155,7 +211,26 @@ with tab_queries:
             today_count = sum(1 for q in queries if q.get("ts", "").startswith(today))
             col2.metric("Aujourd'hui", today_count)
 
+            search_col, day_col = st.columns([2, 1])
+            query_search = search_col.text_input(
+                "Rechercher dans l'historique",
+                placeholder="Texte de requête…",
+                key="queries_search",
+            )
+            day_filter = day_col.selectbox(
+                "Jour",
+                build_query_day_options(queries),
+                key="queries_day_filter",
+            )
+            filtered_queries = filter_queries(
+                queries,
+                search_text=query_search,
+                day_filter=day_filter,
+            )
+
+            st.caption(f"{len(filtered_queries)} / {len(queries)} requête(s) affichée(s)")
+
             st.markdown("#### Dernières requêtes")
-            for q in queries[:20]:
+            for q in _paginate("queries_page", filtered_queries, _PAGE_SIZE):
                 ts = q.get("ts", "")[:16].replace("T", " ")
                 st.markdown(f"- `{ts}` — {q.get('query', '')}")

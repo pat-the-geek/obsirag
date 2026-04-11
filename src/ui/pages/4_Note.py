@@ -11,6 +11,15 @@ import streamlit as st
 import streamlit.components.v1 as components
 
 from src.config import settings
+from src.ui.note_viewer import (
+    count_mermaid_blocks,
+    extract_note_outline,
+    find_note_matches,
+    inject_line_anchors,
+    make_note_anchor,
+)
+from src.ui.note_badges import prefix_note_label, render_note_badge
+
 from src.ui.services_cache import get_services
 from src.ui.theme import inject_theme, render_theme_toggle
 
@@ -84,21 +93,35 @@ def _estimate_mermaid_height(code: str) -> int:
 # ---------------------------------------------------------------------------
 
 _MERMAID_RE = re.compile(r"```mermaid\s*\n(.*?)```", re.DOTALL)
-_FM_RE = re.compile(r"^\s*---\n.*?\n---\n?", re.DOTALL)
 _WIKILINK_RE = re.compile(r"\[\[([^\]|#]+?)(?:[|#][^\]]*)?\]\]")
 
 
-def render_note(content: str) -> None:
+def _scroll_to_anchor(anchor_id: str) -> None:
+    import json
+
+    components.html(
+        f"""<script>
+const anchorId = {json.dumps(anchor_id)};
+const target = window.parent.document.getElementById(anchorId);
+if (target) {{
+  target.scrollIntoView({{ behavior: 'smooth', block: 'start' }});
+}}
+</script>""",
+        height=0,
+        scrolling=False,
+    )
+
+
+def render_note(content: str, anchor_lines: set[int] | None = None) -> None:
     """Découpe le contenu en blocs texte / Mermaid et rend chacun."""
-    # Supprime le frontmatter YAML
-    content = _FM_RE.sub("", content, count=1)
+    content = inject_line_anchors(content, anchor_lines or set())
 
     last = 0
     idx = 0
     for match in _MERMAID_RE.finditer(content):
         before = content[last: match.start()].strip()
         if before:
-            st.markdown(before, unsafe_allow_html=False)
+            st.markdown(before, unsafe_allow_html=True)
 
         mermaid_code = match.group(1).strip()
         height = _estimate_mermaid_height(mermaid_code)
@@ -109,7 +132,7 @@ def render_note(content: str) -> None:
 
     remainder = content[last:].strip()
     if remainder:
-        st.markdown(remainder, unsafe_allow_html=False)
+        st.markdown(remainder, unsafe_allow_html=True)
 
 
 # ---------------------------------------------------------------------------
@@ -137,12 +160,13 @@ with st.sidebar:
     seen_titles: dict[str, int] = {}
     for n in filtered:
         title = n["title"]
+        display_title = prefix_note_label(title, n["file_path"])
         if title in seen_titles:
             seen_titles[title] += 1
-            labels.append(f"{title} ({n['file_path']})")
+            labels.append(f"{display_title} ({n['file_path']})")
         else:
             seen_titles[title] = 1
-            labels.append(title)
+            labels.append(display_title)
     label_to_fp = {lbl: n["file_path"] for lbl, n in zip(labels, filtered)}
 
     _SELECTOR_KEY = "note_page_selector"
@@ -192,7 +216,7 @@ if not note_abs.exists():
     st.stop()
 
 # Métadonnées de la note depuis ChromaDB
-note_meta = next((n for n in notes if n["file_path"] == selected_fp), {})
+note_meta = svc.chroma.get_note_by_file_path(selected_fp) or {}
 tags = note_meta.get("tags", [])
 wikilinks = note_meta.get("wikilinks", [])
 date_mod = note_meta.get("date_modified", "")[:10]
@@ -207,6 +231,7 @@ _obsidian_url = f"obsidian://open?vault={_vault_name}&file={_file_encoded}"
 col_title, col_meta = st.columns([3, 1])
 with col_title:
     st.title(note_meta.get("title", note_abs.stem))
+    st.markdown(render_note_badge(selected_fp), unsafe_allow_html=True)
     st.caption(f"`{selected_fp}`")
     st.markdown(
         f'<a href="{_obsidian_url}" target="_blank" style="'
@@ -227,7 +252,57 @@ st.divider()
 
 # Contenu
 content = note_abs.read_text(encoding="utf-8", errors="replace")
-render_note(content)
+outline = extract_note_outline(content)
+local_search = st.text_input("🔎 Rechercher dans cette note", placeholder="Titre de section ou texte…")
+matches = find_note_matches(content, local_search) if local_search.strip() else []
+anchor_lines = {int(item["line"]) for item in outline[:60]}
+anchor_lines.update(int(match["line"]) for match in matches)
+
+summary_cols = st.columns(4)
+summary_cols[0].metric("Sections", len(outline))
+summary_cols[1].metric("Diagrammes", count_mermaid_blocks(content))
+summary_cols[2].metric("Liens sortants", len(wikilinks))
+summary_cols[3].metric("Rétroliens", len([
+    n for n in notes
+    if note_abs.stem.lower() in [w.lower() for w in n.get("wikilinks", [])]
+    and n["file_path"] != selected_fp
+]))
+
+if outline:
+    with st.expander("🧭 Structure de la note", expanded=False):
+        for index, item in enumerate(outline[:30]):
+            anchor_id = make_note_anchor(int(item["line"]))
+            col_info, col_button = st.columns([8, 1])
+            indent = "&nbsp;" * max(0, (int(item["level"]) - 1) * 4)
+            col_info.markdown(
+                f"{indent}<strong>{item['title']}</strong> <span style='opacity:.6'>(ligne {item['line']})</span>",
+                unsafe_allow_html=True,
+            )
+            if col_button.button("↘", key=f"outline_jump_{index}_{item['line']}", help="Aller à cette section"):
+                st.session_state["_note_focus_anchor"] = anchor_id
+                st.rerun()
+
+if local_search.strip():
+    if matches:
+        with st.expander(f"📍 Résultats dans la note ({len(matches)})", expanded=True):
+            for index, match in enumerate(matches):
+                anchor_id = make_note_anchor(int(match["line"]))
+                col_info, col_button = st.columns([8, 1])
+                col_info.markdown(
+                    f"<strong>{match['section']}</strong> · ligne {match['line']}<br>{match['snippet']}",
+                    unsafe_allow_html=True,
+                )
+                if col_button.button("↘", key=f"search_jump_{index}_{match['line']}", help="Aller à cet extrait"):
+                    st.session_state["_note_focus_anchor"] = anchor_id
+                    st.rerun()
+    else:
+        st.info("Aucun passage correspondant dans cette note.")
+
+st.divider()
+render_note(content, anchor_lines=anchor_lines)
+focus_anchor = st.session_state.pop("_note_focus_anchor", None)
+if focus_anchor:
+    _scroll_to_anchor(focus_anchor)
 
 # Wikilinks & rétroliens
 if wikilinks or True:

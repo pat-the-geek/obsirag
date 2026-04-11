@@ -48,6 +48,30 @@ class TestSettings:
     def test_processing_status_file(self, tmp_settings):
         assert tmp_settings.processing_status_file.name == "processing_status.json"
 
+    def test_processing_times_file(self, tmp_settings):
+        assert tmp_settings.processing_times_file.name == "processing_times.json"
+
+    def test_queries_file(self, tmp_settings):
+        assert tmp_settings.queries_file.name == "queries.jsonl"
+
+    def test_processed_notes_file(self, tmp_settings):
+        assert tmp_settings.processed_notes_file.name == "processed_notes.json"
+
+    def test_bulk_done_flag_file(self, tmp_settings):
+        assert tmp_settings.bulk_done_flag_file.name == "bulk_done.flag"
+
+    def test_synapses_dir_inside_vault(self, tmp_settings):
+        assert str(tmp_settings.synapses_dir).startswith(str(tmp_settings.vault))
+
+    def test_conversations_dir_inside_vault(self, tmp_settings):
+        assert str(tmp_settings.conversations_dir).startswith(str(tmp_settings.vault))
+
+    def test_synapse_index_file(self, tmp_settings):
+        assert tmp_settings.synapse_index_file.name == "synapse_index.json"
+
+    def test_knowledge_dir_aliases_insights_dir(self, tmp_settings):
+        assert tmp_settings.knowledge_dir == tmp_settings.insights_dir
+
     def test_autolearn_defaults(self):
         s = Settings(vault_path="/v", app_data_dir="/d")
         assert s.autolearn_interval_minutes > 0

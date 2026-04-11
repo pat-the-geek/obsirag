@@ -25,6 +25,8 @@ def settings_mock(tmp_path):
     s.vault_path = str(s.vault)
     s.index_state_file = tmp_path / "data" / "index_state.json"
     s.index_state_file.parent.mkdir(parents=True)
+    s.max_note_size_bytes = 500_000
+    s.max_chunks_per_note = 300
     return s
 
 
@@ -318,6 +320,14 @@ class TestIndexNote:
 
         mock_chroma.add_chunks.assert_not_called()
 
+    def test_index_note_ignores_missing_file(self, pipeline, settings_mock, mock_chroma):
+        missing = settings_mock.vault / "absent.md"
+
+        with patch("src.indexer.pipeline.settings", settings_mock):
+            pipeline.index_note(missing)
+
+        mock_chroma.add_chunks.assert_not_called()
+
     def test_remove_note_clears_state(self, pipeline, settings_mock, mock_chroma):
         pipeline._state = {"note.md": "hash"}
         vault = settings_mock.vault
@@ -330,6 +340,108 @@ class TestIndexNote:
 
         assert "note.md" not in pipeline._state
         mock_chroma.delete_by_file.assert_called_once_with("note.md")
+
+
+@pytest.mark.unit
+class TestIndexerRobustness:
+    def test_prepare_chunks_skips_note_too_large(self, pipeline, settings_mock, mock_nlp):
+        vault = settings_mock.vault
+        vault.mkdir(parents=True, exist_ok=True)
+        note = vault / "big.md"
+        note.write_text("x" * 20, encoding="utf-8")
+        settings_mock.max_note_size_bytes = 5
+
+        with (
+            patch("src.indexer.pipeline.settings", settings_mock),
+            patch("src.vault.parser.settings", settings_mock),
+            patch("src.vault.parser.get_nlp", return_value=mock_nlp),
+        ):
+            chunks = pipeline._prepare_chunks(note, "big.md")
+
+        assert chunks == []
+
+    def test_prepare_chunks_truncates_to_max_chunks_and_updates_state(self, pipeline, settings_mock):
+        vault = settings_mock.vault
+        vault.mkdir(parents=True, exist_ok=True)
+        note = vault / "many.md"
+        note.write_text("content", encoding="utf-8")
+        settings_mock.max_chunks_per_note = 2
+
+        parsed = MagicMock()
+        parsed.metadata.file_hash = "hash-many"
+        parsed.sections = [MagicMock()]
+        fake_chunks = [MagicMock(chunk_id=f"c{i}") for i in range(4)]
+
+        with (
+            patch("src.indexer.pipeline.settings", settings_mock),
+            patch.object(pipeline._parser, "parse", return_value=parsed),
+            patch.object(pipeline._chunker, "chunk_note", return_value=fake_chunks),
+        ):
+            chunks = pipeline._prepare_chunks(note, "many.md")
+
+        assert len(chunks) == 2
+        assert pipeline._state["many.md"] == "hash-many"
+
+    def test_index_file_deletes_previous_chunks_before_reindex(self, pipeline, settings_mock, mock_chroma, mock_nlp):
+        vault = settings_mock.vault
+        vault.mkdir(parents=True, exist_ok=True)
+        note = vault / "reindex.md"
+        note.write_text("---\ntitle: Reindex\n---\nContenu.\n", encoding="utf-8")
+        pipeline._state = {"reindex.md": "oldhash"}
+
+        with (
+            patch("src.indexer.pipeline.settings", settings_mock),
+            patch("src.vault.parser.settings", settings_mock),
+            patch("src.vault.parser.get_nlp", return_value=mock_nlp),
+        ):
+            pipeline._index_file(note, "reindex.md")
+
+        mock_chroma.delete_by_file.assert_called_once_with("reindex.md")
+        mock_chroma.add_chunks.assert_called()
+
+    def test_index_file_skips_when_parser_returns_none(self, pipeline, settings_mock):
+        vault = settings_mock.vault
+        vault.mkdir(parents=True, exist_ok=True)
+        note = vault / "broken.md"
+        note.write_text("invalid", encoding="utf-8")
+
+        with (
+            patch("src.indexer.pipeline.settings", settings_mock),
+            patch.object(pipeline._parser, "parse", return_value=None),
+        ):
+            pipeline._index_file(note, "broken.md")
+
+        pipeline._chroma.add_chunks.assert_not_called()
+
+    def test_index_file_skips_when_note_is_too_large(self, pipeline, settings_mock):
+        vault = settings_mock.vault
+        vault.mkdir(parents=True, exist_ok=True)
+        note = vault / "too_big.md"
+        note.write_text("x" * 20, encoding="utf-8")
+        settings_mock.max_note_size_bytes = 5
+
+        with patch("src.indexer.pipeline.settings", settings_mock):
+            pipeline._index_file(note, "too_big.md")
+
+        assert "too_big.md" not in pipeline._state
+        pipeline._chroma.add_chunks.assert_not_called()
+
+    def test_is_internal_is_currently_disabled(self, tmp_path):
+        assert IndexingPipeline._is_internal(tmp_path / "obsirag" / "generated.md") is False
+
+    def test_fast_mode_counts_errors_when_prepare_chunks_raises(self, pipeline, settings_mock, vault_with_notes, mock_nlp):
+        pipeline._state = {}
+        pipeline._chroma.count.return_value = 0
+
+        with (
+            patch("src.indexer.pipeline.settings", settings_mock),
+            patch("src.vault.parser.settings", settings_mock),
+            patch("src.vault.parser.get_nlp", return_value=mock_nlp),
+            patch.object(pipeline, "_prepare_chunks", side_effect=[[], RuntimeError("boom"), []]),
+        ):
+            stats = pipeline.index_vault()
+
+        assert stats["errors"] == 1
 
 
 # ---------------------------------------------------------------------------

@@ -13,6 +13,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+from chromadb.errors import InternalError
 
 from src.indexer.chunker import Chunk
 
@@ -52,6 +53,21 @@ def _make_chroma_store(tmp_path):
     from chromadb.utils.embedding_functions import EmbeddingFunction
 
     class _FakeEmbedFn(EmbeddingFunction):
+        def __init__(self) -> None:
+            pass
+
+        @staticmethod
+        def build_from_config(config: dict):
+            return _FakeEmbedFn()
+
+        @staticmethod
+        def name() -> str:
+            return "fake-embed"
+
+        @staticmethod
+        def get_config() -> dict:
+            return {"name": "fake-embed", "dimensions": 384}
+
         def __call__(self, input):  # noqa: A002
             return [[float(i % 10) / 10.0] * 384 for i in range(len(input))]
 
@@ -78,6 +94,7 @@ def _make_chroma_store(tmp_path):
         "count", "invalidate_list_notes_cache", "list_notes",
         "search_by_tags", "search_by_entity", "search_by_keyword",
         "search_by_date_range", "find_similar_notes",
+        "get_notes_by_file_paths", "get_note_by_file_path", "list_user_notes",
     ]:
         real_method = getattr(ChromaStore, method)
         setattr(store, method, lambda *a, m=real_method, s=store, **kw: m(s, *a, **kw))
@@ -245,6 +262,44 @@ class TestChromaKeyword:
         results = chroma.search_by_keyword("Contenu")
         assert len(results) > 0
 
+
+@pytest.mark.unit
+class TestChromaNoteHelpers:
+    def test_get_notes_by_file_paths_preserves_requested_order(self, chroma):
+        from src.database.chroma_store import ChromaStore
+
+        chroma.list_notes = MagicMock(return_value=[
+            {"file_path": "b.md", "title": "B"},
+            {"file_path": "a.md", "title": "A"},
+            {"file_path": "c.md", "title": "C"},
+        ])
+
+        notes = ChromaStore.get_notes_by_file_paths(chroma, ["a.md", "c.md"])
+
+        assert [note["file_path"] for note in notes] == ["a.md", "c.md"]
+
+    def test_get_note_by_file_path_returns_first_exact_match(self, chroma):
+        from src.database.chroma_store import ChromaStore
+
+        chroma.get_notes_by_file_paths = MagicMock(return_value=[{"file_path": "a.md", "title": "A"}])
+
+        note = ChromaStore.get_note_by_file_path(chroma, "a.md")
+
+        assert note == {"file_path": "a.md", "title": "A"}
+
+    def test_list_user_notes_filters_obsirag_generated_paths(self, chroma):
+        from src.database.chroma_store import ChromaStore
+
+        chroma.list_notes = MagicMock(return_value=[
+            {"file_path": "notes/a.md", "title": "A"},
+            {"file_path": "obsirag/insights/generated.md", "title": "Generated"},
+            {"file_path": "folder/obsirag/synapses/test.md", "title": "Generated 2"},
+        ])
+
+        notes = ChromaStore.list_user_notes(chroma)
+
+        assert notes == [{"file_path": "notes/a.md", "title": "A"}]
+
     def test_keyword_partial_match(self, chroma):
         chroma.add_chunks([_make_chunk(0)])
         results = chroma.search_by_keyword("numéro")
@@ -261,6 +316,417 @@ class TestChromaKeyword:
         results = chroma.search_by_keyword("Contenu")
         ids = [r["chunk_id"] for r in results]
         assert len(ids) == len(set(ids))
+
+
+# ---------------------------------------------------------------------------
+# Tests fonctionnels — branches avancées
+# ---------------------------------------------------------------------------
+
+@pytest.mark.unit
+class TestChromaAdvancedBranches:
+    def test_init_sets_lock_caches_and_collection_from_recovery(self):
+        from src.database.chroma_store import ChromaStore
+
+        collection = MagicMock()
+        collection.count.return_value = 7
+
+        with (
+            patch("src.database.chroma_store.settings") as settings_mock,
+            patch("src.database.chroma_store._build_embedding_function", return_value="embed") as build_embed,
+            patch.object(ChromaStore, "_init_with_recovery", return_value=("client", collection)) as init_recovery,
+        ):
+            settings_mock.chroma_persist_dir = "/tmp/chroma"
+            settings_mock.chroma_collection = "vault_chunks"
+            store = ChromaStore()
+
+        build_embed.assert_called_once_with()
+        init_recovery.assert_called_once_with("/tmp/chroma", "embed")
+        assert store._client == "client"
+        assert store._collection is collection
+        assert store._list_notes_cache is None
+        assert store._count_cache is None
+
+    def test_build_embedding_function_uses_openai_compatible_backend_when_ollama_embed_is_configured(self):
+        from src.database.chroma_store import _build_embedding_function
+
+        fake_openai_fn = MagicMock(name="OpenAIEmbeddingFunction")
+
+        with (
+            patch("src.database.chroma_store.settings") as settings_mock,
+            patch("chromadb.utils.embedding_functions.OpenAIEmbeddingFunction", fake_openai_fn),
+        ):
+            settings_mock.ollama_embed_model = "nomic-embed-text"
+            settings_mock.ollama_base_url = "http://localhost:11434/v1"
+            settings_mock.embedding_model = "unused"
+            result = _build_embedding_function()
+
+        fake_openai_fn.assert_called_once_with(
+            api_key="ollama",
+            api_base="http://localhost:11434/v1",
+            model_name="nomic-embed-text",
+        )
+        assert result is fake_openai_fn.return_value
+
+    def test_build_embedding_function_uses_sentence_transformer_backend_by_default(self):
+        from src.database.chroma_store import _build_embedding_function
+
+        fake_sentence_fn = MagicMock(name="SentenceTransformerEmbeddingFunction")
+
+        with (
+            patch("src.database.chroma_store.settings") as settings_mock,
+            patch("chromadb.utils.embedding_functions.SentenceTransformerEmbeddingFunction", fake_sentence_fn),
+        ):
+            settings_mock.ollama_embed_model = None
+            settings_mock.embedding_model = "paraphrase-test"
+            result = _build_embedding_function()
+
+        fake_sentence_fn.assert_called_once_with(model_name="paraphrase-test", device="cpu")
+        assert result is fake_sentence_fn.return_value
+
+    def test_init_with_recovery_recreates_collection_after_corruption(self, tmp_path):
+        from src.database.chroma_store import ChromaStore
+
+        persist_dir = tmp_path / "chroma"
+        persist_dir.mkdir()
+        index_state = tmp_path / "data" / "index_state.json"
+        index_state.parent.mkdir(parents=True)
+        index_state.write_text('{"note.md": "hash"}', encoding="utf-8")
+
+        good_collection = MagicMock()
+        good_collection.count.return_value = 0
+        good_client = MagicMock()
+        good_client.get_or_create_collection.return_value = good_collection
+
+        with (
+            patch("src.database.chroma_store.chromadb.PersistentClient", side_effect=[InternalError("corrupt"), good_client]),
+            patch("src.database.chroma_store.settings") as settings_mock,
+            patch("src.database.chroma_store.shutil.rmtree") as rmtree,
+        ):
+            settings_mock.chroma_collection = "test_collection"
+            settings_mock.index_state_file = index_state
+            store = ChromaStore.__new__(ChromaStore)
+            client, collection = store._init_with_recovery(str(persist_dir), MagicMock())
+
+        assert client is good_client
+        assert collection is good_collection
+        rmtree.assert_called_once_with(persist_dir)
+        assert index_state.read_text(encoding="utf-8") == "{}"
+
+    def test_list_notes_uses_sqlite_rows_and_caches_result(self, chroma, tmp_path):
+        from src.database.chroma_store import ChromaStore
+
+        fake_rows = [
+            ("b.md", "B", "2026-04-02T10:00:00", "2026-04-01T10:00:00", "tag2", "wiki2"),
+            ("a.md", "A", "2026-04-03T10:00:00", "2026-04-01T09:00:00", "tag1,tag3", "wiki1,wiki3"),
+        ]
+        fake_conn = MagicMock()
+        fake_conn.execute.return_value.fetchall.return_value = fake_rows
+        fake_sqlite_connect = MagicMock(return_value=fake_conn)
+
+        with (
+            patch("src.database.chroma_store.settings") as settings_mock,
+            patch("src.database.chroma_store.sqlite3.connect", fake_sqlite_connect),
+        ):
+            settings_mock.chroma_persist_dir = str(tmp_path / "chroma")
+            settings_mock.chroma_collection = "test_collection"
+            notes_first = ChromaStore.list_notes(chroma)
+            notes_second = ChromaStore.list_notes(chroma)
+
+        assert [n["file_path"] for n in notes_first] == ["a.md", "b.md"]
+        assert notes_first[0]["tags"] == ["tag1", "tag3"]
+        assert notes_first[0]["wikilinks"] == ["wiki1", "wiki3"]
+        assert notes_second == notes_first
+        fake_sqlite_connect.assert_called_once()
+        fake_conn.close.assert_called_once()
+
+    def test_list_notes_falls_back_to_collection_api(self, chroma, tmp_path):
+        from src.database.chroma_store import ChromaStore
+
+        chroma._collection.get = MagicMock(side_effect=[
+            {
+                "metadatas": [
+                    {
+                        "file_path": "a.md",
+                        "note_title": "A",
+                        "date_modified": "2026-04-03T10:00:00",
+                        "date_created": "2026-04-01T09:00:00",
+                        "tags": "tag1,tag2",
+                        "wikilinks": "wiki1",
+                    },
+                    {
+                        "file_path": "a.md",
+                        "note_title": "A",
+                        "date_modified": "2026-04-03T10:00:00",
+                        "date_created": "2026-04-01T09:00:00",
+                        "tags": "tag1,tag2",
+                        "wikilinks": "wiki1",
+                    },
+                ]
+            },
+            {"metadatas": []},
+        ])
+
+        with (
+            patch("src.database.chroma_store.settings") as settings_mock,
+            patch("src.database.chroma_store.sqlite3.connect", side_effect=sqlite3.OperationalError("boom")),
+        ):
+            settings_mock.chroma_persist_dir = str(tmp_path / "chroma")
+            settings_mock.chroma_collection = "test_collection"
+            notes = ChromaStore.list_notes(chroma)
+
+        assert notes == [{
+            "file_path": "a.md",
+            "title": "A",
+            "date_modified": "2026-04-03T10:00:00",
+            "date_created": "2026-04-01T09:00:00",
+            "tags": ["tag1", "tag2"],
+            "wikilinks": ["wiki1"],
+        }]
+
+    def test_search_by_note_title_falls_back_to_keyword_search(self, chroma):
+        from src.database.chroma_store import ChromaStore
+
+        chroma._collection.get = MagicMock(return_value={"ids": [], "documents": [], "metadatas": []})
+        chroma.search_by_keyword = MagicMock(return_value=[{"chunk_id": "k1", "text": "x", "metadata": {}, "score": 0.95}])
+
+        results = ChromaStore.search_by_note_title(chroma, "Titre absent", top_k=3)
+
+        chroma.search_by_keyword.assert_called_once_with("Titre absent", top_k=3)
+        assert results[0]["chunk_id"] == "k1"
+
+    def test_get_recently_modified_filters_by_iso_date(self, chroma):
+        from datetime import datetime
+        from src.database.chroma_store import ChromaStore
+
+        chroma.list_notes = MagicMock(return_value=[
+            {"file_path": "old.md", "date_modified": "2026-04-01T10:00:00"},
+            {"file_path": "new.md", "date_modified": "2026-04-03T10:00:00"},
+        ])
+
+        results = ChromaStore.get_recently_modified(chroma, datetime(2026, 4, 2, 0, 0, 0))
+
+        assert [n["file_path"] for n in results] == ["new.md"]
+
+    def test_search_by_date_range_falls_back_to_python_filter_then_candidates(self, chroma):
+        from datetime import datetime
+        from src.database.chroma_store import ChromaStore
+
+        filtered_chunk = {
+            "chunk_id": "ok",
+            "text": "ok",
+            "metadata": {"date_modified": "2026-04-03T10:00:00"},
+            "score": 0.9,
+        }
+        old_chunk = {
+            "chunk_id": "old",
+            "text": "old",
+            "metadata": {"date_modified": "2026-04-01T10:00:00"},
+            "score": 0.8,
+        }
+
+        chroma.search = MagicMock(side_effect=[[], [filtered_chunk, old_chunk]])
+
+        results = ChromaStore.search_by_date_range(
+            chroma,
+            "requête",
+            since=datetime(2026, 4, 2),
+            until=datetime(2026, 4, 4),
+            top_k=2,
+        )
+
+        assert results == [filtered_chunk]
+        assert chroma.search.call_count == 2
+
+    def test_search_by_date_range_returns_direct_filtered_results_when_available(self, chroma):
+        from datetime import datetime
+        from src.database.chroma_store import ChromaStore
+
+        direct = [{"chunk_id": "direct", "text": "x", "metadata": {"date_modified": "2026-04-03T10:00:00"}, "score": 0.9}]
+        chroma.search = MagicMock(return_value=direct)
+
+        results = ChromaStore.search_by_date_range(
+            chroma,
+            "requête",
+            since=datetime(2026, 4, 2),
+            until=datetime(2026, 4, 4),
+            top_k=2,
+        )
+
+        assert results == direct
+        chroma.search.assert_called_once()
+
+    def test_search_by_date_range_swallow_search_exception_and_fallback(self, chroma):
+        from datetime import datetime
+        from src.database.chroma_store import ChromaStore
+
+        fallback = [{"chunk_id": "fallback", "text": "x", "metadata": {"date_modified": "2026-04-03T10:00:00"}, "score": 0.9}]
+        chroma.search = MagicMock(side_effect=[RuntimeError("boom"), fallback])
+
+        results = ChromaStore.search_by_date_range(
+            chroma,
+            "requête",
+            since=datetime(2026, 4, 2),
+            until=datetime(2026, 4, 4),
+            top_k=2,
+        )
+
+        assert results == fallback
+
+    def test_search_by_entity_filters_matching_metadata_and_falls_back_when_no_match(self, chroma):
+        from src.database.chroma_store import ChromaStore
+
+        matching = {
+            "chunk_id": "match",
+            "text": "Ada mentionnée",
+            "metadata": {"ner_persons": "Ada Lovelace"},
+            "score": 0.9,
+        }
+        unrelated = {
+            "chunk_id": "other",
+            "text": "Alan mentionné",
+            "metadata": {"ner_persons": "Alan Turing"},
+            "score": 0.7,
+        }
+
+        chroma.search = MagicMock(return_value=[matching, unrelated])
+        results = ChromaStore.search_by_entity(chroma, "Ada", entity_type="persons", top_k=3)
+        assert results == [matching]
+
+        chroma.search = MagicMock(return_value=[unrelated])
+        fallback_results = ChromaStore.search_by_entity(chroma, "Ada", entity_type="persons", top_k=3)
+        assert fallback_results == [unrelated]
+
+    def test_search_by_tags_falls_back_to_semantic_candidates_when_no_overlap(self, chroma):
+        from src.database.chroma_store import ChromaStore
+
+        chunk = {
+            "chunk_id": "chunk",
+            "text": "science",
+            "metadata": {"tags": "science,space"},
+            "score": 0.8,
+        }
+        chroma.search = MagicMock(return_value=[chunk])
+
+        results = ChromaStore.search_by_tags(chroma, ["python"], top_k=2)
+
+        assert results == [chunk]
+
+    def test_search_by_keyword_ignores_failed_variant_and_uses_next_one(self, chroma):
+        from src.database.chroma_store import ChromaStore
+
+        chroma._collection.get = MagicMock(side_effect=[RuntimeError("boom"), {
+            "ids": ["k1"],
+            "documents": ["Doc"],
+            "metadatas": [{"note_title": "Note"}],
+        }, {
+            "ids": [],
+            "documents": [],
+            "metadatas": [],
+        }])
+
+        results = ChromaStore.search_by_keyword(chroma, "Keyword", top_k=2)
+
+        assert results == [{"chunk_id": "k1", "text": "Doc", "metadata": {"note_title": "Note"}, "score": 0.95}]
+
+    def test_list_notes_fallback_paginates_multiple_batches(self, chroma, tmp_path):
+        from src.database.chroma_store import ChromaStore
+
+        first_page = [
+            {"file_path": f"fill_{i}.md", "note_title": f"Fill {i}", "date_modified": "2026-04-01T10:00:00", "date_created": "", "tags": "", "wikilinks": ""}
+            for i in range(499)
+        ]
+        first_page.insert(0, {"file_path": "a.md", "note_title": "A", "date_modified": "2026-04-03T10:00:00", "date_created": "", "tags": "tag1", "wikilinks": ""})
+
+        chroma._collection.get = MagicMock(side_effect=[
+            {"metadatas": first_page},
+            {"metadatas": [{"file_path": "b.md", "note_title": "B", "date_modified": "2026-04-02T10:00:00", "date_created": "", "tags": "tag2", "wikilinks": ""}]},
+            {"metadatas": []},
+        ])
+
+        with (
+            patch("src.database.chroma_store.settings") as settings_mock,
+            patch("src.database.chroma_store.sqlite3.connect", side_effect=sqlite3.OperationalError("boom")),
+        ):
+            settings_mock.chroma_persist_dir = str(tmp_path / "chroma")
+            settings_mock.chroma_collection = "test_collection"
+            notes = ChromaStore.list_notes(chroma)
+
+        assert notes[0]["file_path"] == "a.md"
+        assert any(note["file_path"] == "b.md" for note in notes)
+        assert chroma._collection.get.call_count == 2
+
+    def test_find_similar_notes_returns_empty_when_source_lookup_fails_or_has_no_docs(self, chroma):
+        from src.database.chroma_store import ChromaStore
+
+        chroma._collection.get = MagicMock(side_effect=RuntimeError("boom"))
+        assert ChromaStore.find_similar_notes(chroma, "source.md", existing_links=set()) == []
+
+        chroma._collection.get = MagicMock(return_value={"documents": []})
+        assert ChromaStore.find_similar_notes(chroma, "source.md", existing_links=set()) == []
+
+    def test_find_similar_notes_respects_top_k_limit(self, chroma):
+        from src.database.chroma_store import ChromaStore
+
+        chroma._collection.get = MagicMock(return_value={"documents": ["source one", "source two"]})
+        chroma.search = MagicMock(return_value=[
+            {"chunk_id": "1", "text": "a", "metadata": {"file_path": "a.md", "note_title": "A"}, "score": 0.9},
+            {"chunk_id": "2", "text": "b", "metadata": {"file_path": "b.md", "note_title": "B"}, "score": 0.89},
+            {"chunk_id": "3", "text": "c", "metadata": {"file_path": "c.md", "note_title": "C"}, "score": 0.88},
+        ])
+
+        results = ChromaStore.find_similar_notes(chroma, "source.md", existing_links=set(), top_k=2, threshold=0.5)
+
+        assert [result["file_path"] for result in results] == ["a.md", "b.md"]
+
+    def test_search_by_note_title_returns_exact_matches_without_keyword_fallback(self, chroma):
+        from src.database.chroma_store import ChromaStore
+
+        chroma._collection.get = MagicMock(side_effect=[
+            {"ids": ["a_1"], "documents": ["Doc A"], "metadatas": [{"note_title": "My Note", "file_path": "a.md"}]},
+            {"ids": ["a_1"], "documents": ["Doc A"], "metadatas": [{"note_title": "My Note", "file_path": "a.md"}]},
+            {"ids": [], "documents": [], "metadatas": []},
+            {"ids": [], "documents": [], "metadatas": []},
+        ])
+        chroma.search_by_keyword = MagicMock()
+
+        results = ChromaStore.search_by_note_title(chroma, "My Note", top_k=2)
+
+        assert results == [{"chunk_id": "a_1", "text": "Doc A", "metadata": {"note_title": "My Note", "file_path": "a.md"}, "score": 0.98}]
+        chroma.search_by_keyword.assert_not_called()
+
+    def test_find_similar_notes_excludes_existing_links_and_low_scores(self, chroma):
+        from src.database.chroma_store import ChromaStore
+
+        chroma._collection.get = MagicMock(return_value={"documents": ["source one", "source two"]})
+        chroma.search = MagicMock(return_value=[
+            {"chunk_id": "self", "text": "source one", "metadata": {"file_path": "source.md", "note_title": "Source"}, "score": 0.99},
+            {"chunk_id": "linked", "text": "linked text", "metadata": {"file_path": "linked.md", "note_title": "AlreadyLinked"}, "score": 0.91},
+            {"chunk_id": "low", "text": "low text", "metadata": {"file_path": "low.md", "note_title": "Low"}, "score": 0.4},
+            {"chunk_id": "good", "text": "good text" * 50, "metadata": {"file_path": "good.md", "note_title": "Good"}, "score": 0.88},
+        ])
+
+        results = ChromaStore.find_similar_notes(
+            chroma,
+            "source.md",
+            existing_links={"linked.md", "alreadylinked"},
+            top_k=3,
+            threshold=0.65,
+        )
+
+        assert results == [{"file_path": "good.md", "title": "Good", "score": 0.88, "excerpt": ("good text" * 50)[:300]}]
+
+    def test_format_results_handles_empty_metadata(self):
+        from src.database.chroma_store import ChromaStore
+
+        formatted = ChromaStore._format_results({
+            "ids": [["a"]],
+            "documents": [["doc"]],
+            "metadatas": [[None]],
+            "distances": [[0.2]],
+        })
+
+        assert formatted == [{"chunk_id": "a", "text": "doc", "metadata": {}, "score": 0.8}]
+
 
 
 # ---------------------------------------------------------------------------

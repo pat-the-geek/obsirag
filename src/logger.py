@@ -7,9 +7,13 @@ Logging professionnel avec loguru.
 """
 import sys
 import json
+import threading
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timezone
 from loguru import logger
+
+
+_TOKEN_STATS_LOCK = threading.RLock()
 
 
 def configure_logging(log_level: str = "INFO", log_dir: str = "/app/logs") -> None:
@@ -79,25 +83,34 @@ def log_token_usage(
     )
 
     # Mise à jour du fichier de stats JSON
-    token_stats_file.parent.mkdir(parents=True, exist_ok=True)
+    with _TOKEN_STATS_LOCK:
+        token_stats_file.parent.mkdir(parents=True, exist_ok=True)
 
-    stats: dict = {}
-    if token_stats_file.exists():
+        stats: dict = {}
+        if token_stats_file.exists():
+            try:
+                stats = json.loads(token_stats_file.read_text(encoding="utf-8"))
+            except Exception:
+                stats = {}
+
+        today = datetime.now(timezone.utc).date().isoformat()
+        day_stats = stats.setdefault(today, {})
+        op_stats = day_stats.setdefault(operation, {"prompt": 0, "completion": 0, "calls": 0})
+        op_stats["prompt"] += prompt_tokens
+        op_stats["completion"] += completion_tokens
+        op_stats["calls"] += 1
+
+        cumul = stats.setdefault("cumulative", {"prompt": 0, "completion": 0, "calls": 0})
+        cumul["prompt"] += prompt_tokens
+        cumul["completion"] += completion_tokens
+        cumul["calls"] += 1
+
         try:
-            stats = json.loads(token_stats_file.read_text())
-        except Exception:
-            stats = {}
-
-    today = datetime.now().strftime("%Y-%m-%d")
-    day_stats = stats.setdefault(today, {})
-    op_stats = day_stats.setdefault(operation, {"prompt": 0, "completion": 0, "calls": 0})
-    op_stats["prompt"] += prompt_tokens
-    op_stats["completion"] += completion_tokens
-    op_stats["calls"] += 1
-
-    cumul = stats.setdefault("cumulative", {"prompt": 0, "completion": 0, "calls": 0})
-    cumul["prompt"] += prompt_tokens
-    cumul["completion"] += completion_tokens
-    cumul["calls"] += 1
-
-    token_stats_file.write_text(json.dumps(stats, indent=2, ensure_ascii=False))
+            tmp_file = token_stats_file.with_suffix(f"{token_stats_file.suffix}.tmp")
+            tmp_file.write_text(
+                json.dumps(stats, indent=2, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            tmp_file.replace(token_stats_file)
+        except Exception as exc:
+            logger.warning(f"Impossible d'écrire les stats de tokens : {exc}")

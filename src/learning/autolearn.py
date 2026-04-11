@@ -19,13 +19,21 @@ import tempfile
 import threading
 import time
 import unicodedata
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from loguru import logger
 
 from src.config import settings
+from src.learning.artifact_writer import AutoLearnArtifactWriter
+from src.learning.entity_services import AutoLearnEntityServices
+from src.learning.note_renamer import AutoLearnNoteRenamer
+from src.learning.question_answering import AutoLearnQuestionAnswering
+from src.learning.synapse_discovery import AutoLearnSynapseDiscovery
+from src.learning.web_enrichment import AutoLearnWebEnrichment
+from src.metrics import MetricsRecorder
+from src.storage.json_state import JsonStateStore
 
 # Mots-clés indiquant une réponse RAG insuffisante
 _WEAK_ANSWER_PATTERNS = re.compile(
@@ -81,6 +89,14 @@ _WUDDAI_TYPE_TO_PREFIX: dict[str, str] = {
 _WUDDAI_IMAGE_TYPES = ["PERSON", "ORG", "GPE", "PRODUCT"]
 
 
+def _utc_now() -> datetime:
+    return datetime.now(UTC)
+
+
+def _utc_now_naive() -> datetime:
+    return _utc_now().replace(tzinfo=None)
+
+
 def _normalize_entity_name(text: str) -> str:
     """Normalise un nom d'entité pour la comparaison (minuscules, sans accents)."""
     text = text.lower().strip()
@@ -118,6 +134,8 @@ Génère une synthèse structurée de la semaine en Markdown :
 - Questions ouvertes
 Sois concis et percutant (max 400 mots)."""
 
+_QUESTION_PREFIX_RE = re.compile(r"^[•\*\-]?\s*(?:Q\d+[.:）]|Question\s*\d*[.:]|\d+[.)]\s*)?\s*", re.I)
+
 
 class AutoLearner:
     _SLEEP_BETWEEN_NOTES = 30        # secondes entre deux notes
@@ -129,11 +147,14 @@ class AutoLearner:
     _FAST_SLEEP_AFTER_SEMANTIC = 0     # pas de pause après extraction sémantique
     _MAX_QUESTION_RETRIES = 3          # tentatives max si la réponse est insuffisante
 
-    def __init__(self, chroma, rag, indexer, ui_active_fn=None) -> None:
+    def __init__(self, chroma, rag, indexer, ui_active_fn=None, metrics: MetricsRecorder | None = None) -> None:
         self._chroma = chroma
         self._rag = rag
         self._indexer = indexer
         self._ui_active_fn = ui_active_fn or (lambda: True)  # par défaut : considère l'UI active
+        self._question_prompt = _QUESTION_PROMPT
+        self._web_answer_prompt = _WEB_ANSWER_PROMPT
+        self._metrics = metrics or MetricsRecorder(lambda: settings.data_dir / "stats" / "metrics.json")
         self._last_user_activity: float = 0.0  # timestamp epoch
         self._activity_lock = threading.Lock()
         self._processed_lock = threading.Lock()
@@ -151,62 +172,62 @@ class AutoLearner:
             job_defaults={"coalesce": True, "max_instances": 1},
             timezone="UTC",
         )
+        self._artifact_writer = AutoLearnArtifactWriter(self)
+        self._entity_services = AutoLearnEntityServices(self)
+        self._note_renamer = AutoLearnNoteRenamer(self)
+        self._question_answering = AutoLearnQuestionAnswering(self)
+        self._web_enrichment = AutoLearnWebEnrichment(self)
+        self._synapse_discovery = AutoLearnSynapseDiscovery(self)
+
+    @staticmethod
+    def _get_settings():
+        return settings
+
+    @staticmethod
+    def _utc_now() -> datetime:
+        return _utc_now()
+
+    @staticmethod
+    def _normalize_entity_name(text: str) -> str:
+        return _normalize_entity_name(text)
+
+    @staticmethod
+    def _wuddai_type_to_prefix() -> dict[str, str]:
+        return _WUDDAI_TYPE_TO_PREFIX
+
+    @staticmethod
+    def _wuddai_image_types() -> list[str]:
+        return _WUDDAI_IMAGE_TYPES
 
     # ---- Suivi des notes traitées ----
 
     def _load_processed(self) -> dict[str, str]:
         """Retourne {file_path: last_processed_iso}."""
-        f = settings.processed_notes_file
-        if f.exists():
-            try:
-                return json.loads(f.read_text(encoding="utf-8"))
-            except Exception:
-                return {}
-        return {}
+        return self._json_store(settings.processed_notes_file).load({})
 
     def _save_processed(self, processed: dict[str, str]) -> None:
         """Écriture atomique via fichier temporaire + rename pour éviter les corruptions."""
-        f = settings.processed_notes_file
-        f.parent.mkdir(parents=True, exist_ok=True)
-        content = json.dumps(processed, ensure_ascii=False, indent=2)
-        tmp_fd, tmp_path = tempfile.mkstemp(dir=f.parent, suffix=".tmp")
-        try:
-            with os.fdopen(tmp_fd, "w", encoding="utf-8") as fh:
-                fh.write(content)
-            os.replace(tmp_path, f)
-        except Exception:
-            try:
-                os.unlink(tmp_path)
-            except OSError:
-                pass
-            raise
+        self._json_store(settings.processed_notes_file).save(processed, ensure_ascii=False, indent=2)
 
     def _mark_processed(self, file_path: str) -> None:
         with self._processed_lock:
             processed = self._load_processed()
-            processed[file_path] = datetime.utcnow().isoformat()
+            processed[file_path] = _utc_now_naive().isoformat()
             self._save_processed(processed)
 
     def _record_processing_time(self, secs: float) -> None:
         """Ajoute une durée (en secondes) à l'historique glissant (max 100 entrées)."""
-        f = settings.processing_times_file
-        f.parent.mkdir(parents=True, exist_ok=True)
-        try:
-            times: list[float] = json.loads(f.read_text(encoding="utf-8")) if f.exists() else []
-        except Exception:
-            times = []
+        store = self._json_store(settings.processing_times_file)
+        times: list[float] = store.load([])
         times.append(round(secs, 1))
         times = times[-100:]  # conserver les 100 dernières mesures
-        tmp_fd, tmp_path = tempfile.mkstemp(dir=f.parent, suffix=".tmp")
         try:
-            with os.fdopen(tmp_fd, "w", encoding="utf-8") as fh:
-                fh.write(json.dumps(times))
-            os.replace(tmp_path, f)
+            store.save(times)
         except Exception:
-            try:
-                os.unlink(tmp_path)
-            except OSError:
-                pass
+            pass
+
+    def _json_store(self, path: Path) -> JsonStateStore:
+        return JsonStateStore(path, os_module=os, tempfile_module=tempfile)
 
     def _is_first_insight_run(self) -> bool:
         """Vrai si le bulk initial n'a jamais été complété.
@@ -215,14 +236,133 @@ class AutoLearner:
             return False
         processed_map = self._load_processed()
         try:
-            all_notes = [
-                n for n in self._chroma.list_notes()
-                if not self._is_obsirag_generated(n["file_path"])
-            ]
+            all_notes = self._list_user_notes()
             unprocessed = sum(1 for n in all_notes if n["file_path"] not in processed_map)
             return unprocessed >= 10
         except Exception:
             return False
+
+    def _list_user_notes(self) -> list[dict]:
+        list_user_notes = getattr(self._chroma, "list_user_notes", None)
+        if callable(list_user_notes):
+            notes = list_user_notes()
+            if isinstance(notes, list):
+                return notes
+        return [
+            note for note in self._chroma.list_notes()
+            if not self._is_obsirag_generated(note["file_path"])
+        ]
+
+    def _select_bulk_pending_notes(
+        self,
+        all_notes: list[dict],
+        processed_map: dict[str, str],
+    ) -> tuple[list[dict], int, int]:
+        already_done = sum(1 for note in all_notes if note["file_path"] in processed_map)
+        pending_notes = [note for note in all_notes if note["file_path"] not in processed_map]
+        pending_total = len(pending_notes)
+        bulk_max = settings.autolearn_bulk_max_notes
+        if bulk_max > 0 and pending_total > bulk_max:
+            logger.info(
+                f"Auto-learner mode accéléré — limité à {bulk_max} notes sur {pending_total} en attente"
+            )
+            pending_notes = pending_notes[:bulk_max]
+            pending_total = len(pending_notes)
+        return pending_notes, pending_total, already_done
+
+    def _warmup_search_backend(
+        self,
+        *,
+        attempts: int = 10,
+        delay_seconds: int = 3,
+        ready_message: str,
+        waiting_prefix: str,
+    ) -> None:
+        for attempt in range(attempts):
+            try:
+                self._chroma.search("warm-up", top_k=1)
+                logger.info(ready_message)
+                return
+            except Exception as warm_exc:
+                logger.info(f"{waiting_prefix} ({attempt + 1}/{attempts}) : {warm_exc}")
+                time.sleep(delay_seconds)
+
+    def _process_and_mark_note(
+        self,
+        note_meta: dict,
+        *,
+        sleep_between_questions: int | None = None,
+        sleep_after_note: int = 0,
+        error_prefix: str,
+    ) -> bool:
+        try:
+            started_at = time.perf_counter()
+            self._process_note(note_meta, sleep_between_questions=sleep_between_questions)
+            self._mark_processed(note_meta["file_path"])
+            if sleep_after_note > 0:
+                time.sleep(sleep_after_note)
+            self._record_processing_time(time.perf_counter() - started_at)
+            return True
+        except Exception as exc:
+            logger.warning(f"{error_prefix} {note_meta['file_path']} : {exc}")
+            return False
+
+    def _finalize_bulk_initial(self) -> None:
+        try:
+            import mlx.core as mx
+            mx.metal.clear_cache()
+            logger.debug("Cache Metal MLX libéré (fin mode accéléré)")
+        except Exception:
+            pass
+        if not self._ui_active_fn():
+            logger.info("Auto-learner bulk : UI inactif — déchargement du modèle MLX")
+            try:
+                self._rag._llm.unload()
+            except Exception as exc:
+                logger.warning(f"Auto-learner bulk : erreur déchargement modèle : {exc}")
+        self.processing_status["bulk_pending_total"] = 0
+        self.processing_status["bulk_new_done"] = 0
+        try:
+            flag_file = settings.bulk_done_flag_file
+            flag_file.parent.mkdir(parents=True, exist_ok=True)
+            flag_file.touch()
+        except Exception:
+            pass
+        self._bulk_initial_done.set()
+        self._clear_status()
+
+    def _recent_cycle_notes(
+        self,
+        processed_map: dict[str, str],
+        cutoff_iso: str,
+    ) -> list[dict]:
+        since = _utc_now_naive() - timedelta(hours=settings.autolearn_lookback_hours)
+        recent = self._chroma.get_recently_modified(since)
+        return [
+            note for note in recent
+            if not self._is_obsirag_generated(note["file_path"])
+            and not (processed_map.get(note["file_path"], "") > cutoff_iso)
+        ]
+
+    def _fullscan_cycle_notes(
+        self,
+        all_notes: list[dict],
+        processed_map: dict[str, str],
+        cutoff_iso: str,
+        processed_in_pass1: set[str],
+    ) -> list[dict]:
+        def _sort_key(note: dict) -> str:
+            return processed_map.get(note["file_path"], "")
+
+        return [
+            note for note in sorted(all_notes, key=_sort_key)
+            if note["file_path"] not in processed_in_pass1
+            and not self._is_obsirag_generated(note["file_path"])
+            and not (
+                processed_map.get(note["file_path"], "")
+                and processed_map.get(note["file_path"], "") > cutoff_iso
+            )
+        ]
 
     def _run_bulk_initial(self) -> None:
         """Passe initiale accélérée : traite toutes les notes non traitées sans limite de quota
@@ -239,89 +379,46 @@ class AutoLearner:
             # Pré-calcul immédiat de pending_total (list_notes n'utilise pas les embeddings)
             # → bulk_pending_total visible dans le panel Insights dès le lancement du thread,
             #   sans attendre la fin du warm-up.
-            all_notes = [
-                n for n in self._chroma.list_notes()
-                if not self._is_obsirag_generated(n["file_path"])
-            ]
+            all_notes = self._list_user_notes()
             processed_map = self._load_processed()
-            already_done = sum(1 for n in all_notes if n["file_path"] in processed_map)
-            pending_notes = [n for n in all_notes if n["file_path"] not in processed_map]
-            pending_total = len(pending_notes)
-            bulk_max = settings.autolearn_bulk_max_notes
-            if bulk_max > 0 and len(pending_notes) > bulk_max:
-                logger.info(
-                    f"Auto-learner mode accéléré — limité à {bulk_max} notes sur {pending_total} en attente"
-                )
-                pending_notes = pending_notes[:bulk_max]
-                pending_total = len(pending_notes)
+            pending_notes, pending_total, already_done = self._select_bulk_pending_notes(
+                all_notes,
+                processed_map,
+            )
             new_done = 0
             self.processing_status["bulk_pending_total"] = pending_total
             self.processing_status["bulk_new_done"] = 0
             logger.info(f"Auto-learner mode accéléré — {pending_total} note(s) à traiter ({already_done} déjà traitées)")
 
             # Warm-up : attendre que le modèle d'embedding soit prêt pour la recherche
-            for attempt in range(10):
-                try:
-                    self._chroma.search("warm-up", top_k=1)
-                    logger.info("Auto-learner mode accéléré — embedding prêt, démarrage du bulk")
-                    break
-                except Exception as warm_exc:
-                    logger.info(f"Auto-learner : attente embedding ({attempt + 1}/10) : {warm_exc}")
-                    time.sleep(3)
+            self._warmup_search_backend(
+                ready_message="Auto-learner mode accéléré — embedding prêt, démarrage du bulk",
+                waiting_prefix="Auto-learner : attente embedding",
+            )
 
             for note_meta in pending_notes:
-                try:
-                    _t0 = time.perf_counter()
-                    self._set_status(
-                        note=note_meta.get("title", note_meta["file_path"]),
-                        step=f"[Accéléré] {new_done + 1}/{pending_total} — en cours…",
-                    )
-                    self._process_note(
-                        note_meta,
-                        sleep_between_questions=self._FAST_SLEEP_BETWEEN_QUESTIONS,
-                    )
-                    self._mark_processed(note_meta["file_path"])
+                self._set_status(
+                    note=note_meta.get("title", note_meta["file_path"]),
+                    step=f"[Accéléré] {new_done + 1}/{pending_total} — en cours…",
+                )
+                if self._process_and_mark_note(
+                    note_meta,
+                    sleep_between_questions=self._FAST_SLEEP_BETWEEN_QUESTIONS,
+                    sleep_after_note=self._FAST_SLEEP_BETWEEN_NOTES,
+                    error_prefix="Auto-learner accéléré : erreur sur",
+                ):
                     new_done += 1
                     self.processing_status["bulk_new_done"] = new_done
-                    # Mise à jour du statut APRÈS marquage → cohérence avec Insights
                     self._set_status(
                         note=note_meta.get("title", note_meta["file_path"]),
                         step=f"[Accéléré] {new_done}/{pending_total} ✓",
                     )
-                    time.sleep(self._FAST_SLEEP_BETWEEN_NOTES)
-                    self._record_processing_time(time.perf_counter() - _t0)
-                except Exception as exc:
-                    logger.warning(f"Auto-learner accéléré : erreur sur {note_meta['file_path']} : {exc}")
 
             logger.info(f"Auto-learner mode accéléré terminé — {new_done}/{pending_total} note(s) traitée(s)")
         except Exception as exc:
             logger.error(f"Auto-learner bulk initial error : {exc}")
         finally:
-            try:
-                import mlx.core as mx
-                mx.metal.clear_cache()
-                logger.debug("Cache Metal MLX libéré (fin mode accéléré)")
-            except Exception:
-                pass
-            if not self._ui_active_fn():
-                logger.info("Auto-learner bulk : UI inactif — déchargement du modèle MLX")
-                try:
-                    self._rag._llm.unload()
-                except Exception as exc:
-                    logger.warning(f"Auto-learner bulk : erreur déchargement modèle : {exc}")
-            # Remettre bulk_pending_total à zéro : la page Insights retombe
-            # sur le calcul standard basé sur processed_map
-            self.processing_status["bulk_pending_total"] = 0
-            self.processing_status["bulk_new_done"] = 0
-            # Marquer le bulk comme terminé pour ne plus le relancer aux prochains démarrages
-            try:
-                f = settings.bulk_done_flag_file
-                f.parent.mkdir(parents=True, exist_ok=True)
-                f.touch()
-            except Exception:
-                pass
-            self._bulk_initial_done.set()
-            self._clear_status()
+            self._finalize_bulk_initial()
 
     def start(self) -> None:
         interval = settings.autolearn_interval_minutes
@@ -348,7 +445,7 @@ class AutoLearner:
                     "interval",
                     minutes=interval,
                     id="autolearn_cycle",
-                    next_run_time=datetime.utcnow() + timedelta(minutes=5),
+                    next_run_time=_utc_now() + timedelta(minutes=5),
                 )
                 logger.info("Auto-learner mode accéléré terminé — cycle normal activé")
             threading.Thread(target=_wait_and_schedule, daemon=True, name="autolearn-scheduler-init").start()
@@ -359,7 +456,7 @@ class AutoLearner:
                 "interval",
                 minutes=interval,
                 id="autolearn_cycle",
-                next_run_time=datetime.utcnow() + timedelta(minutes=5),
+                next_run_time=_utc_now() + timedelta(minutes=5),
             )
 
         # Synthèse hebdomadaire le dimanche à 20h UTC.
@@ -405,11 +502,8 @@ class AutoLearner:
     def log_user_query(self, query: str) -> None:
         """Enregistre une requête utilisateur et signale l'activité."""
         self.signal_user_activity()
-        entry = {"ts": datetime.utcnow().isoformat(), "query": query}
-        f = settings.queries_file
-        f.parent.mkdir(parents=True, exist_ok=True)
-        with f.open("a", encoding="utf-8") as fh:
-            fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        entry = {"ts": _utc_now_naive().isoformat(), "query": query}
+        self._json_store(settings.queries_file).append_json_line(entry)
 
     # ---- Cycle principal ----
 
@@ -430,13 +524,7 @@ class AutoLearner:
     def _persist_status(self) -> None:
         """Écrit processing_status dans un fichier JSON pour survivre aux redémarrages."""
         try:
-            f = settings.processing_status_file
-            f.parent.mkdir(parents=True, exist_ok=True)
-            content = json.dumps(self.processing_status, ensure_ascii=False)
-            tmp_fd, tmp_path = tempfile.mkstemp(dir=f.parent, suffix=".tmp")
-            with os.fdopen(tmp_fd, "w", encoding="utf-8") as fh:
-                fh.write(content)
-            os.replace(tmp_path, f)
+            self._json_store(settings.processing_status_file).save(self.processing_status, ensure_ascii=False)
         except Exception:
             pass
 
@@ -448,6 +536,7 @@ class AutoLearner:
         return "/obsirag/" in p or p.startswith("obsirag/")
 
     def _run_cycle(self) -> None:
+        cycle_started_at = time.perf_counter()
         # Vérification de la plage horaire autorisée
         current_hour = datetime.now().hour
         h_start = settings.autolearn_active_hour_start
@@ -466,11 +555,11 @@ class AutoLearner:
             logger.error(f"Auto-learner : impossible de charger le modèle LLM : {exc}")
             return
         try:
-            # Vérifier qu'Ollama est prêt avant de démarrer le cycle
+            # Vérifier que la couche de recherche / embeddings est prête avant de démarrer le cycle
             try:
                 self._chroma.search("warm-up", top_k=1)
             except Exception as warm_exc:
-                logger.warning(f"Auto-learner : Ollama non prêt, cycle annulé : {warm_exc}")
+                logger.warning(f"Auto-learner : backend de recherche non prêt, cycle annulé : {warm_exc}")
                 return
 
             processed_count = 0
@@ -478,64 +567,40 @@ class AutoLearner:
 
             # Seuil commun aux deux passes : ne pas retraiter avant N jours
             min_reprocess_delta = timedelta(days=settings.autolearn_min_reprocess_days)
-            cutoff_iso = (datetime.utcnow() - min_reprocess_delta).isoformat()
+            cutoff_iso = (_utc_now_naive() - min_reprocess_delta).isoformat()
 
             # Pass 1 — notes récemment modifiées (hors notes générées par ObsiRAG)
-            since = datetime.utcnow() - timedelta(hours=settings.autolearn_lookback_hours)
-            recent = self._chroma.get_recently_modified(since)
-            recent_filtered = [
-                n for n in recent
-                if not self._is_obsirag_generated(n["file_path"])
-                and not (
-                    processed_map.get(n["file_path"], "") > cutoff_iso
-                )
-            ]
+            recent_filtered = self._recent_cycle_notes(processed_map, cutoff_iso)
             for note_meta in recent_filtered[: settings.autolearn_max_notes_per_run]:
                 self._wait_for_idle(note_meta.get("title", ""))
-                try:
-                    _t0 = time.perf_counter()
-                    self._process_note(note_meta)
-                    self._mark_processed(note_meta["file_path"])
+                if self._process_and_mark_note(
+                    note_meta,
+                    sleep_after_note=self._SLEEP_BETWEEN_NOTES,
+                    error_prefix="Auto-learner : erreur sur",
+                ):
                     processed_count += 1
-                    time.sleep(self._SLEEP_BETWEEN_NOTES)
-                    self._record_processing_time(time.perf_counter() - _t0)
-                except Exception as exc:
-                    logger.warning(f"Auto-learner : erreur sur {note_meta['file_path']} : {exc}")
 
             # Pass 2 — full-scan progressif : notes jamais traitées ou les plus anciennes
             all_notes = self._chroma.list_notes()
-            # Trie : jamais traitées d'abord, puis par date de traitement croissante
-            def _sort_key(n: dict) -> str:
-                return processed_map.get(n["file_path"], "")  # "" < toute date ISO
-
             processed_in_pass1 = {n["file_path"] for n in recent_filtered[: settings.autolearn_max_notes_per_run]}
-            pending = sorted(all_notes, key=_sort_key)
+            pending = self._fullscan_cycle_notes(
+                all_notes,
+                processed_map,
+                cutoff_iso,
+                processed_in_pass1,
+            )
             quota = settings.autolearn_fullscan_per_run
             for note_meta in pending:
                 if quota <= 0:
                     break
-                fp = note_meta["file_path"]
-                # Sauter les notes générées par ObsiRAG
-                if self._is_obsirag_generated(fp):
-                    continue
-                # Sauter les notes déjà traitées dans ce cycle (pass 1)
-                if fp in processed_in_pass1:
-                    continue
-                # Sauter si traitée récemment (< N jours)
-                last_processed = processed_map.get(fp, "")
-                if last_processed and last_processed > cutoff_iso:
-                    continue
                 self._wait_for_idle(note_meta.get("title", ""))
-                try:
-                    _t0 = time.perf_counter()
-                    self._process_note(note_meta)
-                    self._mark_processed(fp)
+                if self._process_and_mark_note(
+                    note_meta,
+                    sleep_after_note=self._SLEEP_BETWEEN_NOTES,
+                    error_prefix="Auto-learner full-scan : erreur sur",
+                ):
                     processed_count += 1
                     quota -= 1
-                    time.sleep(self._SLEEP_BETWEEN_NOTES)
-                    self._record_processing_time(time.perf_counter() - _t0)
-                except Exception as exc:
-                    logger.warning(f"Auto-learner full-scan : erreur sur {fp} : {exc}")
 
             logger.info(f"Auto-learner : {processed_count} note(s) traitée(s)")
 
@@ -546,6 +611,10 @@ class AutoLearner:
         except Exception as exc:
             logger.error(f"Auto-learner cycle error : {exc}")
         finally:
+            try:
+                self._metrics.observe("autolearn_cycle_seconds", time.perf_counter() - cycle_started_at)
+            except Exception:
+                pass
             try:
                 import mlx.core as mx
                 mx.metal.clear_cache()
@@ -568,88 +637,20 @@ class AutoLearner:
         if not chunks:
             logger.warning(f"Auto-learner : aucun chunk trouvé pour '{title}'")
             self._set_status(note=title, step="⚠️ Aucun chunk trouvé, note ignorée")
+            try:
+                self._metrics.increment("autolearn_notes_skipped_total")
+            except Exception:
+                pass
             return
 
         content_preview = "\n\n".join(c["text"] for c in chunks[:3])
-
-        asked_questions: list[str] = []
-        qa_pairs: list[dict] = []
-
-        for attempt in range(1, self._MAX_QUESTION_RETRIES + 1):
-            self._set_status(note=title, step=f"Génération de la question (tentative {attempt}/{self._MAX_QUESTION_RETRIES})…")
-            questions = self._generate_questions(content_preview, already_asked=asked_questions if asked_questions else None)
-            if not questions:
-                logger.warning(f"Auto-learner : aucune question générée pour '{title}' (tentative {attempt})")
-                break
-
-            question = questions[0]
-            asked_questions.append(question)
-            logger.info(f"Auto-learner : question générée (tentative {attempt}) : '{question[:80]}'")
-
-            if _sleep_q > 0 and attempt > 1:
-                time.sleep(_sleep_q)
-
-            try:
-                # 1. Web en premier — source principale de connaissance nouvelle
-                self._set_status(note=title, step=f"Tentative {attempt} — Recherche web : {question[:60]}…")
-                web_results = self._web_search(question)
-                web_snippets = [r["body"] for r in web_results if r.get("body")]
-
-                # 2. RAG pour contexte personnel (secondaire)
-                _, sources = self._rag.query(question)
-                rag_context = "\n\n".join(
-                    c.get("text", "")[:400] for c in sources[:2]
-                ) if sources else "Aucune note personnelle sur ce sujet."
-
-                # 3. Synthèse : web + contexte coffre
-                if web_snippets and self._snippets_relevant(question, web_snippets):
-                    fitted_rag, fitted_web = self._fit_context(
-                        rag_context,
-                        "\n\n".join(web_snippets[:3]),
-                    )
-                    prompt = _WEB_ANSWER_PROMPT.format(
-                        question=question,
-                        rag_context=fitted_rag,
-                        web_context=fitted_web,
-                    )
-                    try:
-                        answer = self._rag._llm.chat(
-                            [{"role": "user", "content": prompt}],
-                            temperature=0.3,
-                            max_tokens=self._MAX_TOKENS_RESPONSE,
-                            operation="autolearn_enrich",
-                        )
-                        provenance = "Web + Coffre" if sources else "Web"
-                        logger.info(f"Auto-learner : réponse web pour '{question[:60]}'")
-                    except Exception:
-                        # Fallback LLM échoué → RAG seul, pas de snippets bruts
-                        answer, sources = self._rag.query(question)
-                        web_results = []
-                        provenance = "Coffre"
-                else:
-                    # Fallback : réponse RAG seule
-                    answer, sources = self._rag.query(question)
-                    web_results = []
-                    provenance = "Coffre"
-
-                # Réponse faible → nouvelle question à la prochaine itération
-                if self._is_weak_answer(answer):
-                    self._set_status(note=title, step=f"Tentative {attempt} — Réponse insuffisante, nouvelle question…")
-                    logger.debug(f"Réponse faible (tentative {attempt}), nouvelle question demandée pour '{title}'")
-                    continue
-
-                qa_pairs.append({
-                    "question": question,
-                    "answer": answer,
-                    "sources": [s["metadata"].get("file_path", "") for s in sources[:3]],
-                    "web_refs": [{"title": r.get("title", r.get("href", "")), "url": r.get("href", "")} for r in web_results],
-                    "provenance": provenance,
-                })
-                break  # réponse satisfaisante obtenue
-
-            except Exception as exc:
-                logger.warning(f"Auto-learner QA failed pour '{title}' (tentative {attempt}) : {exc}")
-                break
+        qa_pair = self._question_answering.generate_valid_qa_pair(
+            title,
+            content_preview,
+            sleep_between_questions=_sleep_q,
+            max_retries=self._MAX_QUESTION_RETRIES,
+        )
+        qa_pairs = [qa_pair] if qa_pair else []
 
         if qa_pairs:
             self._set_status(note=title, step=f"Sauvegarde de l'insight ({len(qa_pairs)} Q&A)…")
@@ -658,6 +659,10 @@ class AutoLearner:
         else:
             self._set_status(note=title, step="⚠️ Aucune réponse QA valide, insight non créé")
             logger.warning(f"Auto-learner : aucune réponse QA pour '{title}', artefact non créé")
+            try:
+                self._metrics.increment("autolearn_notes_skipped_total")
+            except Exception:
+                pass
 
         # ---- Auto-renommage : titre représentatif via IA ----
         # Restriction : uniquement les notes dans obsirag/ (insights, rapports internes…)
@@ -699,7 +704,7 @@ class AutoLearner:
     ) -> tuple[str, str]:
         """
         Tronque rag_ctx et web_ctx pour que le prompt complet respecte la fenêtre
-        de contexte du modèle (settings.ollama_context_size).
+        de contexte configuré (settings.ollama_context_size).
 
         Budget = (n_ctx - max_tokens_réponse) × 4 chars/token − overhead
         Allocation : 30 % pour rag_ctx, 70 % pour web_ctx.
@@ -737,331 +742,37 @@ class AutoLearner:
 
     @staticmethod
     def _fetch_url_content(url: str, max_chars: int = 3000) -> str:
-        """Fetche le contenu textuel d'une URL. Retourne une chaîne vide en cas d'échec."""
-        # Ignorer les PDFs — texte extrait sans espaces, inutilisable
-        if url.lower().endswith(".pdf") or "/pdf" in url.lower():
-            logger.debug(f"URL PDF ignorée : {url[:60]}")
-            return ""
-        try:
-            import urllib.request
-            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-            with urllib.request.urlopen(req, timeout=8) as resp:
-                content_type = resp.headers.get("Content-Type", "")
-                if "pdf" in content_type.lower():
-                    return ""
-                raw = resp.read(50_000).decode("utf-8", errors="ignore")
-            # Extraction texte brut : supprimer balises HTML
-            text = re.sub(r"<style[^>]*>.*?</style>", " ", raw, flags=re.DOTALL | re.IGNORECASE)
-            text = re.sub(r"<script[^>]*>.*?</script>", " ", text, flags=re.DOTALL | re.IGNORECASE)
-            text = re.sub(r"<[^>]+>", " ", text)
-            # Réparer les mots collés : insérer espace avant une majuscule précédée d'une minuscule
-            text = re.sub(r"([a-zàéèêëîïôùûüç])([A-ZÀÉÈÊËÎÏÔÙÛÜÇ])", r"\1 \2", text)
-            text = re.sub(r"\s+", " ", text).strip()
-            # Rejeter si trop de mots collés :
-            # 1. Ratio espaces/chars trop bas
-            if len(text) > 100 and text.count(" ") / len(text) < 0.05:
-                return ""
-            # 2. Trop de "mots" très longs (>15 chars) = mots collés sans majuscule
-            words = text.split()
-            if words:
-                long_words = sum(1 for w in words if len(w) > 15 and w.isalpha())
-                if long_words / len(words) > 0.15:
-                    return ""
-            return text[:max_chars]
-        except Exception:
-            return ""
+        return AutoLearnWebEnrichment.fetch_url_content(url, max_chars=max_chars)
 
     def _synthesize_web_sources(self, note_title: str, qa_pairs: list[dict]) -> str:
-        """Fetche et synthétise le contenu des URLs citées dans les Q&A."""
-        all_refs: list[dict] = []
-        seen_urls: set[str] = set()
-        for qa in qa_pairs:
-            for ref in qa.get("web_refs", []):
-                url = ref.get("url", "")
-                if url and url not in seen_urls:
-                    seen_urls.add(url)
-                    all_refs.append(ref)
-
-        if not all_refs:
-            return ""
-
-        fetched: list[str] = []
-        for ref in all_refs[:4]:  # max 4 URLs
-            content = self._fetch_url_content(ref["url"])
-            if content:
-                fetched.append(f"### {ref.get('title', ref['url'])}\n{content}")
-                logger.debug(f"Fetché : {ref['url'][:60]}")
-
-        if not fetched:
-            return ""
-
-        # Budget : tout alloué au contenu web (pas de rag_ctx ici)
-        _, combined_fitted = self._fit_context("", "\n\n".join(fetched), overhead=300)
-        prompt = (
-            f"Sujet : {note_title}\n\n"
-            f"Voici le contenu de {len(fetched)} source(s) web citées dans les insights :\n\n"
-            f"{combined_fitted}\n\n"
-            f"Rédige une synthèse structurée en français (max 400 mots) qui extrait "
-            f"les informations clés, faits importants et apports de connaissance de ces sources. "
-            f"Format : paragraphes courts avec sous-titres Markdown si pertinent."
-        )
-        try:
-            return self._rag._llm.chat(
-                [{"role": "user", "content": prompt}],
-                temperature=0.3,
-                max_tokens=self._MAX_TOKENS_RESPONSE,
-                operation="autolearn_web_synthesis",
-            )
-        except Exception as exc:
-            logger.debug(f"Synthèse sources web échouée : {exc}")
-            return ""
+        return self._web_enrichment.synthesize_web_sources(note_title, qa_pairs)
 
     def _web_search(self, query: str) -> list[dict]:
-        """Retourne une liste de {body, href, title} filtrée sur les domaines fiables."""
-        try:
-            from ddgs import DDGS
-            # Enrichir la requête pour orienter vers du contenu académique/informatif
-            enriched_query = f"{query} explication analyse histoire contexte"
-            with DDGS() as ddgs:
-                results = list(ddgs.text(enriched_query, max_results=15))
-            trusted = [
-                r for r in results
-                if any(d in r.get("href", "") for d in self._TRUSTED_DOMAINS)
-            ]
-            selected = trusted[:3] if trusted else results[:3]
-            return [r for r in selected if r.get("body")]
-        except Exception as exc:
-            logger.debug(f"Web search échouée : {exc}")
-            return []
+        return self._web_enrichment.web_search(query)
 
     @staticmethod
     def _snippets_relevant(question: str, snippets: list[str]) -> bool:
-        """Vérifie que les snippets web contiennent au moins un mot-clé de la question."""
-        words = [w.lower() for w in re.findall(r"\b\w{5,}\b", question)]
-        if not words or not snippets:
-            return bool(snippets)
-        combined = " ".join(snippets).lower()
-        # Seuil très bas : 1 seul mot suffit pour considérer les snippets pertinents
-        return any(w in combined for w in words)
+        return AutoLearnWebEnrichment.snippets_relevant(question, snippets)
 
     def _enrich_with_web(self, question: str, rag_answer: str, web_snippets: list[str]) -> str:
-        # Vérifier la pertinence des sources avant d'enrichir
-        if not self._snippets_relevant(question, web_snippets):
-            logger.debug(f"Sources web hors sujet pour : {question[:60]}")
-            return rag_answer
-
-        _, context_fitted = self._fit_context("", "\n\n".join(web_snippets[:3]), overhead=300)
-        prompt = (
-            f"Question : {question}\n\n"
-            f"Sources web :\n{context_fitted}\n\n"
-            f"Rédige une réponse structurée et informative en français, en t'appuyant principalement "
-            f"sur les sources web ci-dessus. Apporte des faits concrets, des chiffres, des exemples "
-            f"et du contexte qui enrichissent la compréhension du sujet. Sois précis et complet."
-        )
-        try:
-            return self._rag._llm.chat(
-                [{"role": "user", "content": prompt}],
-                temperature=0.3,
-                max_tokens=self._MAX_TOKENS_RESPONSE,
-                operation="autolearn_enrich",
-            )
-        except Exception as exc:
-            logger.debug(f"Enrichissement web échoué : {exc}")
-            return rag_answer
+        return self._web_enrichment.enrich_with_web(question, rag_answer, web_snippets)
 
     def _generate_questions(self, content: str, already_asked: list[str] | None = None) -> list[str]:
-        try:
-            if already_asked:
-                lines = "\n".join(f"- {q}" for q in already_asked)
-                already_asked_section = f"\n<deja_posees>\nCes questions ont déjà été posées et ont obtenu une réponse insuffisante. Génère une question DIFFÉRENTE :\n{lines}\n</deja_posees>\n"
-            else:
-                already_asked_section = ""
-            prompt = _QUESTION_PROMPT.format(
-                content=content[:3000],
-                already_asked_section=already_asked_section,
-            )
-            answer = self._rag._llm.chat(
-                [{"role": "user", "content": prompt}],
-                temperature=0.7,
-                max_tokens=150,
-                operation="autolearn_questions",
-            )
-            _prefix = re.compile(r"^[•\*\-]?\s*(?:Q\d+[.:）]|Question\s*\d*[.:]|\d+[.)]\s*)?\s*", re.I)
-            for line in answer.strip().splitlines():
-                cleaned = _prefix.sub("", line.strip()).strip()
-                if len(cleaned) > 10 and cleaned.endswith("?"):
-                    return [cleaned]
-            return []
-        except Exception as exc:
-            logger.debug(f"Génération de question échouée : {exc}")
-            return []
+        return self._web_enrichment.generate_questions(content, already_asked=already_asked)
 
     def _load_wuddai_entities(self) -> list[dict]:
-        """Retourne la liste des entités officielles WUDD.ai (cache disque 24h)."""
-        cache_file = settings.data_dir / "wuddai_entities_cache.json"
-        if cache_file.exists():
-            try:
-                cached = json.loads(cache_file.read_text(encoding="utf-8"))
-                fetched_at = datetime.fromisoformat(cached.get("fetched_at", "2000-01-01"))
-                if datetime.utcnow() - fetched_at < timedelta(hours=24):
-                    return cached["entities"]
-            except Exception:
-                pass
-        try:
-            import urllib.request
-            url = f"{settings.wuddai_entities_url}/api/entities/export?limit=5000&images=true"
-            req = urllib.request.Request(url, headers={"User-Agent": "ObsiRAG/1.0"})
-            with urllib.request.urlopen(req, timeout=10) as resp:
-                data = json.loads(resp.read().decode("utf-8"))
-            entities = [
-                {
-                    "type":             e["type"],
-                    "value":            e["value"],
-                    "value_normalized": _normalize_entity_name(e["value"]),
-                    "mentions":         e.get("mentions", 0),
-                    "image_url":        e.get("image", {}).get("url") if e.get("image") else None,
-                }
-                for e in data.get("entities", [])
-            ]
-            cache_file.parent.mkdir(parents=True, exist_ok=True)
-            cache_file.write_text(
-                json.dumps({"fetched_at": datetime.utcnow().isoformat(), "entities": entities},
-                           ensure_ascii=False, indent=2),
-                encoding="utf-8",
-            )
-            logger.info(f"WUDD.ai entities cache rafraîchi : {len(entities)} entités")
-            return entities
-        except Exception as exc:
-            logger.warning(f"Impossible de charger les entités WUDD.ai : {exc}")
-            return []
+        return self._entity_services.load_wuddai_entities()
 
     def _extract_validated_entities(self, text: str) -> tuple[list[str], list[dict]]:
-        """
-        Valide les entités NER du texte contre la liste officielle WUDD.ai.
-        Seules les entités présentes dans WUDD.ai sont retenues.
-        Retourne (tags, entity_images) où entity_images = [{type, value, image_url, mentions}].
-        """
-        wuddai_entities = self._load_wuddai_entities()
-        if not wuddai_entities:
-            # Fallback : extraction spaCy seule sans validation
-            return self._entities_to_tags_spacy(text), []
-
-        # Index par valeur normalisée
-        wuddai_index: dict[str, dict] = {e["value_normalized"]: e for e in wuddai_entities}
-
-        # Extraction spaCy (candidats bruts)
-        try:
-            from src.vault.parser import get_nlp
-            nlp = get_nlp()
-            doc = nlp(text[:10_000])
-            candidates = [(ent.text.strip(), ent.label_) for ent in doc.ents if len(ent.text.strip()) >= 3]
-        except Exception:
-            candidates = []
-
-        tags: list[str] = []
-        entity_images: list[dict] = []
-        seen_tags: set[str] = set()
-        seen_values: set[str] = set()
-
-        for raw_value, _spacy_label in candidates:
-            normalized = _normalize_entity_name(raw_value)
-            if not normalized:
-                continue
-            # Recherche exacte dans l'index WUDD.ai
-            match = wuddai_index.get(normalized)
-            if not match:
-                # Recherche partielle (ex : "OpenAI" ↔ "OpenAI Inc.")
-                for key, entity in wuddai_index.items():
-                    if (normalized in key or key in normalized) and abs(len(normalized) - len(key)) <= 5:
-                        match = entity
-                        break
-            if not match:
-                continue  # entité non officielle : ignorée
-
-            official_value = match["value"]
-            official_type  = match["type"]
-            prefix = _WUDDAI_TYPE_TO_PREFIX.get(official_type)
-            if not prefix:
-                continue
-
-            slug = re.sub(r"[^\w\s-]", "", _normalize_entity_name(official_value))
-            slug = re.sub(r"[\s_]+", "-", slug)
-            tag  = f"{prefix}/{slug}"
-            if tag not in seen_tags:
-                seen_tags.add(tag)
-                tags.append(tag)
-
-            # Collecter l'image pour les types prioritaires
-            if official_type in _WUDDAI_IMAGE_TYPES and match.get("image_url") and official_value not in seen_values:
-                seen_values.add(official_value)
-                entity_images.append({
-                    "type":      official_type,
-                    "value":     official_value,
-                    "image_url": match["image_url"],
-                    "mentions":  match.get("mentions", 0),
-                })
-
-        # Tri : ordre de priorité des types, puis mentions décroissantes
-        entity_images.sort(key=lambda e: (
-            _WUDDAI_IMAGE_TYPES.index(e["type"]) if e["type"] in _WUDDAI_IMAGE_TYPES else 99,
-            -e["mentions"],
-        ))
-        return tags[:20], entity_images
+        return self._entity_services.extract_validated_entities(text)
 
     @staticmethod
     def _entities_to_tags_spacy(text: str) -> list[str]:
-        """Extraction NER spaCy seule (fallback si WUDD.ai inaccessible)."""
-        try:
-            from src.vault.parser import get_nlp
-            nlp = get_nlp()
-            doc = nlp(text[:10_000])
-            tags: list[str] = []
-            seen: set[str] = set()
-            for ent in doc.ents:
-                value = ent.text.strip()
-                if not value or len(value) < 3:
-                    continue
-                label = ent.label_
-                if label == "PER":
-                    prefix = "personne"
-                elif label == "ORG":
-                    prefix = "org"
-                elif label in ("LOC", "GPE"):
-                    prefix = "lieu"
-                else:
-                    continue
-                slug = unicodedata.normalize("NFD", value.lower())
-                slug = "".join(c for c in slug if unicodedata.category(c) != "Mn")
-                slug = re.sub(r"[^\w\s-]", "", slug).strip()
-                slug = re.sub(r"[\s_]+", "-", slug)
-                tag = f"{prefix}/{slug}"
-                if tag not in seen:
-                    seen.add(tag)
-                    tags.append(tag)
-            return tags[:20]
-        except Exception:
-            return []
+        return AutoLearnEntityServices.entities_to_tags_spacy(text)
 
     @staticmethod
     def _build_entity_image_gallery(entity_images: list[dict]) -> str:
-        """
-        Construit une table Markdown avec les images des entités principales.
-        Top 1 par type prioritaire (PERSON, ORG, GPE, PRODUCT).
-        """
-        if not entity_images:
-            return ""
-        # Top 1 par type (déjà triées par priorité + mentions)
-        by_type: dict[str, dict] = {}
-        for e in entity_images:
-            if e["type"] not in by_type:
-                by_type[e["type"]] = e
-        selected = [by_type[t] for t in _WUDDAI_IMAGE_TYPES if t in by_type]
-        if not selected:
-            return ""
-        header = " | ".join(f"![{e['value']}]({e['image_url']})" for e in selected)
-        labels = " | ".join(f"**{e['value']}**"                           for e in selected)
-        sep    = " | ".join(":---:"                                        for _ in selected)
-        return f"| {header} |\n| {sep} |\n| {labels} |\n"
+        return AutoLearnEntityServices.build_entity_image_gallery(entity_images)
 
     # ---- Helpers frontmatter ----
 
@@ -1101,47 +812,7 @@ class AutoLearner:
         return tags
 
     def _fetch_gpe_coordinates(self, entity_name: str) -> tuple[float, float] | None:
-        """Retourne (lat, lng) pour une entité GPE/LOC via Wikipedia, avec cache disque."""
-        cache_file = settings.data_dir / "geocode_cache.json"
-        try:
-            cache: dict = json.loads(cache_file.read_text(encoding="utf-8")) if cache_file.exists() else {}
-        except Exception:
-            cache = {}
-
-        key = _normalize_entity_name(entity_name)
-        if key in cache:
-            return tuple(cache[key]) if cache[key] else None  # type: ignore[return-value]
-
-        coords = None
-        for lang in ("fr", "en"):
-            try:
-                import urllib.request, urllib.parse
-                params = urllib.parse.urlencode({
-                    "action": "query", "prop": "coordinates",
-                    "titles": entity_name, "format": "json", "redirects": "1",
-                })
-                url = f"https://{lang}.wikipedia.org/w/api.php?{params}"
-                req = urllib.request.Request(url, headers={"User-Agent": "ObsiRAG/1.0"})
-                with urllib.request.urlopen(req, timeout=5) as resp:
-                    data = json.loads(resp.read().decode("utf-8"))
-                pages = data.get("query", {}).get("pages", {})
-                for page in pages.values():
-                    c = page.get("coordinates", [])
-                    if c:
-                        coords = (c[0]["lat"], c[0]["lon"])
-                        break
-                if coords:
-                    break
-            except Exception:
-                pass
-
-        cache[key] = list(coords) if coords else None
-        try:
-            cache_file.parent.mkdir(parents=True, exist_ok=True)
-            cache_file.write_text(json.dumps(cache, ensure_ascii=False, indent=2), encoding="utf-8")
-        except Exception:
-            pass
-        return coords
+        return self._entity_services.fetch_gpe_coordinates(entity_name)
 
     @staticmethod
     def _add_location_to_frontmatter(content: str, lat: float, lng: float) -> str:
@@ -1173,46 +844,47 @@ class AutoLearner:
     # ---- Recherche et mise à jour d'artefacts existants ----
 
     def _find_existing_insight(self, note_title: str, ner_tags: list[str]) -> Path | None:
-        """Cherche un artefact insight existant par titre de note ou overlap NER.
+        return self._artifact_writer.find_existing_insight(note_title, ner_tags)
 
-        Critères (par ordre de priorité) :
-        1. Le stem du fichier commence par safe_name (même note)
-        2. ≥ 2 tags NER en commun (même thématique)
-        Retourne le chemin du fichier le plus pertinent, ou None.
-        """
-        insights_root = settings.insights_dir
-        if not insights_root.exists():
-            return None
+    @staticmethod
+    def _wikilink(file_path: str) -> str:
+        return AutoLearnArtifactWriter.wikilink(file_path)
 
-        safe_name = re.sub(r"[^\w\s-]", "", note_title).strip().replace(" ", "_")[:60].lower()
-        new_ner_set = {t for t in ner_tags if "/" in t}
+    @staticmethod
+    def _compute_global_provenance(qa_pairs: list[dict]) -> str:
+        return AutoLearnArtifactWriter.compute_global_provenance(qa_pairs)
 
-        best_path: Path | None = None
-        best_score = 0
+    def _render_qa_sections(self, qa_pairs: list[dict], *, start_index: int = 1, provenance: str) -> list[str]:
+        return self._artifact_writer.render_qa_sections(qa_pairs, start_index=start_index, provenance=provenance)
 
-        for path in insights_root.rglob("*.md"):
-            score = 0
-            # Critère 1 : titre
-            if path.stem.lower().startswith(safe_name):
-                score += 10
-            # Critère 2 : overlap NER via frontmatter
-            if new_ner_set:
-                try:
-                    existing_tags = self._read_frontmatter_tags(
-                        path.read_text(encoding="utf-8")
-                    )
-                    existing_ner = {t for t in existing_tags if "/" in t}
-                    overlap = len(new_ner_set & existing_ner)
-                    if overlap >= 2:
-                        score += overlap * 2
-                except Exception:
-                    pass
-            if score > best_score:
-                best_score = score
-                best_path = path
+    def _render_web_synthesis_section(self, note_title: str, qa_pairs: list[dict]) -> list[str]:
+        return self._artifact_writer.render_web_synthesis_section(note_title, qa_pairs)
 
-        # Seuil minimal : au moins un critère fort (titre = 10, NER ≥ 2 → score ≥ 4)
-        return best_path if best_score >= 4 else None
+    def _maybe_add_frontmatter_location(self, content: str, entity_images: list[dict] | None) -> str:
+        return self._artifact_writer.maybe_add_frontmatter_location(content, entity_images)
+
+    def _upsert_entity_gallery(self, content: str, entity_images: list[dict] | None) -> str:
+        return self._artifact_writer.upsert_entity_gallery(content, entity_images)
+
+    def _build_new_insight_document(
+        self,
+        note_title: str,
+        note_meta: dict,
+        qa_pairs: list[dict],
+        source_tags: list[str],
+        ner_tags: list[str],
+        entity_images: list[dict],
+        global_provenance: str,
+    ) -> str:
+        return self._artifact_writer.build_new_insight_document(
+            note_title,
+            note_meta,
+            qa_pairs,
+            source_tags,
+            ner_tags,
+            entity_images,
+            global_provenance,
+        )
 
     def _append_to_insight(
         self,
@@ -1222,101 +894,7 @@ class AutoLearner:
         provenance: str,
         entity_images: list[dict] | None = None,
     ) -> None:
-        """Appende de nouveaux Q&A à un artefact existant et met à jour ses tags NER."""
-        content = path.read_text(encoding="utf-8")
-
-        # Numérotation : compter les ## Question N existants
-        existing_count = len(re.findall(r"^## Question \d+", content, re.MULTILINE))
-
-        # Fusionner les nouveaux tags NER dans le frontmatter
-        content = self._merge_frontmatter_tags(content, ner_tags)
-
-        # Ajouter la géolocalisation si pas encore présente dans le frontmatter
-        if entity_images and "location:" not in content[:content.find("---", 3) + 3]:
-            gpe_entities = [e for e in entity_images if e["type"] in ("GPE", "LOC")]
-            if gpe_entities:
-                coords = self._fetch_gpe_coordinates(gpe_entities[0]["value"])
-                if coords:
-                    content = self._add_location_to_frontmatter(content, coords[0], coords[1])
-
-        # Mettre à jour la ligne "Générée le" → "Mise à jour le"
-        content = re.sub(
-            r"\*\*(Générée|Mise à jour) le :\*\*.*",
-            f"**Mise à jour le :** {datetime.now().strftime('%Y-%m-%d %H:%M')}  ",
-            content,
-        )
-
-        # Mettre à jour ou insérer la galerie d'images
-        if entity_images:
-            gallery_md = self._build_entity_image_gallery(entity_images)
-            if gallery_md:
-                gallery_block = f"## Entités clés\n\n{gallery_md}\n"
-                if "## Entités clés" in content:
-                    content = re.sub(
-                        r"## Entités clés\n.*?(?=\n---\n|\n## )",
-                        f"## Entités clés\n\n{gallery_md}\n",
-                        content,
-                        flags=re.DOTALL,
-                    )
-                else:
-                    # Insérer avant le premier ## Question
-                    content = re.sub(
-                        r"(## Question 1\b)",
-                        gallery_block + "\n---\n\n" + r"\1",
-                        content,
-                        count=1,
-                    )
-
-        def _wikilink(fp: str) -> str:
-            return f"[[{fp.removesuffix('.md')}]]"
-
-        new_lines: list[str] = [""]
-        for i, qa in enumerate(qa_pairs, existing_count + 1):
-            provenance_label = qa.get("provenance", provenance)
-            source_links = ", ".join(_wikilink(s) for s in qa["sources"] if s)
-            new_lines += [
-                f"## Question {i}",
-                "",
-                f"> {qa['question']}",
-                "",
-                qa["answer"],
-                "",
-                f"*Provenance : {provenance_label}*  ",
-                f"*Notes consultées : {source_links}*  " if source_links else "",
-                *([f"*Références web :*"] + [f"- [{r['title']}]({r['url']})" for r in qa.get("web_refs", [])] if qa.get("web_refs") else []),
-                "",
-            ]
-
-        # Synthèse des sources web fetchées
-        note_title = path.stem
-        web_synthesis = self._synthesize_web_sources(note_title, qa_pairs)
-        if web_synthesis:
-            new_lines += [
-                "---",
-                "",
-                "## Synthèse des sources web",
-                "",
-                web_synthesis,
-                "",
-            ]
-
-        path.write_text(content.rstrip() + "\n" + "\n".join(new_lines), encoding="utf-8")
-
-        # Vérifier la taille après écriture — si elle dépasse le plafond,
-        # archiver le fichier et signaler qu'un nouveau sera créé au prochain cycle.
-        current_size = path.stat().st_size
-        if current_size > settings.max_insight_size_bytes:
-            archive_path = path.with_stem(path.stem + f"_archive_{datetime.now().strftime('%Y%m%d_%H%M%S')}")
-            path.rename(archive_path)
-            logger.warning(
-                f"Artefact archivé (trop grand {current_size // 1024} KB > "
-                f"{settings.max_insight_size_bytes // 1024} KB) : {path.name} → {archive_path.name}"
-            )
-        else:
-            logger.info(
-                f"Artefact mis à jour : {path.name} "
-                f"(+{len(qa_pairs)} Q&A → total {existing_count + len(qa_pairs)})"
-            )
+        self._artifact_writer.append_to_insight(path, qa_pairs, ner_tags, provenance, entity_images)
 
     # ---- Sauvegarde / création d'artefact ----
 
@@ -1326,267 +904,30 @@ class AutoLearner:
         note_meta: dict,
         qa_pairs: list[dict],
     ) -> None:
-        # Provenance globale
-        provenances = {qa.get("provenance", "Coffre") for qa in qa_pairs}
-        if "Coffre et Web" in provenances or ("Coffre" in provenances and "Web" in provenances):
-            global_provenance = "Coffre et Web"
-        elif "Web" in provenances:
-            global_provenance = "Web"
-        else:
-            global_provenance = "Coffre"
-
-        def _wikilink(fp: str) -> str:
-            return f"[[{fp.removesuffix('.md')}]]"
-
-        # Extraction NER sur le contenu QA — validée contre WUDD.ai
-        qa_text = " ".join(qa["question"] + " " + qa["answer"] for qa in qa_pairs)
-        ner_tags, entity_images = self._extract_validated_entities(qa_text)
-        source_tags = [t for t in note_meta.get("tags", []) if t]
-
-        # ---- Vérifier si un artefact existant peut être complété ----
-        existing = self._find_existing_insight(note_title, ner_tags)
-        if existing:
-            self._append_to_insight(existing, qa_pairs, ner_tags, global_provenance, entity_images)
-            return
-
-        # ---- Création d'un nouvel artefact ----
-        date_str = datetime.now().strftime("%Y-%m")
-        artifact_dir = settings.insights_dir / date_str
-        artifact_dir.mkdir(parents=True, exist_ok=True)
-
-        safe_name = re.sub(r"[^\w\s-]", "", note_title).strip().replace(" ", "_")[:60]
-        artifact_path = artifact_dir / f"{safe_name}_{datetime.now().strftime('%Y%m%d')}.md"
-
-        all_tags = ["insight"] + source_tags + ner_tags
-        fm_tags = "\n".join(f"  - {t}" for t in all_tags)
-
-        # Géolocalisation : top entité GPE/LOC par mentions
-        gpe_entities = [e for e in entity_images if e["type"] in ("GPE", "LOC")]
-        coords = None
-        if gpe_entities:
-            coords = self._fetch_gpe_coordinates(gpe_entities[0]["value"])
-
-        fm_location = f"\nlocation: [{coords[0]:.6f}, {coords[1]:.6f}]" if coords else ""
-        frontmatter = f"---\ntags:\n{fm_tags}{fm_location}\n---\n"
-
-        source_link = _wikilink(note_meta["file_path"])
-        lines = [
-            frontmatter,
-            f"# Insights : {note_title}",
-            "",
-            f"**Note source :** {source_link}  ",
-            f"**Générée le :** {datetime.utcnow().strftime('%Y-%m-%d %H:%M')} UTC  ",
-            f"**Tags source :** {source_tags}  ",
-            f"**Provenance :** {global_provenance}",
-            "",
-        ]
-
-        # Galerie d'images des entités principales
-        gallery_md = self._build_entity_image_gallery(entity_images)
-        if gallery_md:
-            lines += [
-                "## Entités clés",
-                "",
-                gallery_md,
-            ]
-
-        lines += [
-            "---",
-            "",
-        ]
-        for i, qa in enumerate(qa_pairs, 1):
-            provenance_label = qa.get("provenance", "Coffre")
-            source_links = ", ".join(_wikilink(s) for s in qa["sources"] if s)
-            lines += [
-                f"## Question {i}",
-                "",
-                f"> {qa['question']}",
-                "",
-                qa["answer"],
-                "",
-                f"*Provenance : {provenance_label}*  ",
-                f"*Notes consultées : {source_links}*  " if source_links else "",
-                *([f"*Références web :*"] + [f"- [{r['title']}]({r['url']})" for r in qa.get("web_refs", [])] if qa.get("web_refs") else []),
-                "",
-            ]
-
-        # Synthèse des sources web fetchées
-        web_synthesis = self._synthesize_web_sources(note_title, qa_pairs)
-        if web_synthesis:
-            lines += [
-                "---",
-                "",
-                "## Synthèse des sources web",
-                "",
-                web_synthesis,
-                "",
-            ]
-
-        artifact_path.write_text("\n".join(lines), encoding="utf-8")
-        logger.info(f"Artefact créé : {artifact_path.name}")
+        self._artifact_writer.save_knowledge_artifact(note_title, note_meta, qa_pairs)
 
     # ---- Découverte de synapses ----
 
     def _load_synapse_index(self) -> set[str]:
-        """Retourne l'ensemble des paires déjà traitées sous forme 'fp_a|||fp_b'."""
-        f = settings.synapse_index_file
-        if f.exists():
-            try:
-                return set(json.loads(f.read_text(encoding="utf-8")))
-            except Exception:
-                return set()
-        return set()
+        return self._synapse_discovery.load_synapse_index()
 
     def _save_synapse_index(self, index: set[str]) -> None:
-        f = settings.synapse_index_file
-        f.parent.mkdir(parents=True, exist_ok=True)
-        f.write_text(json.dumps(sorted(index), ensure_ascii=False), encoding="utf-8")
+        self._synapse_discovery.save_synapse_index(index)
 
     @staticmethod
     def _synapse_pair_key(fp_a: str, fp_b: str) -> str:
-        return "|||".join(sorted([fp_a, fp_b]))
+        return AutoLearnSynapseDiscovery.synapse_pair_key(fp_a, fp_b)
 
     def _discover_synapses(self, all_notes: list[dict]) -> None:
-        """Trouve des paires de notes sémantiquement proches sans lien existant."""
-        quota = settings.autolearn_synapse_per_run
-        if quota <= 0:
-            return
-
-        synapse_index = self._load_synapse_index()
-
-        # On itère sur les notes dans un ordre aléatoire pour couvrir tout le coffre
-        import random
-        candidates = list(all_notes)
-        random.shuffle(candidates)
-
-        for note_a in candidates:
-            if quota <= 0:
-                break
-            fp_a = note_a["file_path"]
-            # Liens existants (wikilinks déjà connus)
-            existing = {w.lower() for w in note_a.get("wikilinks", [])}
-
-            similar = self._chroma.find_similar_notes(
-                source_fp=fp_a,
-                existing_links=existing,
-                top_k=5,
-                threshold=settings.autolearn_synapse_threshold,
-            )
-
-            for note_b_info in similar:
-                if quota <= 0:
-                    break
-                fp_b = note_b_info["file_path"]
-                pair_key = self._synapse_pair_key(fp_a, fp_b)
-                if pair_key in synapse_index:
-                    continue
-
-                try:
-                    self._create_synapse_artifact(note_a, note_b_info)
-                    synapse_index.add(pair_key)
-                    self._save_synapse_index(synapse_index)
-                    quota -= 1
-                    time.sleep(self._SLEEP_BETWEEN_QUESTIONS)
-                except Exception as exc:
-                    logger.warning(f"Synapse {fp_a} ↔ {fp_b} : {exc}")
+        self._synapse_discovery.discover_synapses(all_notes)
 
     def _create_synapse_artifact(self, note_a: dict, note_b_info: dict) -> None:
-        title_a = note_a.get("title", note_a["file_path"])
-        title_b = note_b_info["title"]
-        score = note_b_info["score"]
-        excerpt_b = note_b_info["excerpt"]
-
-        # Récupère un extrait de note_a
-        chunks_a = self._chroma.search(title_a, top_k=1)
-        excerpt_a = chunks_a[0]["text"][:300] if chunks_a else ""
-
-        prompt = (
-            f"Voici deux notes d'un coffre Obsidian qui semblent liées thématiquement "
-            f"(similarité sémantique : {score:.0%}) mais sans lien explicite entre elles.\n\n"
-            f"**Note A — {title_a} :**\n{excerpt_a}\n\n"
-            f"**Note B — {title_b} :**\n{excerpt_b}\n\n"
-            f"En 3 à 5 phrases, explique quelle connexion implicite unit ces deux notes, "
-            f"comme une synapse qui relie deux neurones. Propose aussi une question que "
-            f"l'utilisateur pourrait se poser pour approfondir ce lien. Réponds en français."
-        )
-
-        explanation = self._rag._llm.chat(
-            [{"role": "user", "content": prompt}],
-            temperature=0.6,
-            max_tokens=2048,
-            operation="autolearn_synapse",
-        )
-
-        safe_a = re.sub(r"[^\w\s-]", "", title_a).strip().replace(" ", "_")[:40]
-        safe_b = re.sub(r"[^\w\s-]", "", title_b).strip().replace(" ", "_")[:40]
-        date_str = datetime.utcnow().strftime("%Y%m%d")
-        out_dir = settings.synapses_dir
-        out_dir.mkdir(parents=True, exist_ok=True)
-        out_path = out_dir / f"{safe_a}__{safe_b}_{date_str}.md"
-
-        lines = [
-            f"# Synapse : {title_a} ↔ {title_b}",
-            "",
-            f"**Similarité sémantique :** {score:.0%}  ",
-            f"**Découverte le :** {datetime.utcnow().strftime('%Y-%m-%d %H:%M')} UTC",
-            "",
-            "---",
-            "",
-            "## Connexion identifiée",
-            "",
-            explanation,
-            "",
-            "---",
-            "",
-            f"## [[{title_a}]]",
-            "",
-            f"> {excerpt_a[:600]}…",
-            "",
-            f"## [[{title_b}]]",
-            "",
-            f"> {excerpt_b[:600]}…",
-        ]
-        out_path.write_text("\n".join(lines), encoding="utf-8")
-        logger.info(f"Synapse créée : {title_a} ↔ {title_b} ({score:.0%})")
+        self._synapse_discovery.create_synapse_artifact(note_a, note_b_info)
 
     # ---- Synthèse hebdomadaire ----
 
     def _suggest_note_title(self, content_preview: str, current_title: str) -> str | None:
-        """
-        Demande au LLM un titre court et représentatif pour la note.
-        Retourne None si le titre actuel est déjà bon ou si le LLM échoue.
-        """
-        prompt = (
-            f"Voici un extrait d'une note personnelle intitulée actuellement : \"{current_title}\"\n\n"
-            f"<extrait>\n{content_preview[:1500]}\n</extrait>\n\n"
-            f"Propose un titre court (3 à 7 mots maximum) OBLIGATOIREMENT EN FRANÇAIS, représentatif du contenu réel, "
-            f"sans guillemets, sans ponctuation finale, sans préfixe comme 'Titre :'. "
-            f"IMPORTANT : le titre doit être en français, même si le contenu est dans une autre langue. "
-            f"Si le titre actuel est déjà représentatif, réponds exactement : CONSERVER\n"
-            f"Sinon, réponds uniquement avec le nouveau titre en français."
-        )
-        try:
-            result = self._rag._llm.chat(
-                [{"role": "user", "content": prompt}],
-                temperature=0.2,
-                max_tokens=50,
-                operation="autolearn_rename",
-            )
-            candidate = result.strip().strip('"').strip("'")
-            if not candidate or candidate.upper() == "CONSERVER":
-                return None
-            # Rejeter si trop long (>80 chars) ou identique au titre actuel
-            if len(candidate) > 80:
-                return None
-            # Rejeter si le titre contient des caractères non-latins (CJK, arabe, cyrillique…)
-            if re.search(r"[\u0400-\u04FF\u0600-\u06FF\u4E00-\u9FFF\u3040-\u30FF\uAC00-\uD7AF]", candidate):
-                return None
-            if candidate.lower().strip() == current_title.lower().strip():
-                return None
-            return candidate
-        except Exception as exc:
-            logger.debug(f"Suggestion titre échouée pour '{current_title}': {exc}")
-            return None
+        return self._note_renamer.suggest_note_title(content_preview, current_title)
 
     def _rename_note_in_vault(
         self,
@@ -1594,105 +935,14 @@ class AutoLearner:
         new_title: str,
         note_rel: str,
     ) -> "Path | None":
-        """
-        Renomme `old_abs` vers un nouveau fichier basé sur `new_title`,
-        met à jour tous les [[wikilinks]] dans le vault, re-indexe.
-        Retourne le nouveau chemin absolu, ou None en cas d'échec.
-        """
-        from pathlib import Path as _Path
-        vault = settings.vault
-
-        # Construire le nouveau nom de fichier
-        safe = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "", new_title).strip()
-        safe = re.sub(r"\s+", " ", safe)
-        new_abs = old_abs.parent / f"{safe}.md"
-
-        # Éviter d'écraser un fichier existant
-        if new_abs.exists() and new_abs != old_abs:
-            logger.warning(f"Rename abort: '{new_abs.name}' existe déjà")
-            return None
-
-        old_stem = old_abs.stem
-        new_stem = new_abs.stem
-
-        try:
-            old_abs.rename(new_abs)
-        except Exception as exc:
-            logger.error(f"Impossible de renommer '{old_abs.name}': {exc}")
-            return None
-
-        logger.info(f"Note renommée : '{old_stem}' → '{new_stem}'")
-
-        # Mettre à jour le frontmatter title dans le nouveau fichier
-        try:
-            content = new_abs.read_text(encoding="utf-8")
-            fm_end = self._fm_end(content)
-            if fm_end != -1:
-                fm = content[3:fm_end]
-                if re.search(r"^title\s*:", fm, re.MULTILINE):
-                    fm = re.sub(r"^(title\s*:).*$", f"title: {new_stem}", fm, flags=re.MULTILINE)
-                else:
-                    fm = f"title: {new_stem}\n" + fm
-                content = "---\n" + fm + content[fm_end:]
-            else:
-                content = f"---\ntitle: {new_stem}\n---\n" + content
-            new_abs.write_text(content, encoding="utf-8")
-        except Exception as exc:
-            logger.warning(f"Maj frontmatter title échouée: {exc}")
-
-        # Mettre à jour [[old_stem]] → [[new_stem]] dans tout le vault
-        # Patterns : [[old_stem]], [[old_stem|alias]], [[old_stem#section]]
-        pattern = re.compile(
-            r"\[\[" + re.escape(old_stem) + r"([\|#\]])",
-            re.IGNORECASE,
-        )
-        replacement = r"[[" + new_stem + r"\1"
-        updated_files = 0
-        for md_file in vault.rglob("*.md"):
-            if md_file == new_abs:
-                continue
-            try:
-                text = md_file.read_text(encoding="utf-8")
-                if old_stem.lower() in text.lower():
-                    new_text = pattern.sub(replacement, text)
-                    if new_text != text:
-                        md_file.write_text(new_text, encoding="utf-8")
-                        updated_files += 1
-                        # Re-indexer les fichiers modifiés
-                        self._indexer.index_note(md_file)
-            except Exception as exc:
-                logger.warning(f"Update wikilinks dans '{md_file.name}': {exc}")
-
-        if updated_files:
-            logger.info(f"Wikilinks mis à jour dans {updated_files} fichier(s)")
-
-        # Re-indexer la note renommée (supprime old_rel, indexe new_rel)
-        try:
-            self._indexer.remove_note(old_abs)  # old_abs n'existe plus mais rel_path est connu
-        except Exception:
-            pass
-        self._indexer.index_note(new_abs)
-
-        # Migrer l'entrée dans processed_map : ancien chemin → nouveau chemin
-        # Évite que la note apparaisse comme non traitée après renommage
-        try:
-            new_rel = str(new_abs.relative_to(vault))
-            processed = self._load_processed()
-            if note_rel in processed:
-                processed[new_rel] = processed.pop(note_rel)
-                self._save_processed(processed)
-                logger.debug(f"processed_map migré : '{note_rel}' → '{new_rel}'")
-        except Exception as exc:
-            logger.warning(f"processed_map migration rename : {exc}")
-
-        return new_abs
+        return self._note_renamer.rename_note_in_vault(old_abs, new_title, note_rel)
 
     # ---- Synthèse hebdomadaire ----
 
     def _weekly_synthesis(self) -> None:
         logger.info("Auto-learner : génération de la synthèse hebdomadaire")
         try:
-            since = datetime.utcnow() - timedelta(days=7)
+            since = _utc_now_naive() - timedelta(days=7)
             recent = self._chroma.get_recently_modified(since)
             if not recent:
                 return
@@ -1712,14 +962,14 @@ class AutoLearner:
                 operation="autolearn_synthesis",
             )
 
-            week = datetime.utcnow().strftime("%Y-W%W")
+            week = _utc_now().strftime("%Y-W%W")
             out_dir = settings.synthesis_dir
             out_dir.mkdir(parents=True, exist_ok=True)
             out_path = out_dir / f"semaine_{week}.md"
             header = (
                 f"# Synthèse de la semaine {week}\n\n"
                 f"*Générée automatiquement par ObsiRAG le "
-                f"{datetime.utcnow().strftime('%Y-%m-%d %H:%M')} UTC*\n\n---\n\n"
+                f"{_utc_now().strftime('%Y-%m-%d %H:%M')} UTC*\n\n---\n\n"
             )
             out_path.write_text(header + synthesis, encoding="utf-8")
             logger.info(f"Synthèse hebdomadaire : {out_path.name}")

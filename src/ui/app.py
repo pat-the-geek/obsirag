@@ -9,6 +9,7 @@ import time
 import unicodedata
 from datetime import datetime
 from pathlib import Path
+
 import streamlit as st
 import streamlit.components.v1 as components
 from loguru import logger
@@ -30,7 +31,18 @@ def _count_md_cached(path: Path, key: str) -> int:
     return count
 
 from src.ui.services_cache import get_services
+from src.ui.chat_navigation import (
+    append_loaded_conversation,
+    build_chat_navigation_entries,
+    build_conversation_source_entries,
+    filter_chat_navigation_entries,
+    filter_saved_conversations,
+    load_saved_conversation,
+    list_saved_conversations,
+    source_identity_key,
+)
 from src.ui.components.note_bridge_component import note_bridge as _note_bridge
+from src.ui.note_badges import render_note_badge
 from src.ui.theme import inject_theme, render_theme_toggle
 from src.ai.web_search import enrich_sync, is_not_in_vault
 
@@ -50,6 +62,7 @@ svc = get_services()
 _pending = st.session_state.pop("_pending_query", None)
 # Pending web search — déclenché par le bouton "Rechercher sur le web"
 _pending_web = st.session_state.pop("_pending_web_query", None)
+st.session_state.setdefault("messages", [])
 
 
 # ---- Helpers rendu ----
@@ -126,21 +139,39 @@ def _open_note_cb(fp: str) -> None:
     st.session_state._goto_note = True
 
 
+def _load_saved_conversation_cb(path_str: str, mode: str = "replace") -> None:
+    messages = load_saved_conversation(Path(path_str))
+    if not messages:
+        return
+    if mode == "append":
+        st.session_state.messages = append_loaded_conversation(
+            st.session_state.get("messages", []),
+            messages,
+        )
+    elif mode == "duplicate":
+        st.session_state.messages = list(messages)
+    else:
+        st.session_state.messages = messages
+    st.session_state.pop("last_gen_stats", None)
+    st.session_state["_loaded_conversation_label"] = Path(path_str).stem
+    st.session_state["_loaded_conversation_mode"] = mode
+
+
 def _dedupe_sources_keep_primary(sources: list[dict]) -> list[dict]:
     seen: dict[str, dict] = {}
     for src in sources:
         metadata = src.get("metadata") or {}
-        fp = metadata.get("file_path", "")
-        if not fp:
+        source_key = source_identity_key(metadata)
+        if not source_key:
             continue
-        current = seen.get(fp)
+        current = seen.get(source_key)
         if current is None:
-            seen[fp] = src
+            seen[source_key] = src
             continue
         current_primary = bool((current.get("metadata") or {}).get("is_primary"))
         src_primary = bool(metadata.get("is_primary"))
         if src_primary and not current_primary:
-            seen[fp] = src
+            seen[source_key] = src
     return list(seen.values())
 
 
@@ -156,7 +187,15 @@ def _render_sources_block(sources: list[dict], expander_label: str, key_prefix: 
     if primary_src:
         primary_meta = primary_src.get("metadata") or {}
         primary_title = primary_meta.get("note_title", primary_meta.get("file_path", ""))
-        st.caption(f"🎯 Note principale : {primary_title}")
+        primary_fp = primary_meta.get("file_path", "")
+        st.markdown(
+            f"<div style='margin:0.2rem 0 0.5rem 0;display:flex;align-items:center;gap:0.5rem;'>"
+            f"<span style='font-size:0.85rem;color:inherit;'>🎯 Note principale :</span>"
+            f"{render_note_badge(primary_fp)}"
+            f"<strong>{primary_title}</strong>"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
 
     with st.expander(expander_label, expanded=False):
         for i, src in enumerate(unique_sources):
@@ -166,9 +205,13 @@ def _render_sources_block(sources: list[dict], expander_label: str, key_prefix: 
             primary_badge = " · Principale" if _m.get("is_primary") else ""
             col_info, col_btn = st.columns([8, 1])
             with col_info:
-                st.caption(
-                    f"**{title}**{primary_badge} · {_m.get('date_modified','')[:10]}"
-                    f" · Score `{src.get('score',0):.2f}`"
+                st.markdown(
+                    f"<div style='display:flex;align-items:center;gap:0.55rem;flex-wrap:wrap;'>"
+                    f"{render_note_badge(fp)}"
+                    f"<strong>{title}</strong>"
+                    f"<span style='opacity:.72;font-size:0.82rem;'>{primary_badge} · {_m.get('date_modified','')[:10]} · Score {src.get('score',0):.2f}</span>"
+                    f"</div>",
+                    unsafe_allow_html=True,
                 )
             with col_btn:
                 if fp:
@@ -179,6 +222,25 @@ def _render_sources_block(sources: list[dict], expander_label: str, key_prefix: 
                         on_click=_open_note_cb,
                         args=(fp,),
                     )
+
+
+def _render_web_failure(web_status, web_results: list[dict], web_quality: bool, message_key: str) -> str:
+    if not web_results:
+        failure_message = "🌐 Aucun résultat web trouvé pour cette question."
+        web_status.warning(failure_message)
+        return failure_message
+
+    sources_md = "\n".join(
+        f"- [{result.get('title', result.get('href', ''))}]({result.get('href', '')})"
+        for result in web_results
+    )
+    if web_quality:
+        failure_message = "🌐 Des sources web ont été trouvées, mais la synthèse n'a pas pu être générée."
+    else:
+        failure_message = "🌐 Des sources web ont été trouvées, mais elles ont été jugées trop faibles ou trop ambiguës pour produire une réponse fiable."
+
+    web_status.warning(f"{failure_message}\n\n---\n{sources_md}")
+    return failure_message
 
 
 def _render_user_bubble(text: str) -> None:
@@ -437,8 +499,7 @@ def _autolearn_live_status():
     from src.config import settings as _s
 
     # Compteur notes (recalculé à chaque refresh)
-    _notes = svc.chroma.list_notes()
-    _user_notes = [n for n in _notes if "/obsirag/" not in n["file_path"].replace("\\", "/") and not n["file_path"].replace("\\", "/").startswith("obsirag/")]
+    _user_notes = svc.chroma.list_user_notes()
     _user_fps = {n["file_path"] for n in _user_notes}
     _total = len(_user_notes)
     _pf = _s.processed_notes_file
@@ -525,6 +586,118 @@ with st.sidebar:
     llm_ok = svc.llm.is_available()
     st.markdown(f"**MLX** : {'🟢 Modèle chargé' if llm_ok else '🔴 Non disponible'}")
 
+    if st.session_state.messages:
+        st.divider()
+        with st.expander("🧭 Conversation en cours", expanded=False):
+            nav_search = st.text_input(
+                "Filtrer l'historique",
+                key="chat_nav_search",
+                placeholder="Question ou source…",
+            )
+            nav_entries = filter_chat_navigation_entries(
+                build_chat_navigation_entries(st.session_state.messages),
+                nav_search,
+            )
+            if not nav_entries:
+                st.caption("Aucun tour ne correspond à ce filtre.")
+            for entry in nav_entries:
+                st.markdown(f"**Tour {entry['turn']}** · {entry['preview']}")
+                meta_parts: list[str] = []
+                if entry.get("source_count"):
+                    meta_parts.append(f"{entry['source_count']} source(s)")
+                if entry.get("primary_source_title"):
+                    meta_parts.append(f"source: {entry['primary_source_title']}")
+                if meta_parts:
+                    st.caption(" · ".join(meta_parts))
+                col_reuse, col_open = st.columns(2)
+                if col_reuse.button("↺ Reposer", key=f"chat_nav_reuse_{entry['turn']}", use_container_width=True):
+                    st.session_state["_pending_query"] = entry["query"]
+                    st.rerun()
+                if entry.get("primary_source_path"):
+                    col_open.button(
+                        "📖 Source",
+                        key=f"chat_nav_open_{entry['turn']}",
+                        use_container_width=True,
+                        on_click=_open_note_cb,
+                        args=(entry["primary_source_path"],),
+                    )
+                else:
+                    col_open.button(
+                        "📖 Source",
+                        key=f"chat_nav_open_disabled_{entry['turn']}",
+                        use_container_width=True,
+                        disabled=True,
+                    )
+
+        with st.expander("📚 Notes citées", expanded=False):
+            cited_sources = build_conversation_source_entries(st.session_state.messages)
+            if not cited_sources:
+                st.caption("Aucune source citée pour l'instant.")
+            for entry in cited_sources:
+                st.markdown(
+                    f"<div style='display:flex;align-items:center;gap:0.55rem;flex-wrap:wrap;'>"
+                    f"{render_note_badge(entry['file_path'])}"
+                    f"<strong>{entry['title']}</strong>"
+                    f"</div>",
+                    unsafe_allow_html=True,
+                )
+                st.caption(
+                    f"{entry['mentions']} mention(s) · {entry['primary_mentions']} principale(s)"
+                )
+                st.button(
+                    "📖 Ouvrir",
+                    key=f"chat_cited_{entry['file_path']}",
+                    use_container_width=True,
+                    on_click=_open_note_cb,
+                    args=(entry["file_path"],),
+                )
+
+    from src.config import settings as _settings
+    saved_conversations = list_saved_conversations(_settings.conversations_dir, vault_root=_settings.vault)
+    if saved_conversations:
+        st.divider()
+        with st.expander("🗂 Conversations sauvegardées", expanded=False):
+            saved_search = st.text_input(
+                "Filtrer les conversations",
+                key="saved_conv_search",
+                placeholder="Titre, mois ou chemin…",
+            )
+            filtered_saved = filter_saved_conversations(saved_conversations, saved_search)
+            if not filtered_saved:
+                st.caption("Aucune conversation ne correspond à ce filtre.")
+            for entry in filtered_saved[:10]:
+                st.markdown(f"**{entry['title']}**")
+                st.caption(f"{entry['month']} · {entry['file_path']}")
+                col_replace, col_append, col_duplicate, col_open = st.columns(4)
+                col_replace.button(
+                    "↺ Remplacer",
+                    key=f"saved_conv_replace_{entry['file_path']}",
+                    use_container_width=True,
+                    on_click=_load_saved_conversation_cb,
+                    args=(entry["absolute_path"], "replace"),
+                )
+                col_append.button(
+                    "⊕ Ajouter",
+                    key=f"saved_conv_append_{entry['file_path']}",
+                    use_container_width=True,
+                    on_click=_load_saved_conversation_cb,
+                    args=(entry["absolute_path"], "append"),
+                )
+                col_duplicate.button(
+                    "⧉ Dupliquer",
+                    key=f"saved_conv_duplicate_{entry['file_path']}",
+                    use_container_width=True,
+                    on_click=_load_saved_conversation_cb,
+                    args=(entry["absolute_path"], "duplicate"),
+                )
+                col_open.button(
+                    "📖 Ouvrir",
+                    key=f"saved_conv_open_{entry['file_path']}",
+                    use_container_width=True,
+                    on_click=_open_note_cb,
+                    args=(entry["file_path"],),
+                )
+
     # Dernières stats de génération
     if st.session_state.get("last_gen_stats"):
         s = st.session_state.last_gen_stats
@@ -602,7 +775,6 @@ def _save_conversation() -> None:
     timestamp = datetime.now().strftime("%Y%m%d_%H%M")
     filename = f"{safe_title}_{timestamp}.md"
 
-    from src.config import settings as _settings
     conv_dir = _settings.conversations_dir / date_str
     conv_dir.mkdir(parents=True, exist_ok=True)
     out_path = conv_dir / filename
@@ -636,14 +808,21 @@ def _save_conversation() -> None:
 # ---- Zone de chat ----
 st.title("💬 Chat avec votre coffre")
 
+loaded_conversation_label = st.session_state.pop("_loaded_conversation_label", None)
+loaded_conversation_mode = st.session_state.pop("_loaded_conversation_mode", None)
+if loaded_conversation_label:
+    if loaded_conversation_mode == "append":
+        st.success(f"Conversation ajoutée au fil courant : {loaded_conversation_label}")
+    elif loaded_conversation_mode == "duplicate":
+        st.success(f"Conversation dupliquée dans un nouveau fil : {loaded_conversation_label}")
+    else:
+        st.success(f"Conversation rechargée : {loaded_conversation_label}")
+
 if not llm_ok:
     st.warning(
         "⚠️ Le modèle MLX n'est pas disponible. "
         "Vérifiez que le modèle est correctement configuré dans `.env` (MLX_CHAT_MODEL)."
     )
-
-if "messages" not in st.session_state:
-    st.session_state.messages = []
 
 # Bridge invisible : écoute localStorage 'obsirag_open_note' (wikilinks du chat)
 _bridge_val = _note_bridge(default=None, key="chat_note_bridge")
@@ -694,7 +873,7 @@ def _generate_suggestions() -> list[str]:
     ]
 
     try:
-        notes = svc.chroma.list_notes()
+        notes = svc.chroma.list_user_notes()
         if not notes:
             return fallback
 
@@ -707,12 +886,11 @@ def _generate_suggestions() -> list[str]:
             # Récupérer un extrait réel depuis ChromaDB plutôt que de n'utiliser que le titre
             snippet = ""
             try:
-                raw = svc.chroma._collection.get(
-                    where={"file_path": note["file_path"]},
-                    include=["documents"],
-                    limit=2,
-                )
-                docs = raw.get("documents") or []
+                docs = [
+                    chunk.get("text", "")
+                    for chunk in svc.chroma.get_chunks_by_file_path(note["file_path"], limit=2)
+                    if chunk.get("text")
+                ]
                 if docs:
                     snippet = " ".join(docs[:2])[:600]
             except Exception:
@@ -824,7 +1002,7 @@ if not st.session_state.messages and not user_input:
 # Recherche web déclenchée par le bouton (indépendamment du chat input)
 if _pending_web:
     if not llm_ok:
-        st.error("Ollama n'est pas disponible.")
+        st.error("Le modèle MLX n'est pas disponible.")
         st.stop()
     st.session_state.messages.append({"role": "user", "content": f"🌐 Recherche web : {_pending_web}"})
     _render_user_bubble(f"🌐 Recherche web : {_pending_web}")
@@ -854,17 +1032,17 @@ if _pending_web:
                 "stats": {},
             })
         else:
-            web_status.warning("🌐 Aucun résultat web trouvé pour cette question.")
+            failure_message = _render_web_failure(web_status, web_results, web_quality, "pending_web")
             st.session_state.messages.append({
                 "role": "assistant",
-                "content": "🌐 Aucun résultat web trouvé pour cette question.",
+                "content": failure_message,
                 "sources": [],
                 "stats": {},
             })
 
 if user_input:
     if not llm_ok:
-        st.error("Ollama n'est pas disponible.")
+        st.error("Le modèle MLX n'est pas disponible.")
         st.stop()
 
     svc.learner.log_user_query(user_input)
@@ -905,11 +1083,11 @@ if user_input:
                 status.markdown(f"📄 *Note {i} sur {len(seen)} — {note}*")
                 time.sleep(0.12)
 
-            # Phase 2 — génération Ollama
+            # Phase 2 — génération MLX
             ctx_chars = sum(len(s.get("text", "")) for s in sources)
             ctx_notes = len(seen)
             status.markdown(
-                f"⏳ *Ollama charge le contexte… "
+                f"⏳ *MLX charge le contexte… "
                 f"{ctx_notes} note{'s' if ctx_notes > 1 else ''} · "
                 f"~{ctx_chars:,} caractères*"
             )
@@ -1030,7 +1208,13 @@ if user_input:
                     "stats": {},
                 })
             else:
-                web_status.warning("🌐 Aucun résultat web trouvé pour cette question.")
+                failure_message = _render_web_failure(web_status, web_results, web_quality, "fallback_web")
+                st.session_state.messages.append({
+                    "role": "assistant",
+                    "content": failure_message,
+                    "sources": [],
+                    "stats": {},
+                })
     else:
         logger.info("UI decision: réponse du coffre conservée (pas de fallback web)")
 

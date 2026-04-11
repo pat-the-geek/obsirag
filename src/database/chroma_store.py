@@ -112,6 +112,45 @@ class ChromaStore:
                 else:
                     raise
 
+    def _collection_get(self, **kwargs) -> dict:
+        lock = getattr(self, "_lock", None)
+        if lock is None:
+            return self._collection.get(**kwargs)
+        with lock:
+            return self._collection.get(**kwargs)
+
+    @staticmethod
+    def _metadata_to_chunk(doc: str, meta: dict | None, *, fallback_value: str, score: float = 0.0) -> dict:
+        metadata = dict(meta or {})
+        chunk_ref = metadata.get("file_path") or metadata.get("note_title") or fallback_value
+        return {
+            "chunk_id": f"linked_{chunk_ref}",
+            "text": doc,
+            "metadata": metadata,
+            "score": score,
+        }
+
+    def _get_chunks_by_metadata(self, metadata_key: str, value: str, limit: int = 2) -> list[dict]:
+        try:
+            raw = ChromaStore._collection_get(
+                self,
+                where={metadata_key: value},
+                limit=limit,
+                include=["documents", "metadatas"],
+            )
+        except Exception:
+            return []
+
+        return [
+            ChromaStore._metadata_to_chunk(doc, meta, fallback_value=value)
+            for doc, meta in zip(raw.get("documents") or [], raw.get("metadatas") or [])
+        ]
+
+    @staticmethod
+    def _is_obsirag_generated_path(file_path: str) -> bool:
+        normalized = file_path.replace("\\", "/")
+        return "/obsirag/" in normalized or normalized.startswith("obsirag/")
+
     # ---- Écriture ----
 
     def add_chunks(self, chunks: list[Chunk]) -> None:
@@ -248,6 +287,30 @@ class ChromaStore:
         ]
         return scored[:top_k] if scored else candidates[:top_k]
 
+    def get_chunks_by_note_title(self, note_title: str, limit: int = 2) -> list[dict]:
+        return self._get_chunks_by_metadata("note_title", note_title, limit=limit)
+
+    def get_chunks_by_file_path(self, file_path: str, limit: int = 2) -> list[dict]:
+        return self._get_chunks_by_metadata("file_path", file_path, limit=limit)
+
+    def get_notes_by_file_paths(self, file_paths: list[str]) -> list[dict]:
+        if not file_paths:
+            return []
+        wanted = set(file_paths)
+        selected = [note for note in self.list_notes() if note["file_path"] in wanted]
+        order = {file_path: index for index, file_path in enumerate(file_paths)}
+        return sorted(selected, key=lambda note: order.get(note["file_path"], len(order)))
+
+    def get_note_by_file_path(self, file_path: str) -> dict | None:
+        notes = self.get_notes_by_file_paths([file_path])
+        return notes[0] if notes else None
+
+    def list_user_notes(self) -> list[dict]:
+        return [
+            note for note in self.list_notes()
+            if not ChromaStore._is_obsirag_generated_path(note["file_path"])
+        ]
+
     # ---- Méta-informations ----
 
     def search_by_keyword(self, keyword: str, top_k: int = 10) -> list[dict]:
@@ -255,12 +318,12 @@ class ChromaStore:
         results = []
         for term in [keyword, keyword.lower(), keyword.title()]:
             try:
-                with self._lock:
-                    raw = self._collection.get(
-                        where_document={"$contains": term},
-                        include=["documents", "metadatas"],
-                        limit=top_k * 2,
-                    )
+                raw = ChromaStore._collection_get(
+                    self,
+                    where_document={"$contains": term},
+                    include=["documents", "metadatas"],
+                    limit=top_k * 2,
+                )
                 ids = raw.get("ids", [])
                 docs = raw.get("documents", [])
                 metas = raw.get("metadatas", [])
@@ -285,12 +348,12 @@ class ChromaStore:
         seen_ids: set[str] = set()
         for variant in {title, title.lower(), title.title(), title.upper()}:
             try:
-                with self._lock:
-                    raw = self._collection.get(
-                        where={"note_title": {"$eq": variant}},
-                        include=["documents", "metadatas"],
-                        limit=top_k * 2,
-                    )
+                raw = ChromaStore._collection_get(
+                    self,
+                    where={"note_title": {"$eq": variant}},
+                    include=["documents", "metadatas"],
+                    limit=top_k * 2,
+                )
                 for chunk_id, doc, meta in zip(
                     raw.get("ids", []),
                     raw.get("documents", []),
@@ -368,8 +431,12 @@ class ChromaStore:
             batch_size = 500
             offset = 0
             while True:
-                with self._lock:
-                    results = self._collection.get(include=["metadatas"], limit=batch_size, offset=offset)
+                results = ChromaStore._collection_get(
+                    self,
+                    include=["metadatas"],
+                    limit=batch_size,
+                    offset=offset,
+                )
                 metadatas = results.get("metadatas") or []
                 if not metadatas:
                     break
@@ -421,12 +488,12 @@ class ChromaStore:
         """
         # Récupère les chunks de la note source
         try:
-            with self._lock:
-                raw = self._collection.get(
-                    where={"file_path": source_fp},
-                    include=["documents"],
-                    limit=3,
-                )
+            raw = ChromaStore._collection_get(
+                self,
+                where={"file_path": source_fp},
+                include=["documents"],
+                limit=3,
+            )
         except Exception:
             return []
 

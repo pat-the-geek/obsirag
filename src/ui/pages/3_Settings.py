@@ -12,6 +12,23 @@ from src.ui.services_cache import get_services
 from src.ui.theme import inject_theme, render_theme_toggle
 
 _icon = str(Path(__file__).parent.parent / "static" / "favicon-32x32.png")
+
+
+def _load_json_payload(path: Path) -> dict:
+    if not path.exists():
+        return {}
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def _format_metric_number(value: float | int) -> str:
+    if isinstance(value, float):
+        return f"{value:,.3f}"
+    return f"{value:,}"
+
+
 st.set_page_config(page_title="Paramètres — ObsiRAG", page_icon=_icon, layout="wide")
 inject_theme()
 svc = get_services()
@@ -19,8 +36,8 @@ svc = get_services()
 render_theme_toggle()
 st.title("⚙️ Paramètres & Statistiques")
 
-tab_config, tab_tokens, tab_index, tab_danger = st.tabs(
-    ["🔧 Configuration", "📊 Tokens IA", "📂 Index", "⚠️ Données"]
+tab_config, tab_tokens, tab_runtime_metrics, tab_index, tab_danger = st.tabs(
+    ["🔧 Configuration", "📊 Tokens IA", "📈 Métriques runtime", "📂 Index", "⚠️ Données"]
 )
 
 # ---- Configuration ----
@@ -103,6 +120,68 @@ with tab_tokens:
                 if rows:
                     import pandas as pd
                     st.dataframe(pd.DataFrame(rows), use_container_width=True)
+
+# ---- Metriques runtime ----
+with tab_runtime_metrics:
+    st.markdown("### Activité interne d'ObsiRAG")
+    metrics_file = settings.data_dir / "stats" / "metrics.json"
+    metrics_payload = _load_json_payload(metrics_file)
+
+    if not metrics_payload:
+        st.info("Aucune métrique runtime encore enregistrée.")
+    else:
+        counters = metrics_payload.get("counters", {})
+        summaries = metrics_payload.get("summaries", {})
+        last_update = datetime.fromtimestamp(metrics_file.stat().st_mtime).strftime("%Y-%m-%d %H:%M")
+
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Compteurs suivis", len(counters))
+        c2.metric("Agrégats suivis", len(summaries))
+        c3.metric("Dernière mise à jour", last_update)
+
+        key_metrics = [
+            ("rag_queries_total", "Requêtes RAG"),
+            ("rag_sentinel_answers_total", "Réponses sentinelle"),
+            ("rag_context_retries_total", "Retries de contexte"),
+            ("autolearn_insights_created_total", "Insights créés"),
+            ("autolearn_insights_appended_total", "Insights enrichis"),
+            ("autolearn_web_search_error_total", "Erreurs web"),
+        ]
+        available_metrics = [(key, label) for key, label in key_metrics if key in counters]
+        if available_metrics:
+            st.divider()
+            st.markdown("#### Indicateurs clés")
+            cols = st.columns(min(3, len(available_metrics)))
+            for index, (key, label) in enumerate(available_metrics):
+                cols[index % len(cols)].metric(label, _format_metric_number(counters[key]))
+
+        if counters:
+            st.divider()
+            st.markdown("#### Compteurs cumulés")
+            import pandas as pd
+
+            counter_rows = [
+                {"Métrique": key, "Valeur": int(value)}
+                for key, value in sorted(counters.items(), key=lambda item: (-int(item[1]), item[0]))
+            ]
+            st.dataframe(pd.DataFrame(counter_rows), use_container_width=True, hide_index=True)
+
+        if summaries:
+            st.divider()
+            st.markdown("#### Agrégats observés")
+            import pandas as pd
+
+            summary_rows = [
+                {
+                    "Métrique": key,
+                    "Observations": int(values.get("count", 0)),
+                    "Dernière valeur": _format_metric_number(float(values.get("last", 0.0))),
+                    "Moyenne": _format_metric_number(float(values.get("avg", 0.0))),
+                    "Total": _format_metric_number(float(values.get("total", 0.0))),
+                }
+                for key, values in sorted(summaries.items())
+            ]
+            st.dataframe(pd.DataFrame(summary_rows), use_container_width=True, hide_index=True)
 
 # ---- Index ChromaDB ----
 with tab_index:

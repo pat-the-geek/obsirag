@@ -14,14 +14,13 @@ class Settings(BaseSettings):
     # Données système ObsiRAG — volume Docker (HORS coffre, pas de sync iCloud)
     app_data_dir: str = "/app/data"
 
-    # MLX-LM (génération locale Apple Silicon — remplace Ollama)
+    # MLX-LM (génération locale Apple Silicon — moteur LLM principal)
     mlx_chat_model: str = "mlx-community/Qwen2.5-7B-Instruct-4bit"
 
-    # Ollama (conservé pour compatibilité ascendante / fallback éventuel)
+    # Ollama reste utilisé uniquement pour les embeddings si explicitement activé.
     ollama_base_url: str = "http://localhost:11434/v1"
-    ollama_chat_model: str = ""
     ollama_embed_model: Optional[str] = None
-    ollama_context_size: int = 4096  # n_ctx du modèle chargé dans Ollama
+    ollama_context_size: int = 4096  # budget de contexte utilisé pour le fallback d'embeddings / prompts dérivés
 
     # Embeddings locaux
     embedding_model: str = "paraphrase-multilingual-MiniLM-L12-v2"

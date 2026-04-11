@@ -124,6 +124,20 @@ class TestNoteParserBasic:
         assert result is not None
         assert result.metadata.title == "simple"
 
+    def test_parse_uses_first_alias_as_title_fallback(self, tmp_path, mock_nlp):
+        p = tmp_path / "alias.md"
+        p.write_text(
+            "---\naliases: [Alias Principal, Alias 2]\n---\n\nContenu.\n",
+            encoding="utf-8",
+        )
+        s = MagicMock()
+        s.vault = tmp_path
+        with patch("src.vault.parser.settings", s), patch("src.vault.parser.get_nlp", return_value=mock_nlp):
+            np = NoteParser()
+            result = np.parse(p)
+        assert result is not None
+        assert result.metadata.title == "Alias Principal"
+
     def test_parse_extracts_frontmatter_tags(self, parser, note_with_frontmatter, configure_vault, tmp_path):
         configure_vault.vault_path = str(tmp_path)
         result = parser.parse(note_with_frontmatter)
@@ -234,6 +248,12 @@ class TestNoteParserSections:
             result = np.parse(p)
         assert result.sections == []
 
+    def test_split_sections_keeps_empty_header_body(self, parser):
+        sections = parser._split_sections("# Titre\n")
+        assert len(sections) == 1
+        assert sections[0].title == "Titre"
+        assert sections[0].content == ""
+
 
 # ---------------------------------------------------------------------------
 # Tests NoteParser — raw_content
@@ -247,3 +267,71 @@ class TestNoteParserRawContent:
         assert "---" not in result.raw_content
         assert "title:" not in result.raw_content
         assert "Contenu principal" in result.raw_content
+
+
+@pytest.mark.unit
+class TestNoteParserHelpers:
+    def test_parse_fm_date_supports_multiple_string_formats(self, parser):
+        assert parser._parse_fm_date("2026-01-15") == datetime(2026, 1, 15)
+        assert parser._parse_fm_date("2026-01-15T13:45:00") == datetime(2026, 1, 15, 13, 45, 0)
+        assert parser._parse_fm_date("15/01/2026") == datetime(2026, 1, 15)
+        assert parser._parse_fm_date("2026/01/15") == datetime(2026, 1, 15)
+
+    def test_parse_fm_date_returns_datetime_as_is(self, parser):
+        value = datetime(2026, 1, 15, 10, 30, 0)
+        assert parser._parse_fm_date(value) is value
+
+    def test_parse_fm_date_invalid_returns_none(self, parser):
+        assert parser._parse_fm_date("15-01-2026") is None
+        assert parser._parse_fm_date(123) is None
+
+    def test_extract_entities_routes_labels_and_deduplicates(self, parser):
+        entity_specs = [
+            ("Alice", "PER"),
+            ("Alice", "PER"),
+            ("ACME", "ORG"),
+            ("Paris", "GPE"),
+            ("MLX", "TECH"),
+            ("X", "PER"),
+        ]
+        ents = [MagicMock(text=text, label_=label) for text, label in entity_specs]
+        mock_nlp = MagicMock()
+        mock_doc = MagicMock(ents=ents)
+        mock_nlp.return_value = mock_doc
+        with patch("src.vault.parser.get_nlp", return_value=mock_nlp):
+            extracted = parser._extract_entities("Contenu")
+
+        assert extracted.persons == ["Alice"]
+        assert extracted.orgs == ["ACME"]
+        assert extracted.locations == ["Paris"]
+        assert extracted.misc == ["MLX"]
+        mock_nlp.assert_called_once_with("Contenu")
+
+    def test_extract_entities_returns_empty_on_nlp_failure(self, parser):
+        with patch("src.vault.parser.get_nlp", side_effect=RuntimeError("boom")):
+            extracted = parser._extract_entities("Contenu")
+        assert extracted == NoteEntities()
+
+
+@pytest.mark.unit
+class TestGetNlp:
+    def test_get_nlp_loads_and_disables_unused_pipes(self, monkeypatch):
+        from src.vault import parser as parser_module
+
+        mock_model = MagicMock()
+        mock_model.pipe_names = ["tok2vec", "tagger", "ner"]
+        monkeypatch.setattr(parser_module, "_nlp", None)
+
+        with patch("src.vault.parser.spacy.load", return_value=mock_model):
+            result = parser_module.get_nlp()
+
+        assert result is mock_model
+        mock_model.disable_pipes.assert_called_once_with(["tok2vec", "tagger"])
+
+    def test_get_nlp_raises_when_model_missing(self, monkeypatch):
+        from src.vault import parser as parser_module
+
+        monkeypatch.setattr(parser_module, "_nlp", None)
+        with patch("src.vault.parser.spacy.load", side_effect=OSError("missing")):
+            with pytest.raises(OSError):
+                parser_module.get_nlp()

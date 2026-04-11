@@ -10,7 +10,7 @@ sentence-transformers>=3.1.0
 # Pin transformers < 4.52 — bug NameError: 'nn' not defined introduit dans 4.52.0
 transformers>=4.41.0,<4.52.0
 
-# Client API Ollama (compatible OpenAI) — conservé pour BadRequestError dans rag.py
+# Dépendance du backend d'embeddings OpenAI-compatible utilisé quand Ollama est activé pour les embeddings
 openai>=1.50.0
 
 # Génération locale Apple Silicon (remplace Ollama pour le LLM de chat)

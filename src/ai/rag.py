@@ -17,6 +17,9 @@ from itertools import chain
 from typing import Any
 
 from loguru import logger
+from src.ai.answer_prompting import AnswerPrompting
+from src.ai.retrieval_strategy import RetrievalStrategy
+from src.metrics import MetricsRecorder
 # Sentinelle locale — plus jamais levée depuis la migration vers MLX-LM,
 # conservée pour que la logique de retry sur contexte trop grand reste en place.
 class _ContextTooLargeError(Exception):
@@ -133,9 +136,90 @@ _HARD_SENTINEL = "cette information n'est pas dans ton coffre."
 
 
 class RAGPipeline:
-    def __init__(self, chroma: ChromaStore, llm) -> None:
+    def __init__(self, chroma: ChromaStore, llm, metrics: MetricsRecorder | None = None) -> None:
         self._chroma = chroma
         self._llm = llm
+        self._system_prompt = _SYSTEM_PROMPT
+        self._metrics = metrics or MetricsRecorder(lambda: settings.data_dir / "stats" / "metrics.json")
+        self._tag_pattern = _TAG_PATTERN
+        self._relation_pattern = _RELATION_PATTERN
+        self._entity_patterns = _ENTITY_PATTERNS
+        self._synthesis_patterns = _SYNTHESIS_PATTERNS
+        self._retrieval_strategy = RetrievalStrategy(self)
+        self._answer_prompting = AnswerPrompting(self)
+
+    @staticmethod
+    def _get_settings():
+        return settings
+
+    def _prepare_query_execution(
+        self,
+        user_query: str,
+        history: list[dict[str, str]],
+    ) -> tuple[str, list[dict], str]:
+        resolved_query = self._resolve_query_with_history(user_query, history)
+        chunks, intent = self._retrieve(resolved_query)
+        chunks = self._mark_primary_sources(chunks, resolved_query, intent)
+        return resolved_query, chunks, intent
+
+    def _iter_query_attempts(
+        self,
+        user_query: str,
+        history: list[dict[str, str]],
+        resolved_query: str,
+        chunks: list[dict],
+        intent: str,
+    ) -> Iterator[tuple[int, str, list[dict[str, str]]]]:
+        for budget in self._context_budgets():
+            context = self._build_context(chunks, resolved_query, intent, char_budget=budget)
+            messages = self._build_messages(
+                user_query,
+                context,
+                history,
+                intent=intent,
+                resolved_query=resolved_query,
+            )
+            yield budget, context, messages
+
+    def _run_chat_attempt(
+        self,
+        messages: list[dict[str, str]],
+        context: str,
+        history: list[dict[str, str]],
+        resolved_query: str,
+        intent: str,
+    ) -> str:
+        answer = self._llm.chat(messages, operation="rag_query")
+        answer = self._retry_forced_study_synthesis(
+            answer=answer,
+            query=resolved_query,
+            context=context,
+            history=history,
+            intent=intent,
+        )
+        normalized = self._normalize_final_answer(answer, resolved_query, intent)
+        if normalized.strip().lower() == _HARD_SENTINEL:
+            try:
+                self._metrics.increment("rag_sentinel_answers_total")
+            except Exception:
+                pass
+        return normalized
+
+    def _stream_first_token_or_empty(
+        self,
+        messages: list[dict[str, str]],
+    ) -> Iterator[str]:
+        raw_stream = self._llm.stream(messages, operation="rag_query")
+        first = next(raw_stream, None)
+        if first is None:
+            return iter([])
+        return chain([first], raw_stream)
+
+    def _get_linked_chunks_by_note_title(self, note_title: str, limit: int = 2) -> list[dict]:
+        return self._chroma.get_chunks_by_note_title(note_title, limit=limit)
+
+    def _get_linked_chunks_by_file_path(self, file_path: str, limit: int = 2) -> list[dict]:
+        return self._chroma.get_chunks_by_file_path(file_path, limit=limit)
 
     # ---- API publique ----
 
@@ -145,40 +229,39 @@ class RAGPipeline:
         chat_history: list[dict[str, str]] | None = None,
     ) -> tuple[Iterator[str], list[dict]]:
         """Retourne (stream_generator, sources). Réduit le contexte si dépassement."""
+        try:
+            self._metrics.increment("rag_queries_total")
+        except Exception:
+            pass
         history = chat_history or []
-        resolved_query = self._resolve_query_with_history(user_query, history)
-        chunks, intent = self._retrieve(resolved_query)
-        chunks = self._mark_primary_sources(chunks, resolved_query, intent)
+        resolved_query, chunks, intent = self._prepare_query_execution(user_query, history)
         if not chunks:
             logger.info("RAG: aucun chunk retenu, retour sentinel immédiat")
+            try:
+                self._metrics.increment("rag_sentinel_answers_total")
+            except Exception:
+                pass
             return iter(["Cette information n'est pas dans ton coffre."]), []
         logger.info(f"RAG intent={intent} chunks={len(chunks)}")
 
-        for budget in self._context_budgets():
-            context = self._build_context(chunks, resolved_query, intent, char_budget=budget)
-            messages = self._build_messages(user_query, context, history, intent=intent, resolved_query=resolved_query)
+        for budget, context, messages in self._iter_query_attempts(
+            user_query,
+            history,
+            resolved_query,
+            chunks,
+            intent,
+        ):
             try:
                 if intent in {"synthesis", "relation", "hybrid"}:
-                    answer = self._llm.chat(messages, operation="rag_query")
-                    answer = self._retry_forced_study_synthesis(
-                        answer=answer,
-                        query=resolved_query,
-                        context=context,
-                        history=history,
-                        intent=intent,
-                    )
-                    answer = self._normalize_final_answer(answer, resolved_query, intent)
+                    answer = self._run_chat_attempt(messages, context, history, resolved_query, intent)
                     return iter([answer]), chunks
-                raw_stream = self._llm.stream(messages, operation="rag_query")
-                # Force l'exécution du générateur jusqu'au premier token pour déclencher
-                # immédiatement toute BadRequestError (contexte trop grand) AVANT de
-                # rendre la main à l'appelant, sinon l'erreur échappe au retry.
-                first = next(raw_stream, None)
-                if first is None:
-                    return iter([]), chunks
-                return chain([first], raw_stream), chunks
+                return self._stream_first_token_or_empty(messages), chunks
             except BadRequestError as exc:
                 if self._is_context_error(exc):
+                    try:
+                        self._metrics.increment("rag_context_retries_total")
+                    except Exception:
+                        pass
                     logger.warning(f"Contexte trop grand (budget={budget}), réduction…")
                     continue
                 raise
@@ -191,30 +274,36 @@ class RAGPipeline:
         chat_history: list[dict[str, str]] | None = None,
     ) -> tuple[str, list[dict]]:
         """Appel bloquant — retourne (réponse, sources). Réduit le contexte si dépassement."""
+        try:
+            self._metrics.increment("rag_queries_total")
+        except Exception:
+            pass
         history = chat_history or []
-        resolved_query = self._resolve_query_with_history(user_query, history)
-        chunks, intent = self._retrieve(resolved_query)
-        chunks = self._mark_primary_sources(chunks, resolved_query, intent)
+        resolved_query, chunks, intent = self._prepare_query_execution(user_query, history)
         if not chunks:
             logger.info("RAG: aucun chunk retenu, retour sentinel immédiat")
+            try:
+                self._metrics.increment("rag_sentinel_answers_total")
+            except Exception:
+                pass
             return "Cette information n'est pas dans ton coffre.", []
 
-        for budget in self._context_budgets():
-            context = self._build_context(chunks, resolved_query, intent, char_budget=budget)
-            messages = self._build_messages(user_query, context, history, intent=intent, resolved_query=resolved_query)
+        for budget, context, messages in self._iter_query_attempts(
+            user_query,
+            history,
+            resolved_query,
+            chunks,
+            intent,
+        ):
             try:
-                answer = self._llm.chat(messages, operation="rag_query")
-                answer = self._retry_forced_study_synthesis(
-                    answer=answer,
-                    query=resolved_query,
-                    context=context,
-                    history=history,
-                    intent=intent,
-                )
-                answer = self._normalize_final_answer(answer, resolved_query, intent)
+                answer = self._run_chat_attempt(messages, context, history, resolved_query, intent)
                 return answer, chunks
             except BadRequestError as exc:
                 if self._is_context_error(exc):
+                    try:
+                        self._metrics.increment("rag_context_retries_total")
+                    except Exception:
+                        pass
                     logger.warning(f"Contexte trop grand (budget={budget}), réduction…")
                     continue
                 raise
@@ -520,95 +609,7 @@ class RAGPipeline:
         return True
 
     def _retrieve(self, query: str) -> tuple[list[dict], str]:
-        query = self._normalize_query(query)
-        # 1. Tags explicites
-        tags = _TAG_PATTERN.findall(query)
-        if tags:
-            return self._chroma.search_by_tags(tags, top_k=settings.search_top_k), "tags"
-
-        # 2. Relation entre deux entités — recherche parallèle sur chaque entité
-        relation_match = _RELATION_PATTERN.search(query)
-        if relation_match:
-            entity_a = relation_match.group(1).strip().strip('"\'«»')
-            entity_b = relation_match.group(2).strip().strip('"\'«»')
-            logger.info(f"RAG intent=relation entités: {entity_a!r} ↔ {entity_b!r}")
-            chunks_a = self._chroma.search(entity_a, top_k=settings.search_top_k)
-            chunks_b = self._chroma.search(entity_b, top_k=settings.search_top_k)
-            # Bonus : recherche sur les deux entités ensemble pour les notes-ponts
-            chunks_ab = self._chroma.search(f"{entity_a} {entity_b}", top_k=settings.search_top_k)
-            # Fusion dédupliquée : ponts d'abord, puis A, puis B
-            seen_ids: set[str] = set()
-            merged: list[dict] = []
-            for c in chunks_ab + chunks_a + chunks_b:
-                if c["chunk_id"] not in seen_ids:
-                    seen_ids.add(c["chunk_id"])
-                    merged.append(c)
-            return merged[: settings.search_top_k * 2], "relation"
-
-        # 2. Temporel
-        days = self._detect_temporal(query)
-        if days is not None:
-            since = datetime.now() - timedelta(days=days)
-            chunks = self._chroma.search_by_date_range(
-                query, since=since, top_k=settings.search_top_k
-            )
-            if not chunks:
-                # Fallback sémantique si aucun résultat dans la fenêtre
-                chunks = self._chroma.search(query, top_k=settings.search_top_k)
-            return chunks, "temporal"
-
-        # 3. Entité NER
-        entity_match = _ENTITY_PATTERNS.search(query)
-        if entity_match:
-            entity = entity_match.group(1).strip()
-            if self._is_entity_target(entity):
-                chunks = self._chroma.search_by_entity(entity, top_k=settings.search_top_k)
-                return self._filter_supported_chunks(query, chunks, "entity"), "entity"
-
-        proper_nouns = self._extract_proper_nouns(query)
-
-        # 4. Synthèse — même top_k que la recherche générale, le budget de chars fait le tri
-        if _SYNTHESIS_PATTERNS.search(query):
-            if proper_nouns:
-                chunks = self._retrieve_hybrid_chunks(query, proper_nouns)
-                return chunks[: settings.search_top_k], "synthesis"
-            chunks = self._chroma.search(query, top_k=settings.search_top_k)
-            return chunks, "synthesis"
-
-        # 5. Détection de noms propres → recherche hybride (sémantique + keyword + titre)
-        if proper_nouns:
-            chunks = self._retrieve_hybrid_chunks(query, proper_nouns)
-            return chunks[: settings.search_top_k], "hybrid"
-
-        # 6. Recherche générale
-        chunks = self._chroma.search(query, top_k=settings.search_top_k)
-        # Fallback : si les scores sont tous faibles, élargir avec keyword sur les
-        # termes significatifs de la requête (mots ≥ 4 lettres, hors stop-words)
-        _STOP_FR = {"quelles", "quelle", "quel", "quels", "comment", "pourquoi",
-                    "mesures", "prend", "prend-elle", "assurer", "pour", "dans",
-                    "avec", "sont", "cette", "avoir", "faire", "être", "les", "des",
-                    "une", "que", "qui", "sur", "par", "elle", "ils"}
-        if all(c["score"] < 0.55 for c in chunks):
-            kw_extra: list[dict] = []
-            for word in query.split():
-                w = re.sub(r"[^\w]", "", word).lower()
-                if len(w) >= 4 and w not in _STOP_FR:
-                    kw_extra.extend(self._chroma.search_by_keyword(w, top_k=3))
-            if kw_extra:
-                seen_ids2: set[str] = set()
-                merged2: list[dict] = []
-                for c in kw_extra + chunks:
-                    if c["chunk_id"] not in seen_ids2:
-                        seen_ids2.add(c["chunk_id"])
-                        merged2.append(c)
-                logger.info(f"RAG fallback keyword: {len(kw_extra)} chunks supplémentaires")
-                filtered = self._filter_supported_chunks(
-                    query,
-                    merged2[: settings.search_top_k],
-                    "general_kw_fallback",
-                )
-                return filtered, "general_kw_fallback"
-        return self._filter_supported_chunks(query, chunks, "general"), "general"
+        return self._retrieval_strategy.retrieve(query)
 
     @staticmethod
     def _extract_proper_nouns(query: str) -> list[str]:
@@ -1017,112 +1018,7 @@ class RAGPipeline:
         )
 
     def _retrieve_hybrid_chunks(self, query: str, proper_nouns: list[str]) -> list[dict]:
-        """Recherche hybride équilibrée : titre exact + keyword + sémantique globale."""
-        semantic = self._prefer_informative_chunks(
-            self._chroma.search(query, top_k=settings.search_top_k)
-        )
-        per_term_chunks: list[list[dict]] = []
-        retrieval_terms = self._expand_retrieval_terms(query, proper_nouns)
-        focus_terms = self._select_focus_terms(retrieval_terms)
-        logger.info(f"RAG hybrid termes={retrieval_terms}")
-        for noun in retrieval_terms:
-            title_hits = self._chroma.search_by_note_title(noun, top_k=3)
-            keyword_hits = self._chroma.search_by_keyword(noun, top_k=3)
-            per_term_chunks.append(self._prefer_informative_chunks(title_hits + keyword_hits))
-
-        seen_ids: set[str] = set()
-        seen_notes: set[str] = set()
-        merged: list[dict] = []
-
-        focus_buckets: list[list[dict]] = []
-        bridge_chunks: list[dict] = []
-        if focus_terms:
-            symbolic_hits: list[dict] = []
-            symbolic_ids: set[str] = set()
-            for bucket in per_term_chunks:
-                for chunk in bucket:
-                    if chunk["chunk_id"] not in symbolic_ids:
-                        symbolic_ids.add(chunk["chunk_id"])
-                        symbolic_hits.append(chunk)
-
-            focus_token_sets: list[tuple[str, set[str]]] = []
-            for term in focus_terms:
-                tokens = {
-                    token.lower()
-                    for token in re.findall(r"\w+", term)
-                    if len(token) >= 4 and token.lower() not in {"mission", "terre", "lune", "code"}
-                }
-                if tokens:
-                    focus_token_sets.append((term, tokens))
-
-            focus_bucket_map: dict[str, list[dict]] = {term: [] for term, _ in focus_token_sets}
-            bridge_ids: set[str] = set()
-            for chunk in symbolic_hits + semantic:
-                match_count = self._chunk_match_count(chunk, focus_token_sets)
-                matched_terms = [
-                    term for term, tokens in focus_token_sets
-                    if self._chunk_match_count(chunk, [(term, tokens)])
-                ]
-                if len(matched_terms) >= 2:
-                    if chunk["chunk_id"] not in bridge_ids:
-                        bridge_ids.add(chunk["chunk_id"])
-                        bridge_chunks.append(chunk)
-                elif len(matched_terms) == 1:
-                    bucket = focus_bucket_map[matched_terms[0]]
-                    if chunk["chunk_id"] not in {c["chunk_id"] for c in bucket}:
-                        bucket.append(chunk)
-
-            for term, tokens in focus_token_sets:
-                focus_bucket_map[term].sort(
-                    key=lambda chunk: self._chunk_term_rank(chunk, tokens),
-                    reverse=True,
-                )
-            focus_buckets = [bucket for bucket in focus_bucket_map.values() if bucket]
-
-        for chunk in bridge_chunks:
-            note_key = self._chunk_note_key(chunk)
-            if chunk["chunk_id"] not in seen_ids and note_key not in seen_notes:
-                seen_ids.add(chunk["chunk_id"])
-                seen_notes.add(note_key)
-                merged.append(chunk)
-
-        max_focus_depth = max((len(bucket) for bucket in focus_buckets), default=0)
-        for depth in range(max_focus_depth):
-            for bucket in focus_buckets:
-                if depth < len(bucket):
-                    chunk = bucket[depth]
-                    note_key = self._chunk_note_key(chunk)
-                    if chunk["chunk_id"] not in seen_ids and note_key not in seen_notes:
-                        seen_ids.add(chunk["chunk_id"])
-                        seen_notes.add(note_key)
-                        merged.append(chunk)
-
-        max_bucket_depth = max((len(bucket) for bucket in per_term_chunks), default=0)
-        for depth in range(max_bucket_depth):
-            for bucket in per_term_chunks:
-                if depth < len(bucket):
-                    c = bucket[depth]
-                    if focus_terms and self._chunk_match_count(c, focus_token_sets) == 0:
-                        continue
-                    note_key = self._chunk_note_key(c)
-                    if c["chunk_id"] not in seen_ids and note_key not in seen_notes:
-                        seen_ids.add(c["chunk_id"])
-                        seen_notes.add(note_key)
-                        merged.append(c)
-        for c in semantic:
-            if focus_terms and self._chunk_match_count(c, focus_token_sets) == 0:
-                continue
-            note_key = self._chunk_note_key(c)
-            if c["chunk_id"] not in seen_ids and note_key not in seen_notes:
-                seen_ids.add(c["chunk_id"])
-                seen_notes.add(note_key)
-                merged.append(c)
-
-        chunks = merged[: settings.search_top_k * 2]
-        has_symbolic_hits = any(per_term_chunks)
-        if not has_symbolic_hits and all(c["score"] < 0.55 for c in chunks):
-            chunks = self._chroma.search(query, top_k=settings.search_top_k * 2)
-        return chunks
+        return self._retrieval_strategy.retrieve_hybrid_chunks(query, proper_nouns)
 
     @staticmethod
     def _detect_temporal(query: str) -> int | None:
@@ -1249,40 +1145,10 @@ class RAGPipeline:
         )[:limit]
 
     def _prepare_context_chunks(self, chunks: list[dict], query: str, intent: str) -> list[dict]:
-        if not self._should_focus_dominant_note(intent, query):
-            return chunks
-
-        dominant_note_key = self._select_dominant_note_key(query, chunks)
-        if not dominant_note_key:
-            return chunks
-
-        dominant_limit = min(settings.max_context_chunks - 1, max(2, settings.max_context_chunks // 2 + 1))
-        dominant_chunks = self._fetch_note_context_chunks(query, dominant_note_key, dominant_limit)
-        if not dominant_chunks:
-            return chunks
-
-        supporting_chunks = self._prefer_informative_chunks(
-            [chunk for chunk in chunks if self._chunk_note_key(chunk) != dominant_note_key]
-        )
-        remaining = max(0, settings.max_context_chunks - len(dominant_chunks))
-        prepared = dominant_chunks + supporting_chunks[:remaining]
-        return prepared[: settings.max_context_chunks]
+        return self._retrieval_strategy.prepare_context_chunks(chunks, query, intent)
 
     def _mark_primary_sources(self, chunks: list[dict], query: str, intent: str) -> list[dict]:
-        if not chunks:
-            return chunks
-
-        dominant_note_key = self._select_dominant_note_key(query, chunks)
-        marked: list[dict] = []
-        for chunk in chunks:
-            clone = dict(chunk)
-            metadata = dict(chunk.get("metadata") or {})
-            metadata["is_primary"] = bool(
-                dominant_note_key and self._chunk_note_key(chunk) == dominant_note_key
-            )
-            clone["metadata"] = metadata
-            marked.append(clone)
-        return marked
+        return self._retrieval_strategy.mark_primary_sources(chunks, query, intent)
 
     @staticmethod
     def _is_context_error(exc: BadRequestError) -> bool:
@@ -1296,106 +1162,48 @@ class RAGPipeline:
         intent: str,
         char_budget: int | None = None,
     ) -> str:
-        if not chunks:
-            return "Aucune note trouvée dans le coffre pour cette requête."
+        return self._answer_prompting.build_context(chunks, query, intent, char_budget=char_budget)
 
-        chunks = self._prepare_context_chunks(chunks, query, intent)
+    def _group_chunks_by_note(self, chunks: list[dict]) -> dict[str, list[dict]]:
+        return self._answer_prompting.group_chunks_by_note(chunks)
 
-        # Déduplique par note, limite au nombre max de chunks
-        seen_notes: dict[str, list[dict]] = {}
-        for c in chunks[: settings.max_context_chunks]:
-            fp = c["metadata"].get("file_path", "")
-            seen_notes.setdefault(fp, []).append(c)
+    def _build_title_to_file_index(self, seen_notes: dict[str, list[dict]]) -> dict[str, str]:
+        return self._answer_prompting.build_title_to_file_index(seen_notes)
 
-        # Enrichissement : ajouter les notes liées (wikilinks) des notes trouvées
-        # Les wikilinks sont des titres — construire un index titre→file_path
-        title_to_fp: dict[str, str] = {}
-        for fp, note_chunks in seen_notes.items():
-            title = note_chunks[0]["metadata"].get("note_title", "")
-            if title:
-                title_to_fp[title.lower()] = fp
-                # préfixe 30 chars comme fallback
-                title_to_fp[title.lower()[:30]] = fp
+    def _collect_linked_targets(self, seen_notes: dict[str, list[dict]]) -> set[str]:
+        return self._answer_prompting.collect_linked_targets(seen_notes)
 
-        linked_fps: set[str] = set()
-        for fp, note_chunks in seen_notes.items():
-            wikilinks_raw = note_chunks[0]["metadata"].get("wikilinks", "")
-            for wl in (wikilinks_raw or "").split(","):
-                wl = wl.strip()
-                if not wl:
-                    continue
-                wl_lower = wl.lower()
-                resolved = title_to_fp.get(wl_lower) or title_to_fp.get(wl_lower[:30])
-                if resolved and resolved not in seen_notes:
-                    linked_fps.add(resolved)
-                elif not resolved:
-                    # Stocker le titre brut pour une recherche ChromaDB par note_title
-                    linked_fps.add(f"__title__:{wl}")
+    def _load_linked_chunks(self, linked_target: str) -> list[dict]:
+        return self._answer_prompting.load_linked_chunks(linked_target)
 
-        if linked_fps:
-            # Chercher les chunks des notes liées (2 chunks max par note liée)
-            linked_budget = max(1, settings.max_context_chunks // 2)
-            for linked_fp in list(linked_fps)[:linked_budget]:
-                try:
-                    if linked_fp.startswith("__title__:"):
-                        # Résolution par titre via ChromaDB
-                        title_query = linked_fp[len("__title__:"):]
-                        raw = self._chroma._collection.get(
-                            where={"note_title": title_query},
-                            limit=2,
-                            include=["documents", "metadatas"],
-                        )
-                    else:
-                        raw = self._chroma._collection.get(
-                            where={"file_path": linked_fp},
-                            limit=2,
-                            include=["documents", "metadatas"],
-                        )
-                    for doc, meta in zip(
-                        raw.get("documents") or [],
-                        raw.get("metadatas") or [],
-                    ):
-                        fp2 = meta.get("file_path", linked_fp)
-                        if fp2 not in seen_notes:
-                            seen_notes[fp2] = [{
-                                "chunk_id": f"linked_{fp2}",
-                                "text": doc,
-                                "metadata": meta,
-                                "score": 0.0,
-                            }]
-                except Exception:
-                    pass
+    def _enrich_seen_notes_with_linked_chunks(self, seen_notes: dict[str, list[dict]]) -> None:
+        self._answer_prompting.enrich_seen_notes_with_linked_chunks(seen_notes)
 
-        parts: list[str] = []
-        budget = char_budget if char_budget is not None else settings.max_context_chars
+    def _render_context_from_seen_notes(
+        self,
+        seen_notes: dict[str, list[dict]],
+        char_budget: int | None,
+    ) -> str:
+        return self._answer_prompting.render_context_from_seen_notes(seen_notes, char_budget)
 
-        for fp, note_chunks in seen_notes.items():
-            if budget <= 0:
-                break
-            title = note_chunks[0]["metadata"].get("note_title", fp)
-            date_mod = note_chunks[0]["metadata"].get("date_modified", "")[:10]
-            header = f"### [{title}] ({date_mod})"
-            parts.append(header)
-            budget -= len(header)
+    def _build_intent_hint(
+        self,
+        query: str,
+        intent: str,
+        *,
+        force_study_answer: bool,
+    ) -> str:
+        return self._answer_prompting.build_intent_hint(
+            query,
+            intent,
+            force_study_answer=force_study_answer,
+        )
 
-            for c in note_chunks:
-                if budget <= 0:
-                    break
-                section = c["metadata"].get("section_title", "")
-                # Tronque le texte du chunk si trop long
-                text = c["text"][: settings.max_chunk_chars]
-                if len(c["text"]) > settings.max_chunk_chars:
-                    text += "…"
-                line = (f"**{section}** — {text}") if section else text
-                if len(line) <= budget:
-                    parts.append(line)
-                    budget -= len(line)
-                else:
-                    parts.append(line[:budget] + "…")
-                    budget = 0
-            parts.append("")
+    def _build_study_intent_hint(self, query: str) -> str:
+        return self._answer_prompting.build_study_intent_hint(query)
 
-        return "\n".join(parts)
+    def _build_single_subject_intent_hint(self, query: str) -> str:
+        return self._answer_prompting.build_single_subject_intent_hint(query)
 
     def _build_messages(
         self,
@@ -1406,61 +1214,11 @@ class RAGPipeline:
         force_study_answer: bool = False,
         resolved_query: str | None = None,
     ) -> list[dict[str, str]]:
-        messages: list[dict[str, str]] = [{"role": "system", "content": _SYSTEM_PROMPT}]
-
-        # Historique : limité aux 4 derniers échanges (8 messages) pour ménager le contexte
-        messages.extend(history[-8:])
-
-        intent_hint = ""
-        use_study_prompt = self._should_use_study_prompt(intent, query)
-        if use_study_prompt:
-            theme_a, theme_b = self._derive_study_themes(query)
-            intent_hint = (
-                "\n\n**Consigne de travail :**\n"
-                "- La question demande une synthèse d'étude à partir de plusieurs notes liées.\n"
-                "- Si les extraits contiennent des éléments substantiels sur les thèmes demandés, produis une synthèse utile depuis le coffre.\n"
-                "- Tu peux rapprocher prudemment plusieurs notes pour dégager des apprentissages, à condition de signaler ce qui est explicite et ce qui relève d'une interprétation prudente.\n"
-                "- N'utilise la réponse exacte \"Cette information n'est pas dans ton coffre.\" que s'il n'y a vraiment aucun matériau substantiel pour construire une synthèse partielle.\n"
-                "- La réponse doit être structurée avec EXACTEMENT ces trois intertitres Markdown de niveau 3 :\n"
-                f"  ### Ce que disent mes notes sur {theme_a}\n"
-                f"  ### Ce que disent mes notes sur {theme_b}\n"
-                "  ### Ce que je peux conclure\n"
-                "- Sous chaque intertitre, fais des phrases courtes et factuelles, en citant les titres de notes utiles entre [crochets].\n"
-                "- Si le lien direct n'est pas explicite, remplis quand même les deux premières sections avec les apprentissages disponibles, puis explicite la limite dans la troisième.\n"
-            )
-        elif self._should_use_single_subject_prompt(intent, query):
-            primary_theme = self._derive_primary_theme(query)
-            intent_hint = (
-                "\n\n**Consigne de travail :**\n"
-                f"- La question porte sur un seul sujet principal : {primary_theme}.\n"
-                f"- Réponds d'abord et surtout sur {primary_theme}.\n"
-                "- Donne un aperçu descriptif utile à partir des notes: nature du sujet, rôle, dates, étapes ou faits saillants, uniquement si ces éléments figurent dans les extraits.\n"
-                "- La réponse doit être structurée avec EXACTEMENT ces deux intertitres Markdown de niveau 3 :\n"
-                f"  ### Aperçu de {primary_theme}\n"
-                "  ### Détails utiles\n"
-                "- Sous chaque intertitre, écris un ou deux courts paragraphes clairs.\n"
-                "- N'élargis pas la réponse à des thèmes voisins, à des suites possibles, ou à des conséquences futures, sauf si la question le demande explicitement.\n"
-                "- Si les notes mentionnent des sujets proches, tu peux les citer brièvement uniquement pour situer le sujet demandé, sans en faire un second axe de réponse.\n"
-                "- N'invente aucun prolongement non écrit dans les extraits.\n"
-                "- N'utilise la phrase exacte \"Cette information n'est pas dans ton coffre.\" que s'il n'y a vraiment aucune matière sur le sujet demandé.\n"
-                "- Cite les titres de notes utiles entre [crochets].\n"
-            )
-        if force_study_answer and use_study_prompt:
-            intent_hint += (
-                "- Deuxième tentative obligatoire : les extraits ci-dessus contiennent déjà assez de matière pour répondre partiellement.\n"
-                "- Tu dois produire une synthèse depuis le coffre, même si le lien causal complet n'est pas formulé mot pour mot.\n"
-                "- Mentionne les limites ou incertitudes, mais ne réponds pas par le hard sentinel.\n"
-                "- Si le lien direct n'est pas prouvé, fournis quand même les apprentissages disponibles sur chaque thème avant d'énoncer cette limite.\n"
-                "- Conserve impérativement les trois intertitres demandés.\n"
-            )
-
-        question_block = f"**Question :** {query}"
-        if resolved_query and resolved_query != query:
-            question_block += f"\n**Question résolue dans le fil :** {resolved_query}"
-
-        user_content = (
-            f"**Extraits du coffre Obsidian :**\n\n{context}{intent_hint}\n\n"
-            f"---\n{question_block}"
+        return self._answer_prompting.build_messages(
+            query,
+            context,
+            history,
+            intent=intent,
+            force_study_answer=force_study_answer,
+            resolved_query=resolved_query,
         )
-        messages.append({"role": "user", "content": user_content})
-        return messages

@@ -1,0 +1,112 @@
+from __future__ import annotations
+
+from datetime import datetime, timedelta
+
+
+def filter_brain_notes(
+    notes: list[dict],
+    selected_folders: list[str],
+    selected_tags: list[str],
+    search_text: str = "",
+    modified_within_days: int | None = None,
+    now: datetime | None = None,
+) -> list[dict]:
+    filtered = list(notes)
+
+    if selected_folders and "Tous" not in selected_folders:
+        folder_set = set(selected_folders)
+        filtered = [
+            note for note in filtered
+            if note.get("folder") in folder_set
+        ]
+
+    if selected_tags:
+        tag_set = {tag.lower() for tag in selected_tags}
+        filtered = [
+            note for note in filtered
+            if tag_set & {tag.lower() for tag in note.get("tags", [])}
+        ]
+
+    search = search_text.strip().lower()
+    if search:
+        filtered = [
+            note for note in filtered
+            if search in (note.get("title") or "").lower()
+            or search in (note.get("file_path") or "").lower()
+            or any(search in tag.lower() for tag in note.get("tags", []))
+        ]
+
+    if modified_within_days:
+        reference = now or datetime.now()
+        threshold = reference - timedelta(days=modified_within_days)
+        recent: list[dict] = []
+        for note in filtered:
+            modified = _parse_note_date(note.get("date_modified", ""))
+            if modified and modified >= threshold:
+                recent.append(note)
+        filtered = recent
+
+    return filtered
+
+
+def build_recent_notes(notes: list[dict], limit: int = 8) -> list[dict]:
+    return sorted(
+        notes,
+        key=lambda note: (_parse_note_date(note.get("date_modified", "")) or datetime.min),
+        reverse=True,
+    )[:limit]
+
+
+def build_centrality_spotlight(notes: list[dict], top_connected: list[dict], limit: int = 6) -> list[dict]:
+    by_path = {note.get("file_path"): note for note in notes}
+    spotlight: list[dict] = []
+
+    for item in top_connected[:limit]:
+        file_path = item.get("file_path")
+        note = by_path.get(file_path)
+        if not note:
+            continue
+        spotlight.append({
+            "file_path": file_path,
+            "title": note.get("title") or file_path,
+            "score": item.get("score", 0),
+            "date_modified": note.get("date_modified", "")[:10],
+            "tags": note.get("tags", []),
+        })
+
+    return spotlight
+
+
+def build_folder_summary(notes: list[dict], limit: int = 6) -> list[dict[str, int | str]]:
+    counts: dict[str, int] = {}
+    for note in notes:
+        folder = note.get("folder") or "(racine)"
+        counts[folder] = counts.get(folder, 0) + 1
+    return [
+        {"folder": folder, "count": count}
+        for folder, count in sorted(counts.items(), key=lambda item: (-item[1], item[0]))[:limit]
+    ]
+
+
+def build_tag_summary(notes: list[dict], limit: int = 10) -> list[dict[str, int | str]]:
+    counts: dict[str, int] = {}
+    for note in notes:
+        for tag in note.get("tags", []):
+            if not tag:
+                continue
+            counts[tag] = counts.get(tag, 0) + 1
+    return [
+        {"tag": tag, "count": count}
+        for tag, count in sorted(counts.items(), key=lambda item: (-item[1], item[0]))[:limit]
+    ]
+
+
+def _parse_note_date(value: str) -> datetime | None:
+    if not value:
+        return None
+    for candidate in (value, value.replace("Z", "+00:00")):
+        try:
+            return datetime.fromisoformat(candidate)
+        except ValueError:
+            continue
+    return None
