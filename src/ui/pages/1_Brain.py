@@ -13,9 +13,10 @@ from src.ui.brain_explorer import (
     build_folder_summary,
     build_recent_notes,
     build_tag_summary,
+    build_type_summary,
     filter_brain_notes,
 )
-from src.ui.note_badges import prefix_note_label, render_note_badge
+from src.ui.note_badges import get_note_type_options, prefix_note_label, render_note_badge
 from src.ui.services_cache import get_services
 from src.ui.components.note_bridge_component import note_bridge as _note_bridge
 from src.ui.theme import inject_theme, render_theme_toggle
@@ -63,6 +64,13 @@ with st.sidebar:
 
     all_tags = sorted({t for n in notes for t in n.get("tags", []) if t})
     selected_tags = st.multiselect("Tags", options=all_tags)
+    type_options = get_note_type_options()
+    type_labels = {option["label"]: option["key"] for option in type_options}
+    selected_type_labels = st.multiselect(
+        "Types de notes",
+        options=["Tous"] + list(type_labels.keys()),
+        default=["Tous"],
+    )
     search_text = st.text_input("Recherche libre", placeholder="Titre, chemin ou tag…")
     recency_label = st.selectbox(
         "Modifiées récemment",
@@ -100,10 +108,18 @@ notes_with_folder = [
     {**note, "folder": str(Path(note["file_path"]).parent)}
     for note in notes
 ]
+type_key_to_label = {option["key"]: option["label"] for option in type_options}
+type_demo_paths = {
+    "user": "notes/demo.md",
+    "report": "obsirag/synthesis/demo.md",
+    "insight": "obsirag/insights/demo.md",
+    "synapse": "obsirag/synapses/demo.md",
+}
 filtered = filter_brain_notes(
     notes_with_folder,
     selected_folders=selected_folders,
     selected_tags=selected_tags,
+    selected_types=[type_labels[label] for label in selected_type_labels if label in type_labels],
     search_text=search_text,
     modified_within_days=recency_days,
     now=datetime.now(),
@@ -139,6 +155,18 @@ if fps_tuple:
     recent_notes = build_recent_notes(filtered, limit=6)
     folder_summary = build_folder_summary(filtered, limit=6)
     tag_summary = build_tag_summary(filtered, limit=8)
+    type_summary = build_type_summary(filtered)
+
+    st.markdown("### Légende visuelle")
+    st.markdown(
+        "<div style='display:flex;gap:0.5rem;flex-wrap:wrap;'>"
+        + "".join(
+            render_note_badge(type_demo_paths[option["key"]])
+            for option in type_options
+        )
+        + "</div>",
+        unsafe_allow_html=True,
+    )
 
     col_spotlight, col_recent = st.columns(2)
 
@@ -185,7 +213,7 @@ if fps_tuple:
             st.caption("Aucune note récente ne correspond à ces filtres.")
 
     with st.expander("### Répartition des filtres", expanded=False):
-        col_folders, col_tags = st.columns(2)
+        col_folders, col_tags, col_types = st.columns(3)
 
         with col_folders:
             st.markdown("**Dossiers dominants**")
@@ -203,11 +231,25 @@ if fps_tuple:
             else:
                 st.caption("Aucun tag à résumer avec ces filtres.")
 
+        with col_types:
+            st.markdown("**Types visibles**")
+            if type_summary:
+                for item in type_summary:
+                    st.markdown(
+                        f"**{type_key_to_label.get(str(item['type']), str(item['type']))}** · {item['count']} note(s)"
+                    )
+            else:
+                st.caption("Aucun type à résumer avec ces filtres.")
+
     if stats.get("top_connected"):
         st.markdown("### Nœuds les plus connectés")
+        top_notes = {
+            note["file_path"]: note
+            for note in svc.chroma.get_notes_by_file_paths([item["file_path"] for item in stats["top_connected"][:5]])
+        }
         for idx, item in enumerate(stats["top_connected"][:5]):
             fp = item["file_path"]
-            note = next((n for n in filtered if n["file_path"] == fp), None)
+            note = top_notes.get(fp)
             title = note["title"] if note else fp
             score = item["score"]
             col_t, col_b = st.columns([4, 1])
@@ -219,7 +261,7 @@ if fps_tuple:
                 f"</div>",
                 unsafe_allow_html=True,
             )
-            if col_b.button("📖", key=f"top_{idx}_{fp}", help="Ouvrir"):
+            if col_b.button("📖 Ouvrir", key=f"top_{idx}_{fp}", use_container_width=True):
                 st.session_state.viewing_note = fp
                 st.session_state.note_nav_request = fp
                 st.switch_page("pages/4_Note.py")

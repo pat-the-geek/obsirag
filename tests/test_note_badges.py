@@ -2,7 +2,13 @@ from __future__ import annotations
 
 import pytest
 
-from src.ui.note_badges import get_note_type, prefix_note_label, render_note_badge
+from src.ui.note_badges import (
+    get_note_graph_color,
+    get_note_type,
+    get_note_type_options,
+    prefix_note_label,
+    render_note_badge,
+)
 
 
 @pytest.mark.unit
@@ -24,3 +30,16 @@ class TestNoteBadges:
 
         assert "Insight" in html
         assert "💡" in html
+
+    def test_get_note_type_options_returns_expected_order(self):
+        options = get_note_type_options()
+
+        assert [option["key"] for option in options] == ["user", "report", "insight", "synapse"]
+        assert options[1]["label"] == "Rapport"
+
+    def test_get_note_graph_color_uses_type_palette(self):
+        color = get_note_graph_color("obsirag/synthesis/week-15.md")
+
+        assert color["background"] == "#f59e0b"
+        assert color["border"] == "#b45309"
+        assert color["highlight"]["background"] == "#fcd34d"

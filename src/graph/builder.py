@@ -25,18 +25,7 @@ from pyvis.network import Network
 from src.config import settings
 
 
-# Palette : couleurs vives sur fond sombre, assez distinctes pour être lisibles
-# Format : (background, border, font)
-_FOLDER_PALETTE = [
-    {"background": "#A78BFA", "border": "#7C3AED", "highlight": {"background": "#C4B5FD", "border": "#5B21B6"}},
-    {"background": "#60A5FA", "border": "#2563EB", "highlight": {"background": "#93C5FD", "border": "#1D4ED8"}},
-    {"background": "#34D399", "border": "#059669", "highlight": {"background": "#6EE7B7", "border": "#047857"}},
-    {"background": "#FBBF24", "border": "#D97706", "highlight": {"background": "#FCD34D", "border": "#B45309"}},
-    {"background": "#F87171", "border": "#DC2626", "highlight": {"background": "#FCA5A5", "border": "#B91C1C"}},
-    {"background": "#38BDF8", "border": "#0891B2", "highlight": {"background": "#7DD3FC", "border": "#0E7490"}},
-    {"background": "#F472B6", "border": "#BE185D", "highlight": {"background": "#F9A8D4", "border": "#9D174D"}},
-    {"background": "#A3E635", "border": "#65A30D", "highlight": {"background": "#BEF264", "border": "#4D7C0F"}},
-]
+from src.ui.note_badges import get_note_graph_color, get_note_type_meta
 
 
 _pyvis_lock = threading.Lock()
@@ -66,15 +55,11 @@ class GraphBuilder:
         g = nx.DiGraph()
 
         # 1. Ajouter les nœuds
-        folder_index: dict[str, int] = {}
         for note in notes:
             fp = note["file_path"]
             folder = str(Path(fp).parent)
-            if folder not in folder_index:
-                folder_index[folder] = len(folder_index)
-
-            palette = _FOLDER_PALETTE[folder_index[folder] % len(_FOLDER_PALETTE)]
             title = note.get("title") or Path(fp).stem
+            type_meta = get_note_type_meta(fp)
             g.add_node(
                 fp,
                 label=title,
@@ -82,7 +67,9 @@ class GraphBuilder:
                 date_modified=note.get("date_modified", ""),
                 tags=note.get("tags", []),
                 folder=folder,
-                color=palette,
+                note_type=type_meta["key"],
+                note_type_label=type_meta["label"],
+                color=get_note_graph_color(fp),
                 size=15,
             )
 
@@ -365,8 +352,10 @@ div.vis-network div.vis-navigation div.vis-button:hover {
         date = note.get("date_modified", "")[:10]
         fp = _html.escape(note.get("file_path", ""), quote=True)
         title = _html.escape(note.get("title") or Path(fp).stem or "Note", quote=False)
+        type_meta = get_note_type_meta(note.get("file_path", ""))
         return (
             f"<b>{title}</b><br>"
+            f"{type_meta['icon']} {type_meta['label']}<br>"
             f"📅 {date}<br>"
             f"{'🏷 ' + tags + '<br>' if tags else ''}"
             f'<div style="margin-top:8px;display:flex;gap:6px;">'

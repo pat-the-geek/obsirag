@@ -9,6 +9,7 @@ from src.ui.brain_explorer import (
     build_folder_summary,
     build_recent_notes,
     build_tag_summary,
+    build_type_summary,
     filter_brain_notes,
 )
 
@@ -91,4 +92,31 @@ class TestBrainExplorerHelpers:
             {"tag": "python", "count": 2},
             {"tag": "ia", "count": 1},
             {"tag": "rust", "count": 1},
+        ]
+
+    def test_filter_brain_notes_supports_type_filter(self):
+        notes = [
+            {"title": "A", "file_path": "notes/a.md", "folder": "notes", "tags": []},
+            {"title": "B", "file_path": "obsirag/insights/b.md", "folder": "obsirag/insights", "tags": []},
+        ]
+
+        filtered = filter_brain_notes(
+            notes,
+            selected_folders=["Tous"],
+            selected_tags=[],
+            selected_types=["insight"],
+        )
+
+        assert [note["file_path"] for note in filtered] == ["obsirag/insights/b.md"]
+
+    def test_build_type_summary_counts_note_types(self):
+        notes = [
+            {"file_path": "notes/a.md"},
+            {"file_path": "obsirag/insights/b.md"},
+            {"file_path": "obsirag/insights/c.md"},
+        ]
+
+        assert build_type_summary(notes) == [
+            {"type": "insight", "count": 2},
+            {"type": "user", "count": 1},
         ]

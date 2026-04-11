@@ -41,6 +41,16 @@ from src.ui.chat_navigation import (
     list_saved_conversations,
     source_identity_key,
 )
+from src.ui.chat_sessions import (
+    create_new_thread,
+    create_thread_from_messages,
+    delete_thread,
+    ensure_chat_state,
+    get_current_thread,
+    list_thread_summaries,
+    switch_thread,
+    update_current_thread,
+)
 from src.ui.components.note_bridge_component import note_bridge as _note_bridge
 from src.ui.note_badges import render_note_badge
 from src.ui.theme import inject_theme, render_theme_toggle
@@ -63,6 +73,70 @@ _pending = st.session_state.pop("_pending_query", None)
 # Pending web search — déclenché par le bouton "Rechercher sur le web"
 _pending_web = st.session_state.pop("_pending_web_query", None)
 st.session_state.setdefault("messages", [])
+
+
+def _restore_active_chat_thread() -> None:
+    chat_state = ensure_chat_state(st.session_state.get("chat_threads_state"))
+    current_thread = get_current_thread(chat_state)
+    st.session_state.chat_threads_state = chat_state
+    st.session_state.messages = list(current_thread.get("messages", []))
+    st.session_state["chat_thread_draft"] = str(current_thread.get("draft", ""))
+
+
+def _persist_active_chat_thread(title: str | None = None) -> None:
+    chat_state = update_current_thread(
+        st.session_state.get("chat_threads_state"),
+        messages=list(st.session_state.get("messages", [])),
+        draft=st.session_state.get("chat_thread_draft", ""),
+        title=title,
+    )
+    st.session_state.chat_threads_state = chat_state
+
+
+def _save_chat_draft() -> None:
+    _persist_active_chat_thread()
+
+
+def _create_chat_thread_cb() -> None:
+    _persist_active_chat_thread()
+    chat_state = create_new_thread(st.session_state.get("chat_threads_state"))
+    st.session_state.chat_threads_state = chat_state
+    _restore_active_chat_thread()
+    st.session_state.pop("last_gen_stats", None)
+
+
+def _switch_chat_thread_cb(thread_id: str) -> None:
+    _persist_active_chat_thread()
+    chat_state = switch_thread(st.session_state.get("chat_threads_state"), thread_id)
+    st.session_state.chat_threads_state = chat_state
+    _restore_active_chat_thread()
+    st.session_state.pop("last_gen_stats", None)
+
+
+def _delete_chat_thread_cb(thread_id: str) -> None:
+    _persist_active_chat_thread()
+    chat_state = delete_thread(st.session_state.get("chat_threads_state"), thread_id)
+    st.session_state.chat_threads_state = chat_state
+    _restore_active_chat_thread()
+    st.session_state.pop("last_gen_stats", None)
+
+
+def _queue_chat_draft() -> None:
+    draft = st.session_state.get("chat_thread_draft", "").strip()
+    if not draft:
+        return
+    _persist_active_chat_thread()
+    st.session_state["_pending_query"] = draft
+    st.session_state["chat_thread_draft"] = ""
+    _persist_active_chat_thread()
+
+
+def _clear_chat_draft() -> None:
+    st.session_state["chat_thread_draft"] = ""
+    _persist_active_chat_thread()
+
+
+_restore_active_chat_thread()
 
 
 # ---- Helpers rendu ----
@@ -143,17 +217,27 @@ def _load_saved_conversation_cb(path_str: str, mode: str = "replace") -> None:
     messages = load_saved_conversation(Path(path_str))
     if not messages:
         return
+    label = Path(path_str).stem
     if mode == "append":
         st.session_state.messages = append_loaded_conversation(
             st.session_state.get("messages", []),
             messages,
         )
+        _persist_active_chat_thread()
     elif mode == "duplicate":
-        st.session_state.messages = list(messages)
+        _persist_active_chat_thread()
+        chat_state = create_thread_from_messages(
+            st.session_state.get("chat_threads_state"),
+            messages=list(messages),
+            title=label,
+        )
+        st.session_state.chat_threads_state = chat_state
+        _restore_active_chat_thread()
     else:
         st.session_state.messages = messages
+        _persist_active_chat_thread(title=label)
     st.session_state.pop("last_gen_stats", None)
-    st.session_state["_loaded_conversation_label"] = Path(path_str).stem
+    st.session_state["_loaded_conversation_label"] = label
     st.session_state["_loaded_conversation_mode"] = mode
 
 
@@ -203,7 +287,7 @@ def _render_sources_block(sources: list[dict], expander_label: str, key_prefix: 
             title = _m.get("note_title", _m.get("file_path", ""))
             fp = _m.get("file_path", "")
             primary_badge = " · Principale" if _m.get("is_primary") else ""
-            col_info, col_btn = st.columns([8, 1])
+            col_info, col_btn = st.columns([7, 1.4])
             with col_info:
                 st.markdown(
                     f"<div style='display:flex;align-items:center;gap:0.55rem;flex-wrap:wrap;'>"
@@ -216,9 +300,9 @@ def _render_sources_block(sources: list[dict], expander_label: str, key_prefix: 
             with col_btn:
                 if fp:
                     st.button(
-                        "📖",
+                        "📖 Ouvrir",
                         key=f"{key_prefix}_{i}_{fp[-20:]}",
-                        help="Ouvrir la note",
+                        use_container_width=True,
                         on_click=_open_note_cb,
                         args=(fp,),
                     )
@@ -566,8 +650,7 @@ with st.sidebar:
     st.caption("Votre coffre Obsidian, augmenté par l'IA locale")
     st.divider()
 
-    notes = svc.chroma.list_notes()
-    st.metric("Notes indexées", len(notes))
+    st.metric("Notes indexées", svc.chroma.count())
     st.metric("Chunks vectorisés", svc.chroma.count())
 
     # Compteur + statut auto-learner (auto-rafraîchi toutes les 5s)
@@ -585,6 +668,65 @@ with st.sidebar:
 
     llm_ok = svc.llm.is_available()
     st.markdown(f"**MLX** : {'🟢 Modèle chargé' if llm_ok else '🔴 Non disponible'}")
+
+    chat_state = ensure_chat_state(st.session_state.get("chat_threads_state"))
+    current_thread = get_current_thread(chat_state)
+    thread_summaries = list_thread_summaries(chat_state, limit=10)
+
+    st.divider()
+    with st.expander("🧵 Fils de conversation", expanded=False):
+        st.caption("Chaque fil conserve son historique et son brouillon courant.")
+        st.markdown(f"**Fil actif** · {current_thread.get('title', 'Nouveau fil')}")
+        st.button(
+            "➕ Nouveau fil",
+            key="chat_new_thread",
+            use_container_width=True,
+            on_click=_create_chat_thread_cb,
+        )
+        st.text_area(
+            "Brouillon courant",
+            key="chat_thread_draft",
+            height=110,
+            placeholder="Question en cours, idée à reformuler, rappel pour plus tard…",
+            on_change=_save_chat_draft,
+        )
+        draft_cols = st.columns(2)
+        draft_cols[0].button(
+            "↗ Envoyer le brouillon",
+            key="chat_send_draft",
+            use_container_width=True,
+            on_click=_queue_chat_draft,
+            disabled=not st.session_state.get("chat_thread_draft", "").strip(),
+        )
+        draft_cols[1].button(
+            "✖ Vider",
+            key="chat_clear_draft",
+            use_container_width=True,
+            on_click=_clear_chat_draft,
+        )
+
+        for thread in thread_summaries:
+            st.markdown(f"**{thread['title']}**")
+            st.caption(
+                f"{thread['turn_count']} tour(s) · {thread['message_count']} message(s) · {thread['preview']}"
+            )
+            col_open, col_delete = st.columns(2)
+            col_open.button(
+                "Ouvrir",
+                key=f"chat_thread_open_{thread['id']}",
+                use_container_width=True,
+                on_click=_switch_chat_thread_cb,
+                args=(str(thread["id"]),),
+                disabled=bool(thread["is_current"]),
+            )
+            col_delete.button(
+                "Supprimer",
+                key=f"chat_thread_delete_{thread['id']}",
+                use_container_width=True,
+                on_click=_delete_chat_thread_cb,
+                args=(str(thread["id"]),),
+                disabled=len(thread_summaries) <= 1,
+            )
 
     if st.session_state.messages:
         st.divider()
@@ -1005,6 +1147,7 @@ if _pending_web:
         st.error("Le modèle MLX n'est pas disponible.")
         st.stop()
     st.session_state.messages.append({"role": "user", "content": f"🌐 Recherche web : {_pending_web}"})
+    _persist_active_chat_thread()
     _render_user_bubble(f"🌐 Recherche web : {_pending_web}")
     with st.chat_message("assistant"):
         web_status = st.empty()
@@ -1031,6 +1174,7 @@ if _pending_web:
                 "sources": [],
                 "stats": {},
             })
+            _persist_active_chat_thread()
         else:
             failure_message = _render_web_failure(web_status, web_results, web_quality, "pending_web")
             st.session_state.messages.append({
@@ -1039,6 +1183,7 @@ if _pending_web:
                 "sources": [],
                 "stats": {},
             })
+            _persist_active_chat_thread()
 
 if user_input:
     if not llm_ok:
@@ -1048,6 +1193,7 @@ if user_input:
     svc.learner.log_user_query(user_input)
 
     st.session_state.messages.append({"role": "user", "content": user_input})
+    _persist_active_chat_thread()
     _render_user_bubble(user_input)
 
     history = [
@@ -1174,6 +1320,7 @@ if user_input:
         "sources": sources[:8],
         "stats": gen_stats,
     })
+    _persist_active_chat_thread()
     if gen_stats:
         st.session_state.last_gen_stats = gen_stats
 
@@ -1207,6 +1354,7 @@ if user_input:
                     "sources": [],
                     "stats": {},
                 })
+                _persist_active_chat_thread()
             else:
                 failure_message = _render_web_failure(web_status, web_results, web_quality, "fallback_web")
                 st.session_state.messages.append({
@@ -1215,6 +1363,7 @@ if user_input:
                     "sources": [],
                     "stats": {},
                 })
+                _persist_active_chat_thread()
     else:
         logger.info("UI decision: réponse du coffre conservée (pas de fallback web)")
 
@@ -1223,6 +1372,8 @@ if st.session_state.messages:
     with col_clear:
         if st.button("🗑 Effacer l'historique", key="clear_history", use_container_width=True):
             st.session_state.messages = []
+            st.session_state["chat_thread_draft"] = ""
+            _persist_active_chat_thread()
             st.session_state.pop("last_gen_stats", None)
             st.rerun()
     with col_save:

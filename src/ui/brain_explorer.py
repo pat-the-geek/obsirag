@@ -2,11 +2,14 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
+from src.ui.note_badges import get_note_type
+
 
 def filter_brain_notes(
     notes: list[dict],
     selected_folders: list[str],
     selected_tags: list[str],
+    selected_types: list[str] | None = None,
     search_text: str = "",
     modified_within_days: int | None = None,
     now: datetime | None = None,
@@ -25,6 +28,13 @@ def filter_brain_notes(
         filtered = [
             note for note in filtered
             if tag_set & {tag.lower() for tag in note.get("tags", [])}
+        ]
+
+    if selected_types and "Tous" not in selected_types:
+        type_set = {note_type.lower() for note_type in selected_types}
+        filtered = [
+            note for note in filtered
+            if get_note_type(note.get("file_path", "")) in type_set
         ]
 
     search = search_text.strip().lower()
@@ -98,6 +108,17 @@ def build_tag_summary(notes: list[dict], limit: int = 10) -> list[dict[str, int 
     return [
         {"tag": tag, "count": count}
         for tag, count in sorted(counts.items(), key=lambda item: (-item[1], item[0]))[:limit]
+    ]
+
+
+def build_type_summary(notes: list[dict]) -> list[dict[str, int | str]]:
+    counts: dict[str, int] = {}
+    for note in notes:
+        note_type = get_note_type(note.get("file_path", ""))
+        counts[note_type] = counts.get(note_type, 0) + 1
+    return [
+        {"type": note_type, "count": count}
+        for note_type, count in sorted(counts.items(), key=lambda item: (-item[1], item[0]))
     ]
 
 

@@ -47,6 +47,9 @@ class TestGraphBuilder:
         assert graph.has_node("folder/A.md")
         assert graph.has_edge("folder/A.md", "folder/B.md")
         assert graph.nodes["folder/A.md"]["label"] == "Alpha"
+        assert graph.nodes["folder/A.md"]["note_type"] == "user"
+        assert graph.nodes["folder/A.md"]["note_type_label"] == "Note"
+        assert graph.nodes["folder/A.md"]["color"]["background"] == "#60a5fa"
         assert builder._last_build is not None
         assert builder._last_build.tzinfo is not None
         assert (tmp_settings.graph_dir / "knowledge_graph.json").exists()
@@ -135,6 +138,7 @@ class TestGraphBuilder:
 
         assert "A &lt; B" in tooltip
         assert "a&quot;b.md" in tooltip
+        assert "📝 Note" in tooltip
 
     def test_resolve_link_is_case_insensitive(self):
         assert GraphBuilder._resolve_link("alpha", {"alpha": "Alpha.md"}) == "Alpha.md"

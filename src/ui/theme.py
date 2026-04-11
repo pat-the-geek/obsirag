@@ -292,6 +292,22 @@ def _css_block(p: dict) -> str:
     [data-baseweb="menu"] li:hover {{
         background-color: {p["accent_dim"]} !important;
     }}
+    /* Tooltips BaseWeb / Streamlit */
+    [role="tooltip"],
+    [data-baseweb="tooltip"],
+    [data-baseweb="tooltip"] > div {{
+        background-color: {p["bg2"]} !important;
+        color: {p["text"]} !important;
+        border: 1px solid {p["border"]} !important;
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18) !important;
+    }}
+    [role="tooltip"] *,
+    [data-baseweb="tooltip"] *,
+    [data-baseweb="tooltip"] p,
+    [data-baseweb="tooltip"] span {{
+        color: {p["text"]} !important;
+        fill: {p["text"]} !important;
+    }}
     [data-testid="stTag"] {{
         background-color: {p["tag_bg"]} !important;
         color: {p["text"]} !important;

@@ -140,6 +140,7 @@ def render_note(content: str, anchor_lines: set[int] | None = None) -> None:
 # ---------------------------------------------------------------------------
 
 notes = sorted(svc.chroma.list_notes(), key=lambda n: n["title"].lower())
+notes_by_path = {note["file_path"]: note for note in notes}
 
 with st.sidebar:
     st.markdown("### 📄 Sélectionner une note")
@@ -216,7 +217,7 @@ if not note_abs.exists():
     st.stop()
 
 # Métadonnées de la note depuis ChromaDB
-note_meta = svc.chroma.get_note_by_file_path(selected_fp) or {}
+note_meta = notes_by_path.get(selected_fp) or svc.chroma.get_note_by_file_path(selected_fp) or {}
 tags = note_meta.get("tags", [])
 wikilinks = note_meta.get("wikilinks", [])
 date_mod = note_meta.get("date_modified", "")[:10]
