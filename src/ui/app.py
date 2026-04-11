@@ -11,7 +11,6 @@ from datetime import datetime
 from pathlib import Path
 
 import streamlit as st
-import streamlit.components.v1 as components
 from loguru import logger
 
 # Cache module-level pour les comptages de fichiers (évite rglob toutes les 5s)
@@ -52,6 +51,7 @@ from src.ui.chat_sessions import (
     update_current_thread,
 )
 from src.ui.components.note_bridge_component import note_bridge as _note_bridge
+from src.ui.html_embed import render_html_document
 from src.ui.note_badges import render_note_badge
 from src.ui.theme import inject_theme, render_theme_toggle
 from src.ai.web_search import enrich_sync, is_not_in_vault
@@ -81,6 +81,10 @@ def _restore_active_chat_thread() -> None:
     st.session_state.chat_threads_state = chat_state
     st.session_state.messages = list(current_thread.get("messages", []))
     st.session_state["chat_thread_draft"] = str(current_thread.get("draft", ""))
+    if current_thread.get("last_gen_stats"):
+        st.session_state.last_gen_stats = dict(current_thread.get("last_gen_stats", {}))
+    else:
+        st.session_state.pop("last_gen_stats", None)
 
 
 def _persist_active_chat_thread(title: str | None = None) -> None:
@@ -89,6 +93,7 @@ def _persist_active_chat_thread(title: str | None = None) -> None:
         messages=list(st.session_state.get("messages", [])),
         draft=st.session_state.get("chat_thread_draft", ""),
         title=title,
+        last_gen_stats=st.session_state.get("last_gen_stats", {}),
     )
     st.session_state.chat_threads_state = chat_state
 
@@ -230,6 +235,7 @@ def _load_saved_conversation_cb(path_str: str, mode: str = "replace") -> None:
             st.session_state.get("chat_threads_state"),
             messages=list(messages),
             title=label,
+            last_gen_stats={},
         )
         st.session_state.chat_threads_state = chat_state
         _restore_active_chat_thread()
@@ -568,8 +574,7 @@ def _render_chat_response(text: str, *, placeholder=None) -> None:
             lines = content.splitlines()
             height = max(220, min(600, 120 + len(lines) * 22))
             st.caption("📊 Diagramme Mermaid")
-            components.html(_mermaid_html_chat(content, mermaid_idx),
-                            height=height, scrolling=False)
+            render_html_document(_mermaid_html_chat(content, mermaid_idx), height=height)
             mermaid_idx += 1
 
 
@@ -1323,6 +1328,7 @@ if user_input:
     _persist_active_chat_thread()
     if gen_stats:
         st.session_state.last_gen_stats = gen_stats
+        _persist_active_chat_thread()
 
     # Enrichissement web : si la réponse est "pas dans ton coffre",
     # lancer une recherche DuckDuckGo synchrone et afficher la réponse dans le chat
@@ -1373,8 +1379,8 @@ if st.session_state.messages:
         if st.button("🗑 Effacer l'historique", key="clear_history", use_container_width=True):
             st.session_state.messages = []
             st.session_state["chat_thread_draft"] = ""
-            _persist_active_chat_thread()
             st.session_state.pop("last_gen_stats", None)
+            _persist_active_chat_thread()
             st.rerun()
     with col_save:
         if st.button("💾 Sauvegarder cette conversation", key="save_conv", use_container_width=True):

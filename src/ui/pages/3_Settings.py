@@ -190,11 +190,11 @@ with tab_index:
 
     notes = svc.chroma.list_notes()
     user_notes = svc.chroma.list_user_notes()
-    generated_notes = max(0, len(notes) - len(user_notes))
+    generated_notes = svc.chroma.list_generated_notes()
     c1, c2, c3 = st.columns(3)
     c1.metric("Notes indexées", len(notes))
     c2.metric("Notes utilisateur", len(user_notes))
-    c3.metric("Artefacts générés", generated_notes)
+    c3.metric("Artefacts générés", len(generated_notes))
     st.caption(f"Chunks total : {svc.chroma.count()}")
 
     if notes:

@@ -311,6 +311,12 @@ class ChromaStore:
             if not ChromaStore._is_obsirag_generated_path(note["file_path"])
         ]
 
+    def list_generated_notes(self) -> list[dict]:
+        return [
+            note for note in self.list_notes()
+            if ChromaStore._is_obsirag_generated_path(note["file_path"])
+        ]
+
     # ---- Méta-informations ----
 
     def search_by_keyword(self, keyword: str, top_k: int = 10) -> list[dict]:

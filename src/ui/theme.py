@@ -16,7 +16,7 @@ Le thème est stocké dans st.session_state["vsc_theme"] :
 from __future__ import annotations
 from datetime import datetime
 import streamlit as st
-import streamlit.components.v1 as components
+from src.ui.html_embed import run_inline_script
 
 
 # ── Palette Dark+ (inspirée Claude Code Dark / VS Code Dark+) ─────────────────
@@ -605,11 +605,10 @@ def inject_theme() -> None:
 
 def _sync_localstorage(pref: str) -> None:
     """Écrit le thème dans localStorage du navigateur via un iframe invisible."""
-    components.html(
-        f"""<script>
+    run_inline_script(
+        f"""
         try {{ localStorage.setItem({repr(_LS_KEY)}, {repr(pref)}); }} catch(e) {{}}
-        </script>""",
-        height=0,
+        """
     )
 
 

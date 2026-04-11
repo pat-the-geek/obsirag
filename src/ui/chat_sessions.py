@@ -30,6 +30,7 @@ def create_chat_thread(
     title: str | None = None,
     messages: list[dict] | None = None,
     draft: str = "",
+    last_gen_stats: dict | None = None,
 ) -> dict:
     thread_messages = list(messages or [])
     return {
@@ -37,6 +38,7 @@ def create_chat_thread(
         "title": _derive_thread_title(title, thread_messages),
         "messages": thread_messages,
         "draft": draft,
+        "last_gen_stats": dict(last_gen_stats or {}),
         "updated_at": _now_iso(),
     }
 
@@ -64,11 +66,15 @@ def update_current_thread(
     messages: list[dict] | None = None,
     draft: str | None = None,
     title: str | None = None,
+    last_gen_stats: dict | None = None,
 ) -> dict:
     chat_state = ensure_chat_state(state)
     current = get_current_thread(chat_state)
     current["messages"] = list(messages if messages is not None else current.get("messages", []))
     current["draft"] = draft if draft is not None else current.get("draft", "")
+    current["last_gen_stats"] = dict(
+        last_gen_stats if last_gen_stats is not None else current.get("last_gen_stats", {})
+    )
     current["title"] = _derive_thread_title(title or current.get("title"), current["messages"])
     current["updated_at"] = _now_iso()
     return chat_state
@@ -88,9 +94,15 @@ def create_thread_from_messages(
     messages: list[dict],
     title: str | None = None,
     draft: str = "",
+    last_gen_stats: dict | None = None,
 ) -> dict:
     chat_state = ensure_chat_state(state)
-    thread = create_chat_thread(title=title, messages=messages, draft=draft)
+    thread = create_chat_thread(
+        title=title,
+        messages=messages,
+        draft=draft,
+        last_gen_stats=last_gen_stats,
+    )
     chat_state["threads"].insert(0, thread)
     chat_state["current_thread_id"] = thread["id"]
     return chat_state
@@ -148,6 +160,7 @@ def _sanitize_thread(thread: dict) -> dict:
         "title": _derive_thread_title(thread.get("title"), messages),
         "messages": list(messages),
         "draft": str(thread.get("draft") or ""),
+        "last_gen_stats": dict(thread.get("last_gen_stats") or {}),
         "updated_at": str(thread.get("updated_at") or _now_iso()),
     }
 

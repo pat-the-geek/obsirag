@@ -50,3 +50,16 @@ class TestChatSessions:
         assert any(summary["id"] == first_thread_id and summary["is_current"] for summary in summaries)
         assert any(summary["id"] == second_thread_id and not summary["is_current"] for summary in summaries)
         assert any(summary["preview"] == "Réponse A" for summary in summaries)
+
+    def test_update_current_thread_keeps_last_generation_stats(self):
+        state = ensure_chat_state(None)
+
+        updated = update_current_thread(
+            state,
+            messages=[{"role": "assistant", "content": "Réponse"}],
+            last_gen_stats={"tokens": 42, "tps": 12.5},
+        )
+
+        current = get_current_thread(updated)
+
+        assert current["last_gen_stats"] == {"tokens": 42, "tps": 12.5}

@@ -6,19 +6,12 @@ from datetime import datetime
 from pathlib import Path
 
 import streamlit as st
-import streamlit.components.v1 as components
 
-from src.ui.brain_explorer import (
-    build_centrality_spotlight,
-    build_folder_summary,
-    build_recent_notes,
-    build_tag_summary,
-    build_type_summary,
-    filter_brain_notes,
-)
+from src.ui import brain_explorer
 from src.ui.note_badges import get_note_type_options, prefix_note_label, render_note_badge
 from src.ui.services_cache import get_services
 from src.ui.components.note_bridge_component import note_bridge as _note_bridge
+from src.ui.html_embed import render_html_document
 from src.ui.theme import inject_theme, render_theme_toggle
 
 _icon = str(Path(__file__).parent.parent / "static" / "favicon-32x32.png")
@@ -115,7 +108,7 @@ type_demo_paths = {
     "insight": "obsirag/insights/demo.md",
     "synapse": "obsirag/synapses/demo.md",
 }
-filtered = filter_brain_notes(
+filtered = brain_explorer.filter_brain_notes(
     notes_with_folder,
     selected_folders=selected_folders,
     selected_tags=selected_tags,
@@ -149,13 +142,13 @@ if fps_tuple:
         st.cache_data.clear()
         st.rerun()
 
-    components.html(graph_html, height=670, scrolling=False)
+    render_html_document(graph_html, height=670)
 
-    spotlight = build_centrality_spotlight(filtered, stats.get("top_connected", []), limit=6)
-    recent_notes = build_recent_notes(filtered, limit=6)
-    folder_summary = build_folder_summary(filtered, limit=6)
-    tag_summary = build_tag_summary(filtered, limit=8)
-    type_summary = build_type_summary(filtered)
+    spotlight = brain_explorer.build_centrality_spotlight(filtered, stats.get("top_connected", []), limit=6)
+    recent_notes = brain_explorer.build_recent_notes(filtered, limit=6)
+    folder_summary = brain_explorer.build_folder_summary(filtered, limit=6)
+    tag_summary = brain_explorer.build_tag_summary(filtered, limit=8)
+    type_summary = brain_explorer.build_type_summary(filtered)
 
     st.markdown("### Légende visuelle")
     st.markdown(

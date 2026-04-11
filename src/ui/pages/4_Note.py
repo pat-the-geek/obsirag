@@ -8,9 +8,9 @@ import re
 from pathlib import Path
 
 import streamlit as st
-import streamlit.components.v1 as components
 
 from src.config import settings
+from src.ui.html_embed import render_html_document, run_inline_script
 from src.ui.note_viewer import (
     count_mermaid_blocks,
     extract_note_outline,
@@ -99,16 +99,14 @@ _WIKILINK_RE = re.compile(r"\[\[([^\]|#]+?)(?:[|#][^\]]*)?\]\]")
 def _scroll_to_anchor(anchor_id: str) -> None:
     import json
 
-    components.html(
-        f"""<script>
+    run_inline_script(
+        f"""
 const anchorId = {json.dumps(anchor_id)};
 const target = window.parent.document.getElementById(anchorId);
 if (target) {{
   target.scrollIntoView({{ behavior: 'smooth', block: 'start' }});
 }}
-</script>""",
-        height=0,
-        scrolling=False,
+"""
     )
 
 
@@ -126,7 +124,7 @@ def render_note(content: str, anchor_lines: set[int] | None = None) -> None:
         mermaid_code = match.group(1).strip()
         height = _estimate_mermaid_height(mermaid_code)
         st.caption("📊 Diagramme Mermaid")
-        components.html(_mermaid_html(mermaid_code, idx), height=height, scrolling=False)
+        render_html_document(_mermaid_html(mermaid_code, idx), height=height)
         idx += 1
         last = match.end()
 

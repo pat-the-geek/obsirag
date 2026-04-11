@@ -300,6 +300,22 @@ class TestChromaNoteHelpers:
 
         assert notes == [{"file_path": "notes/a.md", "title": "A"}]
 
+    def test_list_generated_notes_keeps_only_obsirag_artifacts(self, chroma):
+        from src.database.chroma_store import ChromaStore
+
+        chroma.list_notes = MagicMock(return_value=[
+            {"file_path": "notes/a.md", "title": "A"},
+            {"file_path": "obsirag/insights/generated.md", "title": "Insight"},
+            {"file_path": "folder/obsirag/synthesis/report.md", "title": "Report"},
+        ])
+
+        notes = ChromaStore.list_generated_notes(chroma)
+
+        assert notes == [
+            {"file_path": "obsirag/insights/generated.md", "title": "Insight"},
+            {"file_path": "folder/obsirag/synthesis/report.md", "title": "Report"},
+        ]
+
     def test_keyword_partial_match(self, chroma):
         chroma.add_chunks([_make_chunk(0)])
         results = chroma.search_by_keyword("numéro")
