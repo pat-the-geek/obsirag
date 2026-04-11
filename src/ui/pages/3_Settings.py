@@ -129,8 +129,17 @@ with tab_index:
         st.dataframe(df, use_container_width=True, hide_index=True)
 
     if st.button("♻️ Re-indexer maintenant", use_container_width=True):
-        with st.spinner("Indexation complète en cours…"):
-            stats = svc.indexer.index_vault()
+        progress_bar = st.progress(0, text="Démarrage de l'indexation…")
+        note_label = st.empty()
+
+        def _on_progress(note: str, processed: int, total: int) -> None:
+            pct = processed / total if total > 0 else 0
+            progress_bar.progress(pct, text=f"Indexation {processed} / {total}")
+            note_label.caption(f"📄 `{note}`")
+
+        stats = svc.indexer.index_vault(on_progress=_on_progress)
+        progress_bar.progress(1.0, text="Indexation terminée")
+        note_label.empty()
         st.success(
             f"Terminé — +{stats['added']} ajoutées, "
             f"~{stats['updated']} mises à jour, "

@@ -11,6 +11,22 @@ from pathlib import Path
 import streamlit as st
 import streamlit.components.v1 as components
 
+# Cache module-level pour les comptages de fichiers (évite rglob toutes les 5s)
+_dir_count_cache: dict[str, tuple[int, float]] = {}
+_DIR_COUNT_TTL = 30.0  # secondes
+
+
+def _count_md_cached(path: Path, key: str) -> int:
+    """Compte les fichiers .md dans `path` avec un cache TTL de 30s."""
+    now = time.monotonic()
+    if key in _dir_count_cache:
+        count, ts = _dir_count_cache[key]
+        if (now - ts) < _DIR_COUNT_TTL:
+            return count
+    count = len(list(path.rglob("*.md"))) if path.exists() else 0
+    _dir_count_cache[key] = (count, now)
+    return count
+
 from src.ui.services_cache import get_services
 from src.ui.components.note_bridge_component import note_bridge as _note_bridge
 from src.ui.theme import inject_theme, render_theme_toggle
@@ -68,6 +84,35 @@ def _clean_mermaid(code: str) -> str:
 
 _MERMAID_SPLIT_RE = re.compile(r"```mermaid\s*\n(.*?)```", re.DOTALL)
 
+# SVG "cerveau" — constante module-level (évite de reconstruire la chaîne à chaque message)
+_BRAIN_SVG = (
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="64" height="64">'
+    '<g fill="none" stroke-linecap="round" stroke-linejoin="round">'
+    '<path d="M 200 310 C 175 310 155 295 148 272 C 138 265 130 252 130 237 C 130 222 138 210 150 203 C 150 185 160 170 175 163 C 175 148 185 136 200 132 C 210 128 220 128 230 132 C 238 120 252 114 265 116 L 265 310 Z" fill="#7c3aed" opacity="0.95"/>'
+    '<path d="M 312 310 C 337 310 357 295 364 272 C 374 265 382 252 382 237 C 382 222 374 210 362 203 C 362 185 352 170 337 163 C 337 148 327 136 312 132 C 302 128 292 128 282 132 C 274 120 260 114 247 116 L 247 310 Z" fill="#6d28d9" opacity="0.95"/>'
+    '<line x1="256" y1="116" x2="256" y2="310" stroke-width="4" stroke="rgba(0,0,0,0.3)"/>'
+    '<path d="M 220 310 C 220 330 230 342 256 345 C 282 342 292 330 292 310" fill="#7c3aed"/>'
+    '<path d="M 175 175 C 165 185 162 200 168 212" stroke="#a78bfa" stroke-width="5"/>'
+    '<path d="M 155 220 C 150 235 155 250 165 258" stroke="#a78bfa" stroke-width="5"/>'
+    '<path d="M 165 270 C 162 282 168 295 180 300" stroke="#a78bfa" stroke-width="5"/>'
+    '<path d="M 200 148 C 192 158 190 172 196 182" stroke="#a78bfa" stroke-width="5"/>'
+    '<path d="M 215 132 C 210 145 212 160 220 168" stroke="#c4b5fd" stroke-width="4"/>'
+    '<path d="M 195 210 C 185 222 185 238 192 248" stroke="#a78bfa" stroke-width="5"/>'
+    '<path d="M 198 268 C 190 278 190 292 198 300" stroke="#a78bfa" stroke-width="4"/>'
+    '<path d="M 337 175 C 347 185 350 200 344 212" stroke="#a78bfa" stroke-width="5"/>'
+    '<path d="M 357 220 C 362 235 357 250 347 258" stroke="#a78bfa" stroke-width="5"/>'
+    '<path d="M 347 270 C 350 282 344 295 332 300" stroke="#a78bfa" stroke-width="5"/>'
+    '<path d="M 312 148 C 320 158 322 172 316 182" stroke="#a78bfa" stroke-width="5"/>'
+    '<path d="M 297 132 C 302 145 300 160 292 168" stroke="#c4b5fd" stroke-width="4"/>'
+    '<path d="M 317 210 C 327 222 327 238 320 248" stroke="#a78bfa" stroke-width="5"/>'
+    '<path d="M 314 268 C 322 278 322 292 314 300" stroke="#a78bfa" stroke-width="4"/>'
+    '<ellipse cx="210" cy="158" rx="18" ry="10" fill="#c4b5fd" opacity="0.25" transform="rotate(-30 210 158)"/>'
+    '<ellipse cx="302" cy="158" rx="18" ry="10" fill="#c4b5fd" opacity="0.15" transform="rotate(30 302 158)"/>'
+    '</g>'
+    '<ellipse cx="256" cy="225" rx="130" ry="110" fill="none" stroke="#7c3aed" stroke-width="1.5" opacity="0.3"/>'
+    '</svg>'
+)
+
 
 def _open_note_cb(fp: str) -> None:
     """Callback on_click : mémorise la note à ouvrir, déclenche navigate après rerun."""
@@ -79,33 +124,6 @@ def _open_note_cb(fp: str) -> None:
 def _render_user_bubble(text: str) -> None:
     """Rendu d'un message user : bulle alignée à droite, avatar cerveau violet ObsiRAG."""
     escaped = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-    _brain_svg = (
-        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="64" height="64">'
-        '<g fill="none" stroke-linecap="round" stroke-linejoin="round">'
-        '<path d="M 200 310 C 175 310 155 295 148 272 C 138 265 130 252 130 237 C 130 222 138 210 150 203 C 150 185 160 170 175 163 C 175 148 185 136 200 132 C 210 128 220 128 230 132 C 238 120 252 114 265 116 L 265 310 Z" fill="#7c3aed" opacity="0.95"/>'
-        '<path d="M 312 310 C 337 310 357 295 364 272 C 374 265 382 252 382 237 C 382 222 374 210 362 203 C 362 185 352 170 337 163 C 337 148 327 136 312 132 C 302 128 292 128 282 132 C 274 120 260 114 247 116 L 247 310 Z" fill="#6d28d9" opacity="0.95"/>'
-        '<line x1="256" y1="116" x2="256" y2="310" stroke-width="4" stroke="rgba(0,0,0,0.3)"/>'
-        '<path d="M 220 310 C 220 330 230 342 256 345 C 282 342 292 330 292 310" fill="#7c3aed"/>'
-        '<path d="M 175 175 C 165 185 162 200 168 212" stroke="#a78bfa" stroke-width="5"/>'
-        '<path d="M 155 220 C 150 235 155 250 165 258" stroke="#a78bfa" stroke-width="5"/>'
-        '<path d="M 165 270 C 162 282 168 295 180 300" stroke="#a78bfa" stroke-width="5"/>'
-        '<path d="M 200 148 C 192 158 190 172 196 182" stroke="#a78bfa" stroke-width="5"/>'
-        '<path d="M 215 132 C 210 145 212 160 220 168" stroke="#c4b5fd" stroke-width="4"/>'
-        '<path d="M 195 210 C 185 222 185 238 192 248" stroke="#a78bfa" stroke-width="5"/>'
-        '<path d="M 198 268 C 190 278 190 292 198 300" stroke="#a78bfa" stroke-width="4"/>'
-        '<path d="M 337 175 C 347 185 350 200 344 212" stroke="#a78bfa" stroke-width="5"/>'
-        '<path d="M 357 220 C 362 235 357 250 347 258" stroke="#a78bfa" stroke-width="5"/>'
-        '<path d="M 347 270 C 350 282 344 295 332 300" stroke="#a78bfa" stroke-width="5"/>'
-        '<path d="M 312 148 C 320 158 322 172 316 182" stroke="#a78bfa" stroke-width="5"/>'
-        '<path d="M 297 132 C 302 145 300 160 292 168" stroke="#c4b5fd" stroke-width="4"/>'
-        '<path d="M 317 210 C 327 222 327 238 320 248" stroke="#a78bfa" stroke-width="5"/>'
-        '<path d="M 314 268 C 322 278 322 292 314 300" stroke="#a78bfa" stroke-width="4"/>'
-        '<ellipse cx="210" cy="158" rx="18" ry="10" fill="#c4b5fd" opacity="0.25" transform="rotate(-30 210 158)"/>'
-        '<ellipse cx="302" cy="158" rx="18" ry="10" fill="#c4b5fd" opacity="0.15" transform="rotate(30 302 158)"/>'
-        '</g>'
-        '<ellipse cx="256" cy="225" rx="130" ry="110" fill="none" stroke="#7c3aed" stroke-width="1.5" opacity="0.3"/>'
-        '</svg>'
-    )
     st.markdown(
         f'<div style="display:flex;justify-content:flex-end;align-items:flex-start;'
         f'gap:8px;margin:6px 0;padding:0 2px;width:100%">'
@@ -118,7 +136,7 @@ def _render_user_bubble(text: str) -> None:
         f'font-size:0.95rem;line-height:1.5;word-break:break-word">'
         f'{escaped}</div>'
         f'<div style="flex-shrink:0;margin-top:1px;filter:drop-shadow(0 1px 3px rgba(124,58,237,0.4))">'
-        f'{_brain_svg}</div>'
+        f'{_BRAIN_SVG}</div>'
         f'</div>',
         unsafe_allow_html=True,
     )
@@ -369,8 +387,9 @@ def _autolearn_live_status():
     except Exception:
         _processed_map = {}
     _processed = len([fp for fp in _processed_map if fp in _user_fps])
-    _insights = len(list(_s.insights_dir.rglob("*.md"))) if _s.insights_dir.exists() else 0
-    _synapses = len(list(_s.synapses_dir.rglob("*.md"))) if _s.synapses_dir.exists() else 0
+    # Comptages filesystem avec cache TTL (évite rglob toutes les 5s)
+    _insights = _count_md_cached(_s.insights_dir, "insights")
+    _synapses = _count_md_cached(_s.synapses_dir, "synapses")
 
     if _processed < _total:
         st.progress(_processed / _total if _total else 0,
@@ -461,8 +480,17 @@ with st.sidebar:
     st.divider()
 
     if st.button("♻️ Re-indexer le coffre", use_container_width=True):
-        with st.spinner("Indexation en cours…"):
-            idx_stats = svc.indexer.index_vault()
+        progress_bar = st.progress(0, text="Démarrage de l'indexation…")
+        note_lbl = st.empty()
+
+        def _on_idx(note: str, processed: int, total: int) -> None:
+            pct = processed / total if total > 0 else 0
+            progress_bar.progress(pct, text=f"Indexation {processed} / {total}")
+            note_lbl.caption(f"📄 `{note[-50:]}`")
+
+        idx_stats = svc.indexer.index_vault(on_progress=_on_idx)
+        progress_bar.progress(1.0, text="Indexation terminée")
+        note_lbl.empty()
         st.success(
             f"✅ +{idx_stats['added']} ajoutées, "
             f"~{idx_stats['updated']} mises à jour, "
@@ -550,8 +578,8 @@ st.title("💬 Chat avec votre coffre")
 
 if not llm_ok:
     st.warning(
-        "⚠️ Ollama n'est pas accessible. "
-        "Vérifiez qu'Ollama est démarré et que l'URL est correcte dans `.env`."
+        "⚠️ Le modèle MLX n'est pas disponible. "
+        "Vérifiez que le modèle est correctement configuré dans `.env` (MLX_CHAT_MODEL)."
     )
 
 if "messages" not in st.session_state:

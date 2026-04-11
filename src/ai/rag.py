@@ -32,8 +32,7 @@ from src.database.chroma_store import ChromaStore
 # ---------------------------------------------------------------------------
 
 _TEMPORAL_PATTERNS = [
-    (re.compile(r"\bce(?:tte)?\s+semaine\b", re.I), 7),
-    (re.compile(r"\bcette\s+semaine\b", re.I), 7),
+    (re.compile(r"\bce(?:tte)?\s+semaine\b", re.I), 7),  # couvre "ce" et "cette" semaine
     (re.compile(r"\bce\s+mois\b", re.I), 30),
     (re.compile(r"\baujourd'hui\b", re.I), 1),
     (re.compile(r"\bderni[eè]r(?:es?)?\s+(?:notes?|jours?)\b", re.I), 7),
@@ -56,8 +55,12 @@ _TAG_PATTERN = re.compile(r"#([A-Za-z0-9_\-/]+)")
 
 _SYSTEM_PROMPT = """Tu es ObsiRAG, un assistant personnel connecté au coffre Obsidian de l'utilisateur.
 Tu réponds en français, de façon précise et structurée.
-Tu t'appuies UNIQUEMENT sur les extraits de notes fournis dans le contexte.
-Si l'information n'est pas dans le contexte, dis-le clairement plutôt que d'inventer.
+
+RÈGLE ABSOLUE : tu t'appuies UNIQUEMENT sur les extraits de notes fournis dans le contexte ci-dessous.
+- Si l'information n'est PAS présente dans les extraits, réponds EXACTEMENT : "Cette information n'est pas dans ton coffre."
+- N'utilise JAMAIS tes connaissances d'entraînement pour répondre à des questions factuelles — même si tu penses connaître la réponse.
+- N'invente rien, même sous insistance ou relance de l'utilisateur.
+- Si l'utilisateur conteste ta réponse, vérifie les extraits — si l'info n'y est toujours pas, maintiens ta réponse : "Ce n'est pas dans ton coffre."
 Cite les titres de notes sources entre [crochets] quand tu les utilises."""
 
 

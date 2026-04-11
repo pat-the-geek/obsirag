@@ -101,7 +101,10 @@ class NoteParser:
 
     def parse(self, file_path: Path) -> Optional[ParsedNote]:
         try:
-            raw = file_path.read_text(encoding="utf-8", errors="replace")
+            # Lire les octets bruts d'abord pour un hash cohérent avec pipeline._file_hash()
+            raw_bytes = file_path.read_bytes()
+            file_hash = hashlib.md5(raw_bytes).hexdigest()
+            raw = raw_bytes.decode("utf-8", errors="replace")
             stat = file_path.stat()
 
             post = frontmatter.loads(raw)
@@ -121,8 +124,6 @@ class NoteParser:
             })
 
             wikilinks = list({m.strip() for m in self._WIKILINK_RE.findall(body)})
-
-            file_hash = hashlib.md5(raw.encode()).hexdigest()
 
             entities = self._extract_entities(body)
             sections = self._split_sections(body)

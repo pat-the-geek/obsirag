@@ -12,6 +12,12 @@ from src.config import settings
 from src.ui.services_cache import get_services
 from src.ui.theme import inject_theme, render_theme_toggle
 
+
+@st.cache_data(ttl=120)
+def _read_md_file(path_str: str, mtime: float) -> str:
+    """Lecture mise en cache du fichier Markdown (TTL 2 min, invalidée si mtime change)."""
+    return Path(path_str).read_text(encoding="utf-8")
+
 _icon = str(Path(__file__).parent.parent / "static" / "favicon-32x32.png")
 st.set_page_config(page_title="Insights — ObsiRAG", page_icon=_icon, layout="wide")
 inject_theme()
@@ -43,9 +49,10 @@ with tab_knowledge:
             f"Visibles dans Obsidian sous `obsirag/insights/`"
         )
         for art_path in artifacts[:30]:
-            date_str = datetime.fromtimestamp(art_path.stat().st_mtime).strftime("%Y-%m-%d %H:%M")
+            mtime = art_path.stat().st_mtime
+            date_str = datetime.fromtimestamp(mtime).strftime("%Y-%m-%d %H:%M")
             with st.expander(f"📄 {art_path.stem} — {date_str}", expanded=False):
-                st.markdown(art_path.read_text(encoding="utf-8"))
+                st.markdown(_read_md_file(str(art_path), mtime))
 
 # ---- Synapses (vault/obsirag/synapses/) ----
 with tab_synapses:
@@ -65,9 +72,10 @@ with tab_synapses:
             f"Visibles dans Obsidian sous `obsirag/synapses/`"
         )
         for syn_path in synapses[:50]:
-            date_str = datetime.fromtimestamp(syn_path.stat().st_mtime).strftime("%Y-%m-%d %H:%M")
+            mtime = syn_path.stat().st_mtime
+            date_str = datetime.fromtimestamp(mtime).strftime("%Y-%m-%d %H:%M")
             with st.expander(f"⚡ {syn_path.stem} — {date_str}", expanded=False):
-                st.markdown(syn_path.read_text(encoding="utf-8"))
+                st.markdown(_read_md_file(str(syn_path), mtime))
 
 # ---- Synthèses hebdomadaires (vault/obsirag/synthesis/) ----
 with tab_synthesis:
@@ -82,8 +90,9 @@ with tab_synthesis:
     else:
         st.caption(f"Visibles dans Obsidian sous `obsirag/synthesis/`")
         for s_path in syntheses[:10]:
+            mtime = s_path.stat().st_mtime
             with st.expander(f"📊 {s_path.stem}", expanded=(s_path == syntheses[0])):
-                st.markdown(s_path.read_text(encoding="utf-8"))
+                st.markdown(_read_md_file(str(s_path), mtime))
 
 # ---- Historique des requêtes (volume Docker) ----
 with tab_queries:

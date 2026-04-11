@@ -8,6 +8,8 @@ Couche d'accès ChromaDB.
 from __future__ import annotations
 
 import shutil
+import sqlite3
+import threading
 import time
 from datetime import datetime
 from pathlib import Path
@@ -52,6 +54,10 @@ def _build_embedding_function() -> EmbeddingFunction:
     )
 
 
+# Durée de validité du cache list_notes() (secondes)
+_LIST_NOTES_TTL = 30
+
+
 class ChromaStore:
     def __init__(self) -> None:
         persist_dir = settings.chroma_persist_dir
@@ -61,6 +67,13 @@ class ChromaStore:
         self._client, self._collection = self._init_with_recovery(
             persist_dir, embed_fn
         )
+        # Verrou global : sérialise TOUTES les opérations ChromaDB
+        # (l'index HNSW natif n'est pas thread-safe en écriture simultanée)
+        self._lock = threading.RLock()
+        self._list_notes_cache: list[dict] | None = None
+        self._list_notes_ts: float = 0.0
+        self._count_cache: int | None = None
+        self._count_ts: float = 0.0
 
         logger.info(
             f"Collection '{settings.chroma_collection}' — "
@@ -105,25 +118,36 @@ class ChromaStore:
         if not chunks:
             return
         t0 = time.perf_counter()
-        self._collection.upsert(
-            ids=[c.chunk_id for c in chunks],
-            documents=[c.text for c in chunks],
-            metadatas=[c.as_metadata() for c in chunks],
-        )
+        with self._lock:
+            self._collection.upsert(
+                ids=[c.chunk_id for c in chunks],
+                documents=[c.text for c in chunks],
+                metadatas=[c.as_metadata() for c in chunks],
+            )
         elapsed = time.perf_counter() - t0
         backend = settings.ollama_embed_model or settings.embedding_model
         logger.info(
             f"embed:add {len(chunks)} chunk(s) — {elapsed:.2f}s "
             f"({elapsed / len(chunks):.3f}s/chunk) backend={backend}"
         )
+        self.invalidate_list_notes_cache()
 
     def delete_by_file(self, rel_path: str) -> None:
         try:
-            results = self._collection.get(where={"file_path": rel_path}, limit=10_000)
-            ids = results.get("ids", [])
-            if ids:
-                self._collection.delete(ids=ids)
-                logger.debug(f"Suppression de {len(ids)} chunk(s) pour {rel_path}")
+            total_deleted = 0
+            with self._lock:
+                while True:
+                    results = self._collection.get(
+                        where={"file_path": rel_path}, limit=500
+                    )
+                    ids = results.get("ids", [])
+                    if not ids:
+                        break
+                    self._collection.delete(ids=ids)
+                    total_deleted += len(ids)
+            if total_deleted:
+                logger.debug(f"Suppression de {total_deleted} chunk(s) pour {rel_path}")
+                self.invalidate_list_notes_cache()
         except Exception as exc:
             logger.error(f"delete_by_file({rel_path}) : {exc}")
 
@@ -144,7 +168,8 @@ class ChromaStore:
             kwargs["where"] = where
 
         t0 = time.perf_counter()
-        results = self._collection.query(**kwargs)
+        with self._lock:
+            results = self._collection.query(**kwargs)
         elapsed = time.perf_counter() - t0
         backend = settings.ollama_embed_model or settings.embedding_model
         logger.debug(
@@ -230,16 +255,19 @@ class ChromaStore:
         results = []
         for term in [keyword, keyword.lower(), keyword.title()]:
             try:
-                raw = self._collection.get(
-                    where_document={"$contains": term},
-                    include=["documents", "metadatas"],
-                    limit=top_k * 2,
-                )
+                with self._lock:
+                    raw = self._collection.get(
+                        where_document={"$contains": term},
+                        include=["documents", "metadatas"],
+                        limit=top_k * 2,
+                    )
                 ids = raw.get("ids", [])
                 docs = raw.get("documents", [])
                 metas = raw.get("metadatas", [])
+                seen_ids: set[str] = {r["chunk_id"] for r in results}
                 for chunk_id, doc, meta in zip(ids, docs, metas):
-                    if not any(r["chunk_id"] == chunk_id for r in results):
+                    if chunk_id not in seen_ids:
+                        seen_ids.add(chunk_id)
                         results.append({
                             "chunk_id": chunk_id,
                             "text": doc,
@@ -251,29 +279,95 @@ class ChromaStore:
         return results[:top_k]
 
     def count(self) -> int:
-        return self._collection.count()
+        now = time.monotonic()
+        if self._count_cache is not None and (now - self._count_ts) < _LIST_NOTES_TTL:
+            return self._count_cache
+        with self._lock:
+            result = self._collection.count()
+        self._count_cache = result
+        self._count_ts = now
+        return result
+
+    def invalidate_list_notes_cache(self) -> None:
+        """Invalide le cache list_notes et count (à appeler après indexation/suppression)."""
+        self._list_notes_ts = 0.0
+        self._count_ts = 0.0
 
     def list_notes(self) -> list[dict]:
-        """Retourne la liste dédupliquée des notes indexées avec leurs métadonnées."""
-        if self._collection.count() == 0:
-            return []
-        results = self._collection.get(
-            include=["metadatas"],
-            limit=100_000,
-        )
+        """Retourne la liste dédupliquée des notes indexées avec leurs métadonnées.
+
+        Interroge directement le SQLite de ChromaDB pour éviter la limite
+        "too many SQL variables" de l'API Rust. Résultat mis en cache 30 s.
+        """
+        now = time.monotonic()
+        if self._list_notes_cache is not None and (now - self._list_notes_ts) < _LIST_NOTES_TTL:
+            return self._list_notes_cache
+
+        db_path = Path(settings.chroma_persist_dir) / "chroma.sqlite3"
         seen: dict[str, dict] = {}
-        for meta in results.get("metadatas", []):
-            fp = meta.get("file_path", "")
-            if fp and fp not in seen:
-                seen[fp] = {
-                    "file_path": fp,
-                    "title": meta.get("note_title", fp),
-                    "date_modified": meta.get("date_modified", ""),
-                    "date_created": meta.get("date_created", ""),
-                    "tags": [t for t in (meta.get("tags") or "").split(",") if t],
-                    "wikilinks": [w for w in (meta.get("wikilinks") or "").split(",") if w],
-                }
-        return sorted(seen.values(), key=lambda x: x["date_modified"], reverse=True)
+        try:
+            con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+            try:
+                rows = con.execute("""
+                    SELECT
+                        MAX(CASE WHEN m.key = 'file_path'    THEN m.string_value END),
+                        MAX(CASE WHEN m.key = 'note_title'   THEN m.string_value END),
+                        MAX(CASE WHEN m.key = 'date_modified' THEN m.string_value END),
+                        MAX(CASE WHEN m.key = 'date_created'  THEN m.string_value END),
+                        MAX(CASE WHEN m.key = 'tags'          THEN m.string_value END),
+                        MAX(CASE WHEN m.key = 'wikilinks'     THEN m.string_value END)
+                    FROM embedding_metadata m
+                    INNER JOIN embeddings e ON e.id = m.id
+                    INNER JOIN segments s   ON s.id = e.segment_id
+                    INNER JOIN collections c ON c.id = s.collection
+                    WHERE c.name = ? AND m.key IN (
+                        'file_path','note_title','date_modified','date_created','tags','wikilinks'
+                    )
+                    GROUP BY m.id
+                """, (settings.chroma_collection,)).fetchall()
+            finally:
+                con.close()
+        except Exception as exc:
+            logger.warning(f"list_notes SQLite direct failed ({exc}), fallback ChromaDB API")
+            rows = []
+            # Fallback : pagination via API ChromaDB
+            batch_size = 500
+            offset = 0
+            while True:
+                with self._lock:
+                    results = self._collection.get(include=["metadatas"], limit=batch_size, offset=offset)
+                metadatas = results.get("metadatas") or []
+                if not metadatas:
+                    break
+                for meta in metadatas:
+                    fp = meta.get("file_path", "")
+                    if fp and fp not in seen:
+                        seen[fp] = {
+                            "file_path": fp,
+                            "title": meta.get("note_title", fp),
+                            "date_modified": meta.get("date_modified", ""),
+                            "date_created": meta.get("date_created", ""),
+                            "tags": [t for t in (meta.get("tags") or "").split(",") if t],
+                            "wikilinks": [w for w in (meta.get("wikilinks") or "").split(",") if w],
+                        }
+                if len(metadatas) < batch_size:
+                    break
+                offset += batch_size
+        else:
+            for fp, title, date_mod, date_cre, tags, wikilinks in rows:
+                if fp and fp not in seen:
+                    seen[fp] = {
+                        "file_path": fp,
+                        "title": title or fp,
+                        "date_modified": date_mod or "",
+                        "date_created": date_cre or "",
+                        "tags": [t for t in (tags or "").split(",") if t],
+                        "wikilinks": [w for w in (wikilinks or "").split(",") if w],
+                    }
+
+        self._list_notes_cache = sorted(seen.values(), key=lambda x: x["date_modified"], reverse=True)
+        self._list_notes_ts = now
+        return self._list_notes_cache
 
     def get_recently_modified(self, since: datetime) -> list[dict]:
         notes = self.list_notes()
@@ -293,11 +387,12 @@ class ChromaStore:
         """
         # Récupère les chunks de la note source
         try:
-            raw = self._collection.get(
-                where={"file_path": source_fp},
-                include=["documents"],
-                limit=3,
-            )
+            with self._lock:
+                raw = self._collection.get(
+                    where={"file_path": source_fp},
+                    include=["documents"],
+                    limit=3,
+                )
         except Exception:
             return []
 

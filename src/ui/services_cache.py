@@ -2,10 +2,14 @@
 Singleton des services ObsiRAG.
 
 Stratégie :
-- _services_instance : variable module-level (singleton process), initialisée une seule fois
-- st.session_state["_svc_ready"] : évite de réafficher le panneau de démarrage
-  lors des reruns et navigations dans la même session Streamlit
+- L'initialisation de ServiceManager démarre dans un thread dédié dès le premier
+  appel à get_services(), sans bloquer le thread principal Streamlit.
+- L'UI affiche un écran de chargement et se rerun toutes les 500 ms jusqu'à
+  ce que l'init soit terminée.
+- _services_instance : singleton process, écrit une seule fois par le thread init.
 """
+import queue
+import time
 import threading
 
 import streamlit as st
@@ -14,6 +18,10 @@ from src.services import ServiceManager
 
 _lock = threading.Lock()
 _services_instance: ServiceManager | None = None
+_init_thread: threading.Thread | None = None
+_init_done = threading.Event()
+_init_error: Exception | None = None
+_step_queue: "queue.Queue[str]" = queue.Queue()
 
 
 _COMPACT_CSS = """
@@ -98,48 +106,88 @@ div[data-testid="stMainBlockContainer"] {
   });
   observer.observe(document.head, {childList: true});
 
-  // Interval fallback: keep re-applying for the first 15s after page load
-  // This catches Streamlit's React hydration which happens after our script
+  // Interval fallback: re-apply a few times after page load to catch React hydration
+  // Use a longer interval (2s) with fewer iterations (4) to reduce DOM churn
   var _elapsed = 0;
   var interval = setInterval(function() {
-    _elapsed += 500;
+    _elapsed += 2000;
     applyHeadTags();
-    if (_elapsed >= 15000) clearInterval(interval);
-  }, 500);
+    if (_elapsed >= 8000) clearInterval(interval);
+  }, 2000);
 })();
 </script>
 """
 
 
-def get_services() -> ServiceManager:
-    global _services_instance
+def _run_init() -> None:
+    """Exécuté dans un thread daemon : construit ServiceManager et signale la fin."""
+    global _services_instance, _init_error
 
+    def on_step(msg: str) -> None:
+        _step_queue.put(msg)
+
+    try:
+        instance = ServiceManager(on_step=on_step)
+        with _lock:
+            _services_instance = instance
+    except Exception as exc:  # noqa: BLE001
+        _init_error = exc
+    finally:
+        _init_done.set()
+
+
+def _ensure_init_started() -> None:
+    """Lance le thread d'initialisation une seule fois, quels que soient les reruns."""
+    global _init_thread
+    with _lock:
+        if _init_thread is None:
+            _init_thread = threading.Thread(
+                target=_run_init, daemon=True, name="service-init"
+            )
+            _init_thread.start()
+
+
+def get_services() -> ServiceManager:
     # Injecte le CSS compact sur chaque page (idempotent)
     st.markdown(_COMPACT_CSS, unsafe_allow_html=True)
 
-    # Chemin rapide : services déjà prêts ET session déjà vue
-    if st.session_state.get("_svc_ready") and _services_instance is not None:
-        # Signale l'activité UI à chaque rerun (navigation, interaction…)
-        _services_instance.signal_ui_active()
-        return _services_instance
+    # Lance le thread d'init si ce n'est pas encore fait
+    _ensure_init_started()
 
-    # Services déjà créés par une autre session → marquer et retourner
+    # Chemin rapide : init terminée avec succès
     if _services_instance is not None:
-        st.session_state["_svc_ready"] = True
         _services_instance.signal_ui_active()
+        st.session_state["_svc_ready"] = True
         return _services_instance
 
-    # Première initialisation : afficher la progression
-    with st.status("⏳ Démarrage d'ObsiRAG…", expanded=True) as status:
-        def on_step(msg: str) -> None:
-            status.write(msg)
+    # Init terminée mais en erreur
+    if _init_done.is_set():
+        st.error(f"❌ Erreur au démarrage d'ObsiRAG : {_init_error}")
+        st.stop()
 
-        with _lock:
-            if _services_instance is None:
-                _services_instance = ServiceManager(on_step=on_step)
+    # Init encore en cours — collecter les étapes et afficher l'écran de chargement
+    if "_startup_steps" not in st.session_state:
+        st.session_state["_startup_steps"] = []
 
-        status.update(label="✅ ObsiRAG prêt", state="complete", expanded=False)
+    # Drainer la queue des messages de progression
+    while True:
+        try:
+            st.session_state["_startup_steps"].append(_step_queue.get_nowait())
+        except queue.Empty:
+            break
 
-    st.session_state["_svc_ready"] = True
-    _services_instance.signal_ui_active()
-    return _services_instance
+    steps: list[str] = st.session_state["_startup_steps"]
+
+    # Centrer l'écran de chargement dans la colonne du milieu
+    _, col, _ = st.columns([1, 2, 1])
+    with col:
+        st.markdown("### ⏳ Démarrage d'ObsiRAG…")
+        if steps:
+            for step in steps:
+                st.write(step)
+        else:
+            st.write("Initialisation en cours…")
+
+    # Rerun dans 500 ms pour rafraîchir la progression
+    time.sleep(0.5)
+    st.rerun()
