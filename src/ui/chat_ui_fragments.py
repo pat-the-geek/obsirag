@@ -4,11 +4,12 @@ from html import escape
 
 
 def build_primary_source_html(note_title: str, note_badge_html: str) -> str:
+    escaped_title = escape(note_title)
     return (
-        "<div style='margin:0.2rem 0 0.5rem 0;display:flex;align-items:center;gap:0.5rem;'>"
-        "<span style='font-size:0.85rem;color:inherit;'>🎯 Note principale :</span>"
-        f"{note_badge_html}"
-        f"<strong>{escape(note_title)}</strong>"
+        "<div style='margin:0.2rem 0 0.5rem 0;display:flex;align-items:center;gap:0.5rem;overflow:hidden;'>"
+        "<span style='font-size:0.85rem;color:inherit;flex-shrink:0;'>🎯 Note principale :</span>"
+        f"<span style='flex-shrink:0;'>{note_badge_html}</span>"
+        f"<strong title='{escaped_title}' style='overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;'>{escaped_title}</strong>"
         "</div>"
     )
 
