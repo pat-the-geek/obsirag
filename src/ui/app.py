@@ -1,7 +1,6 @@
 """
 ObsiRAG — Page principale : Chat
 """
-import base64
 import inspect
 import re
 import threading
@@ -42,7 +41,6 @@ from src.ui.chat_ui_fragments import (
     build_generation_status_caption,
     build_message_stats_caption,
     build_primary_source_html,
-    build_sidebar_header_html,
     build_source_entry_html,
     build_user_bubble_html,
 )
@@ -57,18 +55,19 @@ from src.ui.chat_view_models import (
     build_web_sources_markdown,
 )
 from src.ui.runtime_state_store import load_processed_notes_map, load_processing_status
-from src.ui.theme import inject_theme, render_theme_toggle
+from src.ui.theme import inject_theme, render_nav_bar, render_theme_toggle
 from src.ai.web_search import enrich_sync, is_not_in_vault
 
 # ---- Configuration de la page ----
 _icon = str(Path(__file__).parent / "static" / "favicon-32x32.png")
-_icon_b64 = base64.b64encode((Path(__file__).parent / "static" / "android-chrome-512x512.png").read_bytes()).decode()
 st.set_page_config(
     page_title="ObsiRAG",
     page_icon=_icon,
     layout="wide",
+    initial_sidebar_state="expanded",
 )
 inject_theme()
+render_nav_bar()
 
 svc = get_services()
 
@@ -449,13 +448,6 @@ def _autolearn_live_status():
 
 # ---- Sidebar ----
 with st.sidebar:
-    st.markdown(
-        build_sidebar_header_html(_icon_b64),
-        unsafe_allow_html=True,
-    )
-    st.caption("Votre coffre Obsidian, augmenté par l'IA locale")
-    st.divider()
-
     st.metric("Notes indexées", svc.chroma.count_notes())
     st.metric("Chunks vectorisés", svc.chroma.count())
 

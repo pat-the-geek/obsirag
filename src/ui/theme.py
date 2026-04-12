@@ -14,7 +14,9 @@ Le thème est stocké dans st.session_state["vsc_theme"] :
 """
 
 from __future__ import annotations
+import base64
 from datetime import datetime
+from pathlib import Path
 import streamlit as st
 from src.ui.html_embed import run_inline_script
 
@@ -118,8 +120,20 @@ def _css_block(p: dict) -> str:
     }}
 
     /* ── Réduction de l'espace en haut de page ── */
-    /* Cache complètement la barre de header Streamlit */
+    /* Header transparent et minimal — on cache son contenu mais PAS le bouton sidebar */
     [data-testid="stHeader"] {{
+        background: transparent !important;
+        height: 2.5rem !important;
+        min-height: 2.5rem !important;
+        z-index: 999 !important;
+    }}
+    [data-testid="stToolbar"],
+    [data-testid="stDecoration"],
+    [data-testid="stStatusWidget"],
+    [data-testid="stMainMenuButton"],
+    button[data-testid="stBaseButton-header"][aria-label="Open settings"],
+    button[aria-label="Deploy"],
+    button[aria-label="Share"] {{
         display: none !important;
     }}
     /* Réduit le padding-top du conteneur principal (défaut ~6rem) */
@@ -142,6 +156,12 @@ def _css_block(p: dict) -> str:
     section[data-testid="stSidebar"] > div:first-child {{
         background-color: {p["bg2"]} !important;
         border-right: 1px solid {p["border"]} !important;
+    }}
+    [data-testid="stSidebarNav"],
+    [data-testid="stSidebarNavItems"],
+    [data-testid="stSidebarNavSeparator"],
+    nav[data-testid="stSidebarNav"] {{
+        display: none !important;
     }}
 
     /* ── Texte général ── */
@@ -568,8 +588,37 @@ _CSS_AUTO = f"""<style>
 
 # ── CSS d'espacement — injecté sans media query pour garantir la priorité ─────
 _CSS_SPACING = """<style>
-/* Cache la barre de header Streamlit */
-header[data-testid="stHeader"] { display: none !important; }
+/* Header transparent et minimal — cache son contenu mais PAS le bouton sidebar */
+header[data-testid="stHeader"] { background: transparent !important; height: 2.5rem !important; min-height: 2.5rem !important; z-index: 999 !important; }
+[data-testid="stToolbar"],
+[data-testid="stDecoration"],
+[data-testid="stStatusWidget"],
+[data-testid="stMainMenuButton"],
+button[aria-label="Deploy"],
+button[aria-label="Share"] { display: none !important; }
+/* Contrôle ObsiRAG de réouverture de sidebar */
+#obsirag-sidebar-toggle {
+    position: fixed;
+    top: 0.75rem;
+    left: 0.75rem;
+    width: 2.5rem;
+    height: 2.5rem;
+    border: 1px solid var(--primary-color, #0066b8);
+    border-radius: 0.75rem;
+    background: var(--secondary-background-color, #f7f7f7);
+    color: var(--primary-color, #0066b8);
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.18);
+    z-index: 10000;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    font-size: 1.1rem;
+    line-height: 1;
+}
+#obsirag-sidebar-toggle:hover {
+    filter: brightness(0.98);
+}
 /* Réduit le padding-top du conteneur de contenu (défaut ~6rem) */
 section.main > div.block-container,
 section[data-testid="stMain"] > div.block-container,
@@ -601,6 +650,7 @@ def inject_theme() -> None:
 
     # Synchronise localStorage pour les iframes Mermaid (même clé)
     _sync_localstorage(pref)
+    _inject_sidebar_toggle_control()
 
 
 def _sync_localstorage(pref: str) -> None:
@@ -610,6 +660,189 @@ def _sync_localstorage(pref: str) -> None:
         try {{ localStorage.setItem({repr(_LS_KEY)}, {repr(pref)}); }} catch(e) {{}}
         """
     )
+
+
+def _inject_sidebar_toggle_control() -> None:
+    """Ajoute un bouton flottant robuste pour rouvrir la sidebar Streamlit."""
+    run_inline_script(
+    """
+    (function() {
+                    function getRootDocument() {
+                        try {
+                            if (window.parent && window.parent.document) {
+                                return window.parent.document;
+                            }
+                        } catch (error) {
+                        }
+                        return document;
+                    }
+
+                    const rootDocument = getRootDocument();
+                    const rootWindow = rootDocument.defaultView || window;
+                    const selectors = [
+                        '[data-testid="stSidebarCollapsedControl"]',
+                        '[data-testid="collapsedControl"]',
+                        '[data-testid="stSidebarCollapsedControl"] button',
+                        '[data-testid="collapsedControl"] button',
+                        '[data-testid="stSidebarCollapseButton"]',
+                        '[data-testid="stSidebarCollapseButton"] button',
+                        'button[aria-label*="sidebar" i]',
+                        'button[title*="sidebar" i]'
+                    ];
+
+                    function getSidebar() {
+                        return rootDocument.querySelector('section[data-testid="stSidebar"]')
+                            || rootDocument.querySelector('[data-testid="stSidebar"]');
+                    }
+
+                    function ensureButton() {
+                        let button = rootDocument.getElementById('obsirag-sidebar-toggle');
+                        if (!button) {
+                            button = rootDocument.createElement('button');
+                            button.id = 'obsirag-sidebar-toggle';
+                            button.type = 'button';
+                            button.setAttribute('aria-label', 'Ouvrir la barre laterale');
+                            button.setAttribute('title', 'Ouvrir la barre laterale');
+                            button.textContent = '☰';
+                            Object.assign(button.style, {
+                                position: 'fixed',
+                                top: '0.75rem',
+                                left: '0.75rem',
+                                width: '2.5rem',
+                                height: '2.5rem',
+                                borderRadius: '0.75rem',
+                                border: '1px solid #0066b8',
+                                background: '#f7f7f7',
+                                color: '#0066b8',
+                                boxShadow: '0 10px 30px rgba(0, 0, 0, 0.18)',
+                                zIndex: '2147483647',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                cursor: 'pointer',
+                                fontSize: '1.1rem',
+                                lineHeight: '1',
+                                pointerEvents: 'auto'
+                            });
+                            rootDocument.body.appendChild(button);
+                        }
+                        return button;
+                    }
+
+                    function sidebarIsExpanded() {
+                        const sidebar = getSidebar();
+                        if (!sidebar) {
+                            return false;
+                        }
+                        const expanded = sidebar.getAttribute('aria-expanded');
+                        if (expanded === 'true') {
+                            return true;
+                        }
+                        const rect = sidebar.getBoundingClientRect();
+                        return rect.width > 100;
+                    }
+
+                    function findNativeToggle() {
+                        for (const selector of selectors) {
+                            const element = rootDocument.querySelector(selector);
+                            if (element) {
+                                return element.tagName === 'BUTTON' ? element : element.querySelector('button') || element;
+                            }
+                        }
+                        return null;
+                    }
+
+                    function forceOpenSidebar() {
+                        const sidebar = getSidebar();
+                        if (!sidebar) {
+                            return;
+                        }
+                        sidebar.setAttribute('aria-expanded', 'true');
+                        sidebar.style.transform = 'translateX(0)';
+                        sidebar.style.marginLeft = '0';
+                        sidebar.style.width = '21rem';
+                        sidebar.style.minWidth = '21rem';
+                        sidebar.style.maxWidth = '21rem';
+                    }
+
+                    function openSidebar() {
+                        const nativeToggle = findNativeToggle();
+                        if (nativeToggle) {
+                            nativeToggle.click();
+                        } else {
+                            forceOpenSidebar();
+                        }
+                    }
+
+                    const button = ensureButton();
+                    if (button.dataset.obsiragBound !== '1') {
+                        button.dataset.obsiragBound = '1';
+                        button.addEventListener('click', function(event) {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            openSidebar();
+                            rootWindow.setTimeout(syncButtonVisibility, 50);
+                            rootWindow.setTimeout(syncButtonVisibility, 250);
+                        });
+                    }
+
+                    function syncButtonVisibility() {
+                        button.style.display = sidebarIsExpanded() ? 'none' : 'flex';
+                    }
+
+                    syncButtonVisibility();
+                    if (!rootWindow.__obsiragSidebarToggleObserver) {
+                        rootWindow.__obsiragSidebarToggleObserver = new MutationObserver(syncButtonVisibility);
+                        rootWindow.__obsiragSidebarToggleObserver.observe(rootDocument.body, {
+                            attributes: true,
+                            childList: true,
+                            subtree: true,
+                        });
+                        rootWindow.addEventListener('resize', syncButtonVisibility);
+                    }
+            })();
+            """
+            )
+
+
+_NAV_PAGES = [
+    ("app.py",              "💬 Chat"),
+    ("pages/1_Brain.py",    "🧠 Cerveau"),
+    ("pages/2_Insights.py", "💡 Insights"),
+    ("pages/3_Settings.py", "⚙️ Paramètres"),
+    ("pages/4_Note.py",     "📄 Note"),
+]
+
+_NAV_ICON_B64 = base64.b64encode(
+    (Path(__file__).parent / "static" / "android-chrome-192x192.png").read_bytes()
+).decode("ascii")
+
+
+def render_nav_bar() -> None:
+    """
+    Barre de navigation horizontale entre les pages.
+    À appeler sur chaque page, juste après inject_theme().
+    Donne un accès permanent à toutes les pages, même sans barre latérale.
+    """
+    st.markdown(
+        f"""
+        <div style="display:flex;align-items:center;gap:0.85rem;margin:0 0 0.8rem 0;">
+            <img src="data:image/png;base64,{_NAV_ICON_B64}" alt="ObsiRAG" width="44" height="44"
+                 style="border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,0.12);flex-shrink:0;">
+            <div style="min-width:0;">
+                <div style="font-size:1.15rem;font-weight:700;line-height:1.2;">ObsiRAG</div>
+                <div style="font-size:0.9rem;opacity:0.74;line-height:1.35;">
+                    Votre coffre Obsidian, augmenté par l'IA locale
+                </div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    cols = st.columns(len(_NAV_PAGES))
+    for col, (page_path, label) in zip(cols, _NAV_PAGES):
+        col.page_link(page_path, label=label, use_container_width=True)
+    st.divider()
 
 
 def render_theme_toggle() -> None:
