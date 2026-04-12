@@ -35,6 +35,9 @@ export PYTHONPATH="$SCRIPT_DIR"
 
 mkdir -p "$APP_DATA_DIR" "$LOG_DIR"
 
+# Remplace l'icône statique par défaut de Streamlit avant le démarrage.
+"$VENV_PYTHON" -m src.ui.streamlit_branding || true
+
 # ---- Streamlit (premier plan — launchd gère le cycle de vie) -
 exec "$VENV_STREAMLIT" run src/ui/app.py \
   --server.address=127.0.0.1 \

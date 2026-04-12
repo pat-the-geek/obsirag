@@ -8,14 +8,18 @@ Stratégie :
   ce que l'init soit terminée.
 - _services_instance : singleton process, écrit une seule fois par le thread init.
 """
+import base64
+import json
 import queue
 import time
 import threading
 import inspect
+from pathlib import Path
 
 import streamlit as st
 
 from src.services import ServiceManager
+from src.ui.html_embed import run_inline_script
 
 _lock = threading.Lock()
 _services_instance: ServiceManager | None = None
@@ -23,6 +27,38 @@ _init_thread: threading.Thread | None = None
 _init_done = threading.Event()
 _init_error: Exception | None = None
 _step_queue: "queue.Queue[str]" = queue.Queue()
+
+_STATIC_DIR = Path(__file__).parent / "static"
+
+
+def _build_data_url(file_name: str, mime_type: str) -> str:
+  payload = base64.b64encode((_STATIC_DIR / file_name).read_bytes()).decode("ascii")
+  return f"data:{mime_type};base64,{payload}"
+
+
+_APPLE_TOUCH_ICON_URL = _build_data_url("apple-touch-icon.png", "image/png")
+_FAVICON_32_URL = _build_data_url("favicon-32x32.png", "image/png")
+_FAVICON_16_URL = _build_data_url("favicon-16x16.png", "image/png")
+_FAVICON_ICO_URL = _build_data_url("favicon.ico", "image/x-icon")
+_MASK_ICON_URL = _build_data_url("safari-pinned-tab.svg", "image/svg+xml")
+_MANIFEST_URL = "data:application/manifest+json," + json.dumps(
+  {
+    "name": "ObsiRAG",
+    "short_name": "ObsiRAG",
+    "description": "Votre coffre Obsidian, augmente par l'IA locale",
+    "start_url": "/",
+    "scope": "/",
+    "display": "standalone",
+    "background_color": "#0d1117",
+    "theme_color": "#7C3AED",
+    "icons": [
+      {"src": _FAVICON_16_URL, "sizes": "16x16", "type": "image/png"},
+      {"src": _FAVICON_32_URL, "sizes": "32x32", "type": "image/png"},
+      {"src": _APPLE_TOUCH_ICON_URL, "sizes": "180x180", "type": "image/png"},
+    ],
+  },
+  separators=(",", ":"),
+)
 
 
 def _is_services_instance_compatible(instance: ServiceManager) -> bool:
@@ -83,14 +119,16 @@ div[data-testid="stMainBlockContainer"] {
     padding-bottom: 1rem !important;
 }
 </style>
-<script>
+"""
+
+_HEAD_TAGS_SCRIPT = """
 (function() {
-  var ICON_URL = '/app/static/apple-touch-icon.png';
-  var MANIFEST_URL = '/app/static/site.webmanifest';
-  var MASK_URL = '/app/static/safari-pinned-tab.svg';
-  var FAVICON_ICO = '/app/static/favicon.ico';
-  var FAVICON_32 = '/app/static/favicon-32x32.png';
-  var FAVICON_16 = '/app/static/favicon-16x16.png';
+  var ICON_URL = __APPLE_TOUCH_ICON_URL__;
+  var MANIFEST_URL = __MANIFEST_URL__;
+  var MASK_URL = __MASK_ICON_URL__;
+  var FAVICON_ICO = __FAVICON_ICO_URL__;
+  var FAVICON_32 = __FAVICON_32_URL__;
+  var FAVICON_16 = __FAVICON_16_URL__;
 
   function applyHeadTags() {
     var head = document.head;
@@ -100,6 +138,7 @@ div[data-testid="stMainBlockContainer"] {
     ).forEach(function(el) { el.remove(); });
 
     [
+      {rel:'shortcut icon', type:'image/x-icon', href:FAVICON_ICO},
       {rel:'icon', type:'image/x-icon', href:FAVICON_ICO},
       {rel:'icon', type:'image/png', sizes:'32x32', href:FAVICON_32},
       {rel:'icon', type:'image/png', sizes:'16x16', href:FAVICON_16},
@@ -153,8 +192,12 @@ div[data-testid="stMainBlockContainer"] {
     if (_elapsed >= 8000) clearInterval(interval);
   }, 2000);
 })();
-</script>
-"""
+""".replace("__APPLE_TOUCH_ICON_URL__", json.dumps(_APPLE_TOUCH_ICON_URL)) \
+  .replace("__MANIFEST_URL__", json.dumps(_MANIFEST_URL)) \
+  .replace("__MASK_ICON_URL__", json.dumps(_MASK_ICON_URL)) \
+  .replace("__FAVICON_ICO_URL__", json.dumps(_FAVICON_ICO_URL)) \
+  .replace("__FAVICON_32_URL__", json.dumps(_FAVICON_32_URL)) \
+  .replace("__FAVICON_16_URL__", json.dumps(_FAVICON_16_URL))
 
 
 def _run_init() -> None:
@@ -188,6 +231,7 @@ def _ensure_init_started() -> None:
 def get_services() -> ServiceManager:
     # Injecte le CSS compact sur chaque page (idempotent)
     st.markdown(_COMPACT_CSS, unsafe_allow_html=True)
+    run_inline_script(_HEAD_TAGS_SCRIPT)
 
     # Lance le thread d'init si ce n'est pas encore fait
     _ensure_init_started()
