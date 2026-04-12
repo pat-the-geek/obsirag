@@ -188,3 +188,22 @@ class TestChatNavigationHelpers:
         merged = append_loaded_conversation([], loaded)
 
         assert merged == loaded
+
+    def test_list_saved_conversations_delegates_without_recursive_rescan(self, tmp_path: Path):
+        root = tmp_path / "conversations"
+        root.mkdir(parents=True)
+        expected = [{
+            "title": "Conv",
+            "file_path": "obsirag/conversations/2026-04/conv.md",
+            "absolute_path": str(root / "2026-04" / "conv.md"),
+            "month": "2026-04",
+        }]
+
+        with (
+            patch("src.ui.chat_navigation.list_saved_conversation_entries", return_value=expected) as delegated,
+            patch("pathlib.Path.rglob", side_effect=AssertionError("rglob should not be used")),
+        ):
+            got = list_saved_conversations(root, limit=5, vault_root=tmp_path)
+
+        delegated.assert_called_once()
+        assert got == expected

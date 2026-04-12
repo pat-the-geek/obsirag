@@ -10,6 +10,8 @@ from typing import TYPE_CHECKING
 
 from loguru import logger
 
+from src.storage.safe_read import read_json_file
+
 if TYPE_CHECKING:
     from src.learning.autolearn import AutoLearner
 
@@ -21,10 +23,8 @@ class AutoLearnSynapseDiscovery:
     def load_synapse_index(self) -> set[str]:
         file_path = self._owner._get_settings().synapse_index_file
         if file_path.exists():
-            try:
-                return set(json.loads(file_path.read_text(encoding="utf-8")))
-            except Exception:
-                return set()
+            payload = read_json_file(file_path, default=[])
+            return set(payload) if isinstance(payload, list) else set()
         return set()
 
     def save_synapse_index(self, index: set[str]) -> None:

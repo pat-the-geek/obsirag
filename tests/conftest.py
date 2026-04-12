@@ -190,6 +190,13 @@ def mock_chroma(mock_embedding_fn):
     chroma.search_by_date_range.return_value = chroma.search.return_value
     chroma.search_by_entity.return_value = chroma.search.return_value
     chroma.search_by_keyword.return_value = chroma.search.return_value
+    # API publique complète de ChromaStore
+    chroma.count_notes.return_value = 1
+    chroma.list_user_notes.return_value = chroma.list_notes.return_value
+    chroma.list_generated_notes.return_value = []
+    chroma.list_recent_notes.return_value = chroma.list_notes.return_value
+    chroma.get_chunks_by_note_title.return_value = []
+    chroma.get_chunks_by_file_path.return_value = []
     return chroma
 
 

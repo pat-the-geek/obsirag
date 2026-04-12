@@ -4,6 +4,8 @@ from pathlib import PurePath
 from pathlib import Path
 
 from src.config import settings
+from src.storage.safe_read import read_text_lines
+from src.ui.conversation_store import list_saved_conversation_entries
 
 
 def build_chat_navigation_entries(messages: list[dict]) -> list[dict[str, int | str | None]]:
@@ -92,20 +94,12 @@ def build_conversation_source_entries(messages: list[dict], limit: int = 8) -> l
 
 
 def list_saved_conversations(root: Path, limit: int = 12, vault_root: Path | None = None) -> list[dict[str, str]]:
-    if not root.exists():
-        return []
-
-    files = sorted(root.rglob("*.md"), key=lambda path: path.stat().st_mtime, reverse=True)
-    entries: list[dict[str, str]] = []
-    path_root = vault_root or root.parent
-    for path in files[:limit]:
-        entries.append({
-            "title": _read_first_heading(path) or path.stem.replace("-", " "),
-            "file_path": str(path.relative_to(path_root)),
-            "absolute_path": str(path),
-            "month": path.parent.name,
-        })
-    return entries
+    return list_saved_conversation_entries(
+        root,
+        limit=limit,
+        vault_root=vault_root,
+        title_loader=_read_first_heading,
+    )
 
 
 def filter_saved_conversations(entries: list[dict[str, str]], search_text: str) -> list[dict[str, str]]:
@@ -120,7 +114,7 @@ def filter_saved_conversations(entries: list[dict[str, str]], search_text: str) 
 
 def load_saved_conversation(path: Path) -> list[dict[str, str | list | dict]]:
     try:
-        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+        lines = read_text_lines(path, default=[], errors="replace")
     except OSError:
         return []
 
@@ -218,7 +212,7 @@ def _preview_text(text: str, limit: int = 88) -> str:
 
 def _read_first_heading(path: Path) -> str:
     try:
-        for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        for line in read_text_lines(path, default=[], errors="replace"):
             if line.startswith("# "):
                 return line[2:].strip()
     except OSError:

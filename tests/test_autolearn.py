@@ -306,6 +306,50 @@ class TestAutoLearner:
             assert learner._find_existing_insight("Unknown", ["person/alice", "org/acme"]) == thematic
             assert learner._find_existing_insight("Unknown", ["person/alice"]) is None
 
+    def test_find_existing_insight_uses_chroma_insight_listing_when_available(self, tmp_settings):
+        chroma = MagicMock()
+        chroma.list_insight_notes.return_value = [{"file_path": "obsirag/insights/2026-04/Note_Test_20260411.md"}]
+        learner = AutoLearner(chroma, MagicMock(), MagicMock())
+        learner._metrics = MagicMock()
+        dated_dir = tmp_settings.insights_dir / "2026-04"
+        dated_dir.mkdir(parents=True, exist_ok=True)
+        exact = dated_dir / "Note_Test_20260411.md"
+        exact.write_text("---\ntags:\n  - person/alice\n---\nBody", encoding="utf-8")
+
+        with patch("src.learning.autolearn.settings", tmp_settings):
+            assert learner._find_existing_insight("Note Test", ["person/alice"]) == exact
+        learner._metrics.increment.assert_not_called()
+
+    def test_find_existing_insight_records_rglob_fallback_metrics_when_index_and_shallow_glob_miss(self, tmp_settings):
+        chroma = MagicMock()
+        chroma.list_insight_notes.return_value = []
+        learner = AutoLearner(chroma, MagicMock(), MagicMock())
+        learner._metrics = MagicMock()
+
+        deep_dir = tmp_settings.insights_dir / "legacy" / "nested"
+        deep_dir.mkdir(parents=True, exist_ok=True)
+        deep_candidate = deep_dir / "Note_Test_20260411.md"
+        deep_candidate.write_text("---\ntags:\n  - person/alice\n---\nBody", encoding="utf-8")
+
+        with patch("src.learning.autolearn.settings", tmp_settings):
+            assert learner._find_existing_insight("Note Test", ["person/alice"]) == deep_candidate
+
+        learner._metrics.increment.assert_any_call("autolearn_fs_fallback_insight_glob_total")
+        learner._metrics.increment.assert_any_call("autolearn_fs_fallback_insight_rglob_total")
+
+    def test_find_existing_insight_skips_frontmatter_read_when_title_prefix_matches(self, tmp_settings):
+        learner = AutoLearner(MagicMock(), MagicMock(), MagicMock())
+        dated_dir = tmp_settings.insights_dir / "2026-04"
+        dated_dir.mkdir(parents=True, exist_ok=True)
+        exact = dated_dir / "Note_Test_20260411.md"
+        exact.write_text("---\ntags:\n  - person/alice\n---\nBody", encoding="utf-8")
+
+        with (
+            patch("src.learning.autolearn.settings", tmp_settings),
+            patch("src.learning.artifact_writer.read_text_file", side_effect=AssertionError("should not be called")),
+        ):
+            assert learner._find_existing_insight("Note Test", ["person/alice", "org/acme"]) == exact
+
     def test_append_to_insight_updates_metadata_and_archives_when_too_large(self, tmp_settings):
         learner = AutoLearner(MagicMock(), MagicMock(), MagicMock())
         tmp_settings.max_insight_size_bytes = 80

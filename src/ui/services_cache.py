@@ -11,6 +11,7 @@ Stratégie :
 import queue
 import time
 import threading
+import inspect
 
 import streamlit as st
 
@@ -26,12 +27,30 @@ _step_queue: "queue.Queue[str]" = queue.Queue()
 
 def _is_services_instance_compatible(instance: ServiceManager) -> bool:
   chroma = getattr(instance, "chroma", None)
+  rag = getattr(instance, "rag", None)
   required_chroma_methods = (
     "list_notes_sorted_by_title",
+    "list_note_folders",
+    "list_note_tags",
+    "list_notes_by_type",
     "list_recent_notes",
+    "list_user_notes",
+    "list_generated_notes",
+    "count_notes",
     "get_backlinks",
   )
-  return chroma is not None and all(callable(getattr(chroma, name, None)) for name in required_chroma_methods)
+  chroma_compatible = chroma is not None and all(callable(getattr(chroma, name, None)) for name in required_chroma_methods)
+
+  query_stream = getattr(rag, "query_stream", None)
+  if not callable(query_stream):
+    return False
+  try:
+    params = inspect.signature(query_stream).parameters
+  except (TypeError, ValueError):
+    return False
+  rag_compatible = "progress_callback" in params
+
+  return chroma_compatible and rag_compatible
 
 
 def _reset_cached_services() -> None:

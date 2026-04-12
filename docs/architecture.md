@@ -1,6 +1,6 @@
 # Architecture ObsiRAG
 
-Ce document décrit l'architecture effective du dépôt, les frontières entre modules, et les invariants utiles avant toute évolution du code.
+Ce document décrit l'architecture effective du dépôt, les frontières entre modules, et les invariants utiles avant toute évolution du code. Les diagrammes de séquence détaillés des flux runtime sont dans [`docs/sequence.md`](sequence.md).
 
 ## Vue d'ensemble
 
@@ -87,8 +87,7 @@ Contournements déjà appliqués :
 - la page Cerveau s'appuie sur un import de module `brain_explorer` plutôt que sur plusieurs imports nommés,
 - les embeds HTML Streamlit sont centralisés dans `src/ui/html_embed.py`,
 - le rendu Mermaid du visualiseur de note est sorti dans un helper pur afin d'être testable sans charger toute la page Streamlit,
-- `src/ui/services_cache.py` invalide désormais le singleton si le runtime conserve une instance `chroma` ne portant plus les helpers attendus,
-- `src/ui/chroma_compat.py` sert de filet de sécurité transitoire pour les pages qui peuvent survivre à un hot reload partiel.
+- `src/ui/services_cache.py` invalide désormais le singleton si le runtime conserve une instance `chroma` ne portant plus les helpers attendus.
 
 ### Protocole opératoire hot reload Streamlit
 
@@ -101,16 +100,47 @@ Quand une page UI casse juste après un refactor alors que l'import Python direc
 
 Procédure locale recommandée :
 
-1. arrêter proprement l'application via `./stop.sh`,
-2. relancer via `./start.sh`,
-3. vérifier la santé HTTP sur `http://127.0.0.1:8501`,
-4. relire les dernières lignes de `logs/obsirag.log`,
-5. recharger seulement ensuite la page Streamlit en cause.
+1. exécuter `./scripts/validate_local.sh` pour enchaîner redémarrage contrôlé, tests UI ciblés et lecture rapide des logs,
+2. recharger ensuite la page Streamlit en cause,
+3. en cas d'évolution code significative, compléter avec `source .venv/bin/activate && pytest --no-cov`.
+
+Chaîne standard de validation locale post-changement :
+
+1. `./scripts/validate_local.sh`
+2. `source .venv/bin/activate && pytest --no-cov` (optionnel en validation complète)
+
+Variante exhaustive :
+
+1. `./scripts/validate_local.sh --full`
+
+Variante smoke (boucle de dev rapide) :
+
+1. `./scripts/validate_local.sh --smoke`
+
+Variante nrt (non-régression ultra-courte, 7 tests marqués `@pytest.mark.nrt`) :
+
+1. `./scripts/validate_local.sh --nrt`
+2. `./scripts/validate_local.sh --nrt --no-restart`
+
+Variante exhaustive sans redémarrage :
+
+1. `./scripts/validate_local.sh --full --no-restart`
+
+Variante smoke sans redémarrage :
+
+1. `./scripts/validate_local.sh --smoke --no-restart`
+
+Sorties machine-readable :
+
+- chaque run de `validate_local.sh` génère un rapport JUnit (`*.junit.xml`) et un résumé JSON (`*.json`) dans `logs/validation/`,
+- des alias stables `latest.junit.xml` et `latest.json` sont maintenus pour les scripts externes,
+- le dossier de sortie est configurable via `--report-dir <DIR>`.
 
 Signaux utiles de diagnostic :
 
 - si l'import Python direct voit la nouvelle méthode mais que Streamlit signale encore `AttributeError`, suspecter d'abord un objet mis en cache,
 - si `services_cache` déclenche une reconstruction et qu'un second rendu passe, conserver la correction côté compatibilité plutôt qu'ajouter un contournement spécifique de page,
+- si l'erreur mentionne qu'une clé `st.session_state` ne peut plus être modifiée après instanciation d'un widget, déplacer la mutation dans un callback `on_click` ou `on_change`, ou l'exécuter avant la création du widget,
 - si l'erreur persiste après redémarrage complet, traiter alors le problème comme une régression source classique.
 
 ### `src/database/chroma_store.py`

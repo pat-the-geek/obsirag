@@ -23,6 +23,7 @@ from loguru import logger
 from pyvis.network import Network
 
 from src.config import settings
+from src.storage.safe_read import read_text_file
 
 
 from src.ui.note_badges import get_note_graph_color, get_note_type_meta
@@ -175,7 +176,7 @@ class GraphBuilder:
             with _tmp_workdir("/tmp"):
                 net.write_html(str(tmp), local=False)
 
-        html = tmp.read_text(encoding="utf-8")
+        html = read_text_file(tmp, default="")
 
         # Surcharge CSS des boutons de navigation pyvis + fix canvas HiDPI
         nav_css = """

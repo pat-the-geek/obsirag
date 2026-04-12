@@ -12,6 +12,8 @@ from pathlib import Path
 from datetime import datetime, timezone
 from loguru import logger
 
+from src.storage.safe_read import read_json_file
+
 
 _TOKEN_STATS_LOCK = threading.RLock()
 
@@ -88,10 +90,7 @@ def log_token_usage(
 
         stats: dict = {}
         if token_stats_file.exists():
-            try:
-                stats = json.loads(token_stats_file.read_text(encoding="utf-8"))
-            except Exception:
-                stats = {}
+            stats = read_json_file(token_stats_file, default={})
 
         today = datetime.now(timezone.utc).date().isoformat()
         day_stats = stats.setdefault(today, {})

@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import re
+import time
 from pathlib import Path
 from typing import Any
 
 from loguru import logger
+
+from src.storage.safe_read import read_text_file
 
 
 class AutoLearnNoteRenamer:
@@ -80,7 +83,7 @@ class AutoLearnNoteRenamer:
 
     def _update_frontmatter_title(self, note_path: Path, new_stem: str) -> None:
         try:
-            content = note_path.read_text(encoding="utf-8")
+            content = read_text_file(note_path, default="")
             fm_end = self._owner._fm_end(content)
             if fm_end != -1:
                 frontmatter = content[3:fm_end]
@@ -99,11 +102,11 @@ class AutoLearnNoteRenamer:
         pattern = re.compile(r"\[\[" + re.escape(old_stem) + r"([\|#\]])", re.IGNORECASE)
         replacement = r"[[" + new_stem + r"\1"
         updated_files = 0
-        for md_file in vault.rglob("*.md"):
+        for md_file in self._iter_markdown_candidates(vault):
             if md_file == skip_file:
                 continue
             try:
-                text = md_file.read_text(encoding="utf-8")
+                text = read_text_file(md_file, default="")
                 if old_stem.lower() not in text.lower():
                     continue
                 new_text = pattern.sub(replacement, text)
@@ -115,6 +118,47 @@ class AutoLearnNoteRenamer:
             except Exception as exc:
                 logger.warning(f"Update wikilinks dans '{md_file.name}': {exc}")
         return updated_files
+
+    def _iter_markdown_candidates(self, vault: Path) -> list[Path]:
+        list_notes = getattr(getattr(self._owner, "_chroma", None), "list_notes", None)
+        if callable(list_notes):
+            try:
+                notes = list_notes()
+                paths = [
+                    vault / str(note.get("file_path", ""))
+                    for note in notes
+                    if isinstance(note, dict) and str(note.get("file_path", "")).endswith(".md")
+                ]
+                existing = [path for path in paths if path.exists()]
+                if existing:
+                    return existing
+            except Exception:
+                pass
+        fallback_started_at = time.perf_counter()
+        fallback_paths = list(vault.rglob("*.md"))
+        self._record_metric(
+            "autolearn_fs_fallback_rename_rglob_total",
+            elapsed=time.perf_counter() - fallback_started_at,
+            observe_metric="autolearn_fs_fallback_rename_rglob_seconds",
+        )
+        return fallback_paths
+
+    def _record_metric(
+        self,
+        increment_metric: str,
+        *,
+        elapsed: float | None = None,
+        observe_metric: str | None = None,
+    ) -> None:
+        metrics = getattr(self._owner, "_metrics", None)
+        if metrics is None:
+            return
+        try:
+            metrics.increment(increment_metric)
+            if observe_metric and elapsed is not None:
+                metrics.observe(observe_metric, max(0.0, float(elapsed)))
+        except Exception:
+            pass
 
     def _migrate_processed_map(self, vault: Path, note_rel: str, new_abs: Path) -> None:
         try:

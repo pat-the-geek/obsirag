@@ -39,6 +39,66 @@ Exemples de requêtes :
 - [docs/performances.md](docs/performances.md) — mesures de performances, comparaison MLX/Ollama et recommandations matérielles
 - [docs/improvements-report.md](docs/improvements-report.md) — rapport a jour des travaux d'amelioration, validations et impacts produit
 
+## Validation locale post-changement
+
+Pour standardiser la verification locale apres un lot de changements UI/Streamlit :
+
+```bash
+./scripts/validate_local.sh
+```
+
+Cette commande unique enchaine automatiquement :
+
+- redemarrage controle via `./scripts/post_restart_check.sh`,
+- tests UI cibles (`pytest --no-cov`),
+- verification rapide des logs de demarrage.
+
+Pour lancer la validation exhaustive (suite complete des tests) :
+
+```bash
+./scripts/validate_local.sh --full
+```
+
+Pour une boucle de dev tres rapide (subset critique sans suite complete) :
+
+```bash
+./scripts/validate_local.sh --smoke
+```
+
+Pour la suite de non-regression ultra-courte (7 tests `@pytest.mark.nrt`, < 2s) :
+
+```bash
+./scripts/validate_local.sh --nrt
+./scripts/validate_local.sh --nrt --no-restart
+```
+
+Pour relancer rapidement les validations sans redémarrage (quand seuls les changements code/tests sont concernés) :
+
+```bash
+./scripts/validate_local.sh --no-restart
+./scripts/validate_local.sh --full --no-restart
+./scripts/validate_local.sh --smoke --no-restart
+```
+
+Chaque execution de `validate_local.sh` produit maintenant des rapports machine-readable dans `logs/validation/` :
+
+- un rapport JUnit XML (`*.junit.xml`) pour integration CI,
+- un resume JSON (`*.json`) avec mode, statut, duree et code de sortie,
+- deux pointeurs stables : `latest.junit.xml` et `latest.json`.
+
+Pour rediriger ces artefacts dans un autre dossier :
+
+```bash
+./scripts/validate_local.sh --smoke --report-dir /tmp/obsirag-validation
+```
+
+En cas de refactor majeur au-dela de la couche UI, completer ensuite avec la suite complete :
+
+```bash
+source .venv/bin/activate
+pytest --no-cov
+```
+
 ---
 
 ## Fonctionnalités

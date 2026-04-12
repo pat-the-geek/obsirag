@@ -9,40 +9,31 @@ from pathlib import Path
 import streamlit as st
 
 from src.config import settings
+from src.storage.safe_read import read_text_file
 from src.ui.insights_browser import (
+    build_artifact_entries,
+    build_artifact_expander_label,
+    build_artifact_panel_caption,
     build_month_options,
     build_query_day_options,
     filter_markdown_entries,
     filter_queries,
-    load_query_history,
 )
 from src.ui.note_badges import render_note_badge
+from src.ui.query_history_store import list_query_history_entries
 from src.ui.services_cache import get_services
 from src.ui.theme import inject_theme, render_theme_toggle
 
 _PAGE_SIZE = 15  # nombre d'items par page
 
 
-@st.cache_data(ttl=60)
-def _list_md_files(directory: str) -> list[tuple[str, float]]:
-    """Retourne la liste triée (path_str, mtime) — mise en cache 60 s."""
-    d = Path(directory)
-    if not d.exists():
-        return []
-    entries = []
-    for p in d.rglob("*.md"):
-        try:
-            entries.append((str(p), p.stat().st_mtime))
-        except OSError:
-            pass
-    entries.sort(key=lambda x: x[1], reverse=True)
-    return entries
-
-
 @st.cache_data(ttl=120)
 def _read_md_file(path_str: str, mtime: float) -> str:
     """Lecture mise en cache du fichier Markdown (TTL 2 min, invalidée si mtime change)."""
-    return Path(path_str).read_text(encoding="utf-8")
+    return read_text_file(
+        Path(path_str),
+        default="*Fichier introuvable (archivé ou déplacé).*",
+    )
 
 
 def _paginate(key: str, items: list, page_size: int) -> list:
@@ -82,7 +73,7 @@ tab_knowledge, tab_synapses, tab_synthesis, tab_queries = st.tabs(
 
 # ---- Artefacts de connaissance (vault/obsirag/insights/) ----
 with tab_knowledge:
-    artifacts = _list_md_files(str(settings.insights_dir))
+    artifacts = build_artifact_entries(svc.chroma.list_notes_by_type("insight"))
 
     if not artifacts:
         st.info(
@@ -108,20 +99,20 @@ with tab_knowledge:
             month_filter=month_filter,
             content_lookup=_read_md_file,
         )
-        st.caption(
-            f"{len(filtered_artifacts)} / {len(artifacts)} artefact(s) · "
-            f"Visibles dans Obsidian sous `obsirag/insights/`"
-        )
+        st.caption(build_artifact_panel_caption(
+            len(filtered_artifacts),
+            len(artifacts),
+            "artefact(s)",
+            "obsirag/insights/",
+        ))
         for path_str, mtime in _paginate("insights_page", filtered_artifacts, _PAGE_SIZE):
-            date_str = datetime.fromtimestamp(mtime).strftime("%Y-%m-%d %H:%M")
-            stem = Path(path_str).stem
-            with st.expander(f"💡 {stem} — {date_str}", expanded=False):
+            with st.expander(build_artifact_expander_label(path_str, mtime, "💡"), expanded=False):
                 st.markdown(render_note_badge(path_str), unsafe_allow_html=True)
                 st.markdown(_read_md_file(path_str, mtime))
 
 # ---- Synapses (vault/obsirag/synapses/) ----
 with tab_synapses:
-    synapses = _list_md_files(str(settings.synapses_dir))
+    synapses = build_artifact_entries(svc.chroma.list_notes_by_type("synapse"))
 
     if not synapses:
         st.info(
@@ -147,21 +138,20 @@ with tab_synapses:
             month_filter=month_filter,
             content_lookup=_read_md_file,
         )
-        st.caption(
-            f"{len(filtered_synapses)} / {len(synapses)} synapse(s) découverte(s) · "
-            f"Visibles dans Obsidian sous `obsirag/synapses/`"
-        )
+        st.caption(build_artifact_panel_caption(
+            len(filtered_synapses),
+            len(synapses),
+            "synapse(s) découverte(s)",
+            "obsirag/synapses/",
+        ))
         for path_str, mtime in _paginate("synapses_page", filtered_synapses, _PAGE_SIZE):
-            date_str = datetime.fromtimestamp(mtime).strftime("%Y-%m-%d %H:%M")
-            stem = Path(path_str).stem
-            with st.expander(f"⚡ {stem} — {date_str}", expanded=False):
+            with st.expander(build_artifact_expander_label(path_str, mtime, "⚡"), expanded=False):
                 st.markdown(render_note_badge(path_str), unsafe_allow_html=True)
                 st.markdown(_read_md_file(path_str, mtime))
 
 # ---- Synthèses hebdomadaires (vault/obsirag/synthesis/) ----
 with tab_synthesis:
-    synth_dir = settings.synthesis_dir
-    syntheses = sorted(synth_dir.glob("*.md"), reverse=True) if synth_dir.exists() else []
+    syntheses = build_artifact_entries(svc.chroma.list_notes_by_type("report"))
 
     if not syntheses:
         st.info(
@@ -169,7 +159,6 @@ with tab_synthesis:
             f"Elle apparaîtra dans Obsidian sous `obsirag/synthesis/`."
         )
     else:
-        synthesis_entries = [(str(s_path), s_path.stat().st_mtime) for s_path in syntheses]
         search_col, month_col = st.columns([2, 1])
         search_text = search_col.text_input(
             "Rechercher dans les synthèses",
@@ -178,30 +167,36 @@ with tab_synthesis:
         )
         month_filter = month_col.selectbox(
             "Mois",
-            build_month_options(synthesis_entries),
+            build_month_options(syntheses),
             key="synthesis_month_filter",
         )
         filtered_syntheses = filter_markdown_entries(
-            synthesis_entries,
+            syntheses,
             search_text=search_text,
             month_filter=month_filter,
             content_lookup=_read_md_file,
         )
-        st.caption(f"{len(filtered_syntheses)} / {len(syntheses)} synthèse(s) · Visibles dans Obsidian sous `obsirag/synthesis/`")
+        st.caption(build_artifact_panel_caption(
+            len(filtered_syntheses),
+            len(syntheses),
+            "synthèse(s)",
+            "obsirag/synthesis/",
+        ))
         for path_str, mtime in _paginate("synthesis_page", filtered_syntheses, _PAGE_SIZE):
-            s_path = Path(path_str)
-            with st.expander(f"📋 {s_path.stem}", expanded=(s_path == syntheses[0])):
+            with st.expander(
+                build_artifact_expander_label(path_str, mtime, "📋"),
+                expanded=(path_str == syntheses[0][0]),
+            ):
                 st.markdown(render_note_badge(path_str), unsafe_allow_html=True)
                 st.markdown(_read_md_file(path_str, mtime))
 
 # ---- Historique des requêtes (volume Docker) ----
 with tab_queries:
     q_file = settings.queries_file
-    if not q_file.exists():
+    queries = list_query_history_entries(q_file)
+    if not queries:
         st.info("Aucune requête enregistrée.")
     else:
-        lines = q_file.read_text(encoding="utf-8").strip().splitlines()
-        queries = load_query_history(lines)
         st.caption(f"{len(queries)} requête(s) enregistrée(s)")
 
         if queries:

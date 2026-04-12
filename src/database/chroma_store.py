@@ -59,6 +59,17 @@ _LIST_NOTES_TTL = 30
 
 
 class ChromaStore:
+    @staticmethod
+    def _note_type_for_path(file_path: str) -> str:
+        normalized = file_path.replace("\\", "/").lower()
+        if "/obsirag/insights/" in normalized or normalized.startswith("obsirag/insights/"):
+            return "insight"
+        if "/obsirag/synapses/" in normalized or normalized.startswith("obsirag/synapses/"):
+            return "synapse"
+        if "/obsirag/synthesis/" in normalized or normalized.startswith("obsirag/synthesis/"):
+            return "report"
+        return "user"
+
     def __init__(self) -> None:
         persist_dir = settings.chroma_persist_dir
         logger.info(f"Initialisation ChromaDB → {persist_dir}")
@@ -72,6 +83,8 @@ class ChromaStore:
         self._lock = threading.RLock()
         self._list_notes_cache: list[dict] | None = None
         self._list_notes_ts: float = 0.0
+        self._note_views_cache: dict[str, Any] | None = None
+        self._note_views_ts: float = 0.0
         self._count_cache: int | None = None
         self._count_ts: float = 0.0
 
@@ -296,58 +309,142 @@ class ChromaStore:
     def get_notes_by_file_paths(self, file_paths: list[str]) -> list[dict]:
         if not file_paths:
             return []
-        wanted = set(file_paths)
-        selected = [note for note in self.list_notes() if note["file_path"] in wanted]
+        selected: list[dict]
+        get_note_views = getattr(self, "_get_note_views", None)
+        if callable(get_note_views):
+            views = get_note_views()
+            by_file_path = views.get("by_file_path", {}) if isinstance(views, dict) else {}
+            if isinstance(by_file_path, dict):
+                selected = [by_file_path[file_path] for file_path in file_paths if file_path in by_file_path]
+            else:
+                selected = []
+        else:
+            selected = []
+        if not selected:
+            wanted = set(file_paths)
+            selected = [note for note in self.list_notes() if note["file_path"] in wanted]
         order = {file_path: index for index, file_path in enumerate(file_paths)}
         return sorted(selected, key=lambda note: order.get(note["file_path"], len(order)))
 
     def get_note_by_file_path(self, file_path: str) -> dict | None:
+        get_note_views = getattr(self, "_get_note_views", None)
+        if callable(get_note_views):
+            views = get_note_views()
+            by_file_path = views.get("by_file_path", {}) if isinstance(views, dict) else {}
+            if isinstance(by_file_path, dict) and file_path in by_file_path:
+                return by_file_path[file_path]
         notes = self.get_notes_by_file_paths([file_path])
         return notes[0] if notes else None
 
-    def list_notes_sorted_by_title(self) -> list[dict]:
-        return sorted(
-            self.list_notes(),
+    def _build_note_views(self) -> dict[str, Any]:
+        notes = self.list_notes()
+        sorted_by_title = sorted(
+            notes,
             key=lambda note: str(note.get("title") or Path(note["file_path"]).stem).lower(),
         )
-
-    def list_recent_notes(self, limit: int = 20) -> list[dict]:
-        notes = sorted(
-            self.list_notes(),
+        recent_notes = sorted(
+            notes,
             key=lambda note: str(note.get("date_modified") or ""),
             reverse=True,
         )
-        notes = sorted(notes, key=lambda note: not bool(note.get("date_modified")))
+        recent_notes = sorted(recent_notes, key=lambda note: not bool(note.get("date_modified")))
+
+        folders: set[str] = set()
+        tags: set[str] = set()
+        notes_by_type: dict[str, list[dict]] = {
+            "insight": [],
+            "synapse": [],
+            "report": [],
+            "user": [],
+        }
+        by_file_path: dict[str, dict] = {}
+        generated_notes: list[dict] = []
+        user_notes: list[dict] = []
+        backlinks_by_target: dict[str, list[dict]] = {}
+
+        for note in notes:
+            file_path = note["file_path"]
+            by_file_path[file_path] = note
+            folders.add(str(Path(file_path).parent))
+            tags.update(tag for tag in note.get("tags", []) if tag)
+
+            note_type = ChromaStore._note_type_for_path(file_path)
+            notes_by_type.setdefault(note_type, []).append(note)
+
+            if ChromaStore._is_obsirag_generated_path(file_path):
+                generated_notes.append(note)
+            else:
+                user_notes.append(note)
+
+            for wikilink in note.get("wikilinks", []):
+                target = str(wikilink).strip().lower()
+                if not target:
+                    continue
+                backlinks_by_target.setdefault(target, []).append(note)
+
+        return {
+            "notes": notes,
+            "sorted_by_title": sorted_by_title,
+            "recent_notes": recent_notes,
+            "count_notes": len(notes),
+            "folders": sorted(folders),
+            "tags": sorted(tags),
+            "notes_by_type": notes_by_type,
+            "by_file_path": by_file_path,
+            "user_notes": user_notes,
+            "generated_notes": generated_notes,
+            "backlinks_by_target": backlinks_by_target,
+        }
+
+    def _get_note_views(self) -> dict[str, Any]:
+        now = time.monotonic()
+        if self._note_views_cache is not None and (now - self._note_views_ts) < _LIST_NOTES_TTL:
+            return self._note_views_cache
+        self._note_views_cache = self._build_note_views()
+        self._note_views_ts = now
+        return self._note_views_cache
+
+    def list_notes_sorted_by_title(self) -> list[dict]:
+        return list(self._get_note_views()["sorted_by_title"])
+
+    def list_recent_notes(self, limit: int = 20) -> list[dict]:
+        notes = list(self._get_note_views()["recent_notes"])
         return notes[:limit] if limit > 0 else notes
 
     def count_notes(self) -> int:
-        return len(self.list_notes())
+        return int(self._get_note_views()["count_notes"])
 
     def list_note_folders(self) -> list[str]:
-        return sorted({str(Path(note["file_path"]).parent) for note in self.list_notes()})
+        return list(self._get_note_views()["folders"])
 
     def list_note_tags(self) -> list[str]:
-        return sorted({tag for note in self.list_notes() for tag in note.get("tags", []) if tag})
+        return list(self._get_note_views()["tags"])
+
+    def list_notes_by_type(self, note_type: str) -> list[dict]:
+        wanted = str(note_type or "").strip().lower()
+        if not wanted:
+            return []
+        return list(self._get_note_views()["notes_by_type"].get(wanted, []))
+
+    def list_insight_notes(self) -> list[dict]:
+        return self.list_notes_by_type("insight")
+
+    def list_synapse_notes(self) -> list[dict]:
+        return self.list_notes_by_type("synapse")
+
+    def list_report_notes(self) -> list[dict]:
+        return self.list_notes_by_type("report")
 
     def list_user_notes(self) -> list[dict]:
-        return [
-            note for note in self.list_notes()
-            if not ChromaStore._is_obsirag_generated_path(note["file_path"])
-        ]
+        return list(self._get_note_views()["user_notes"])
 
     def list_generated_notes(self) -> list[dict]:
-        return [
-            note for note in self.list_notes()
-            if ChromaStore._is_obsirag_generated_path(note["file_path"])
-        ]
+        return list(self._get_note_views()["generated_notes"])
 
     def get_backlinks(self, file_path: str) -> list[dict]:
         target_name = Path(file_path).stem.lower()
-        return [
-            note for note in self.list_notes()
-            if note["file_path"] != file_path
-            and target_name in [wikilink.lower() for wikilink in note.get("wikilinks", [])]
-        ]
+        backlinks = self._get_note_views()["backlinks_by_target"].get(target_name, [])
+        return [note for note in backlinks if note["file_path"] != file_path]
 
     # ---- Méta-informations ----
 
@@ -426,6 +523,7 @@ class ChromaStore:
     def invalidate_list_notes_cache(self) -> None:
         """Invalide le cache list_notes et count (à appeler après indexation/suppression)."""
         self._list_notes_ts = 0.0
+        self._note_views_ts = 0.0
         self._count_ts = 0.0
 
     def list_notes(self) -> list[dict]:

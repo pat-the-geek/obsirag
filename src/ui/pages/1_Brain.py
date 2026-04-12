@@ -8,7 +8,11 @@ from pathlib import Path
 import streamlit as st
 
 from src.ui import brain_explorer
-from src.ui.chroma_compat import list_note_folders, list_note_tags, list_notes_sorted_by_title
+from src.ui.brain_ui_fragments import (
+    build_badge_row_html,
+    build_brain_note_row_html,
+    build_brain_page_header_html,
+)
 from src.ui.note_badges import get_note_type_options, prefix_note_label, render_note_badge
 from src.ui.services_cache import get_services
 from src.ui.components.note_bridge_component import note_bridge as _note_bridge
@@ -25,14 +29,12 @@ inject_theme()
 svc = get_services()
 
 st.markdown(
-    f'<h1 style="display:flex;align-items:center;gap:8px">'
-    f'<img src="data:image/svg+xml;base64,{_brain_b64}" width="96" height="96">'
-    f'Cerveau</h1>',
+    build_brain_page_header_html(_brain_b64),
     unsafe_allow_html=True,
 )
 st.caption("Carte interactive des connexions entre vos notes")
 
-notes = list_notes_sorted_by_title(svc.chroma)
+notes = svc.chroma.list_notes_sorted_by_title()
 
 if not notes:
     st.info("Aucune note indexée. Lancez une indexation depuis la page Chat.")
@@ -49,14 +51,14 @@ with st.sidebar:
 
     st.markdown("### Filtres")
 
-    folders = list_note_folders(svc.chroma)
+    folders = svc.chroma.list_note_folders()
     selected_folders = st.multiselect(
         "Dossiers",
         options=["Tous"] + folders,
         default=["Tous"],
     )
 
-    all_tags = list_note_tags(svc.chroma)
+    all_tags = svc.chroma.list_note_tags()
     selected_tags = st.multiselect("Tags", options=all_tags)
     type_options = get_note_type_options()
     type_labels = {option["label"]: option["key"] for option in type_options}
@@ -152,12 +154,10 @@ if fps_tuple:
 
     st.markdown("### Légende visuelle")
     st.markdown(
-        "<div style='display:flex;gap:0.5rem;flex-wrap:wrap;'>"
-        + "".join(
+        build_badge_row_html([
             render_note_badge(type_demo_paths[option["key"]])
             for option in type_options
-        )
-        + "</div>",
+        ]),
         unsafe_allow_html=True,
     )
 
@@ -168,11 +168,11 @@ if fps_tuple:
         if spotlight:
             for index, item in enumerate(spotlight):
                 st.markdown(
-                    f"<div style='display:flex;align-items:center;gap:0.55rem;flex-wrap:wrap;'>"
-                    f"{render_note_badge(item['file_path'])}"
-                    f"<strong>{item['title']}</strong>"
-                    f"<span style='opacity:.72;'>centralité <code>{item['score']}</code> · {item['date_modified'] or 'date inconnue'}</span>"
-                    f"</div>",
+                    build_brain_note_row_html(
+                        render_note_badge(item["file_path"]),
+                        item["title"],
+                        f"centralité {item['score']} · {item['date_modified'] or 'date inconnue'}",
+                    ),
                     unsafe_allow_html=True,
                 )
                 if item.get("tags"):
@@ -189,11 +189,11 @@ if fps_tuple:
         if recent_notes:
             for index, note in enumerate(recent_notes):
                 st.markdown(
-                    f"<div style='display:flex;align-items:center;gap:0.55rem;flex-wrap:wrap;'>"
-                    f"{render_note_badge(note['file_path'])}"
-                    f"<strong>{note['title']}</strong>"
-                    f"<span style='opacity:.72;'>{note.get('date_modified', '')[:10] or 'date inconnue'}</span>"
-                    f"</div>",
+                    build_brain_note_row_html(
+                        render_note_badge(note["file_path"]),
+                        note["title"],
+                        note.get("date_modified", "")[:10] or "date inconnue",
+                    ),
                     unsafe_allow_html=True,
                 )
                 if note.get("tags"):
@@ -247,11 +247,11 @@ if fps_tuple:
             score = item["score"]
             col_t, col_b = st.columns([4, 1])
             col_t.markdown(
-                f"<div style='display:flex;align-items:center;gap:0.55rem;flex-wrap:wrap;'>"
-                f"{render_note_badge(fp)}"
-                f"<strong>{title}</strong>"
-                f"<span style='opacity:.72;'>centralité <code>{score}</code></span>"
-                f"</div>",
+                build_brain_note_row_html(
+                    render_note_badge(fp),
+                    title,
+                    f"centralité {score}",
+                ),
                 unsafe_allow_html=True,
             )
             if col_b.button("📖 Ouvrir", key=f"top_{idx}_{fp}", use_container_width=True):

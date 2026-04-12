@@ -2,31 +2,17 @@
 ObsiRAG — Page principale : Chat
 """
 import base64
+import inspect
 import re
 import threading
 import time
 import unicodedata
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
 
 import streamlit as st
 from loguru import logger
-
-# Cache module-level pour les comptages de fichiers (évite rglob toutes les 5s)
-_dir_count_cache: dict[str, tuple[int, float]] = {}
-_DIR_COUNT_TTL = 30.0  # secondes
-
-
-def _count_md_cached(path: Path, key: str) -> int:
-    """Compte les fichiers .md dans `path` avec un cache TTL de 30s."""
-    now = time.monotonic()
-    if key in _dir_count_cache:
-        count, ts = _dir_count_cache[key]
-        if (now - ts) < _DIR_COUNT_TTL:
-            return count
-    count = len(list(path.rglob("*.md"))) if path.exists() else 0
-    _dir_count_cache[key] = (count, now)
-    return count
 
 from src.ui.services_cache import get_services
 from src.ui.chat_navigation import (
@@ -51,8 +37,26 @@ from src.ui.chat_sessions import (
 )
 from src.ui.components.note_bridge_component import note_bridge as _note_bridge
 from src.ui.chat_mermaid import build_mermaid_chat_preview_html, estimate_chat_mermaid_height
+from src.ui.chat_ui_fragments import (
+    build_cited_source_row_html,
+    build_generation_status_caption,
+    build_message_stats_caption,
+    build_primary_source_html,
+    build_sidebar_header_html,
+    build_source_entry_html,
+    build_user_bubble_html,
+)
 from src.ui.html_embed import render_html_document
 from src.ui.note_badges import render_note_badge
+from src.ui.chat_view_models import (
+    build_generation_summary_caption,
+    build_navigation_meta,
+    build_navigation_turn_title,
+    build_saved_conversation_meta,
+    build_saved_conversation_title,
+    build_web_sources_markdown,
+)
+from src.ui.runtime_state_store import load_processed_notes_map, load_processing_status
 from src.ui.theme import inject_theme, render_theme_toggle
 from src.ai.web_search import enrich_sync, is_not_in_vault
 
@@ -286,11 +290,7 @@ def _render_sources_block(sources: list[dict], expander_label: str, key_prefix: 
         primary_title = primary_meta.get("note_title", primary_meta.get("file_path", ""))
         primary_fp = primary_meta.get("file_path", "")
         st.markdown(
-            f"<div style='margin:0.2rem 0 0.5rem 0;display:flex;align-items:center;gap:0.5rem;'>"
-            f"<span style='font-size:0.85rem;color:inherit;'>🎯 Note principale :</span>"
-            f"{render_note_badge(primary_fp)}"
-            f"<strong>{primary_title}</strong>"
-            f"</div>",
+            build_primary_source_html(primary_title, render_note_badge(primary_fp)),
             unsafe_allow_html=True,
         )
 
@@ -299,15 +299,16 @@ def _render_sources_block(sources: list[dict], expander_label: str, key_prefix: 
             _m = src.get("metadata") or {}
             title = _m.get("note_title", _m.get("file_path", ""))
             fp = _m.get("file_path", "")
-            primary_badge = " · Principale" if _m.get("is_primary") else ""
             col_info, col_btn = st.columns([7, 1.4])
             with col_info:
                 st.markdown(
-                    f"<div style='display:flex;align-items:center;gap:0.55rem;flex-wrap:wrap;'>"
-                    f"{render_note_badge(fp)}"
-                    f"<strong>{title}</strong>"
-                    f"<span style='opacity:.72;font-size:0.82rem;'>{primary_badge} · {_m.get('date_modified','')[:10]} · Score {src.get('score',0):.2f}</span>"
-                    f"</div>",
+                    build_source_entry_html(
+                        note_title=title,
+                        note_badge_html=render_note_badge(fp),
+                        date_modified=str(_m.get("date_modified", "")),
+                        score=float(src.get("score", 0) or 0),
+                        is_primary=bool(_m.get("is_primary")),
+                    ),
                     unsafe_allow_html=True,
                 )
             with col_btn:
@@ -327,10 +328,7 @@ def _render_web_failure(web_status, web_results: list[dict], web_quality: bool, 
         web_status.warning(failure_message)
         return failure_message
 
-    sources_md = "\n".join(
-        f"- [{result.get('title', result.get('href', ''))}]({result.get('href', '')})"
-        for result in web_results
-    )
+    sources_md = build_web_sources_markdown(web_results)
     if web_quality:
         failure_message = "🌐 Des sources web ont été trouvées, mais la synthèse n'a pas pu être générée."
     else:
@@ -342,23 +340,7 @@ def _render_web_failure(web_status, web_results: list[dict], web_quality: bool, 
 
 def _render_user_bubble(text: str) -> None:
     """Rendu d'un message user : bulle alignée à droite, avatar cerveau violet ObsiRAG."""
-    escaped = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-    st.markdown(
-        f'<div style="display:flex;justify-content:flex-end;align-items:flex-start;'
-        f'gap:8px;margin:6px 0;padding:0 2px;width:100%">'
-        f'<div style="max-width:75%;'
-        f'background:var(--user-bubble-bg,#264f78);'
-        f'border:1px solid var(--user-bubble-border,#569cd6);'
-        f'border-radius:14px 4px 14px 14px;'
-        f'padding:10px 14px;'
-        f'color:var(--text-color,#d4d4d4);'
-        f'font-size:0.95rem;line-height:1.5;word-break:break-word">'
-        f'{escaped}</div>'
-        f'<div style="flex-shrink:0;margin-top:1px;filter:drop-shadow(0 1px 3px rgba(124,58,237,0.4))">'
-        f'{_BRAIN_SVG}</div>'
-        f'</div>',
-        unsafe_allow_html=True,
-    )
+    st.markdown(build_user_bubble_html(text, _BRAIN_SVG), unsafe_allow_html=True)
 
 
 def _render_chat_response(text: str, *, placeholder=None) -> None:
@@ -413,7 +395,6 @@ def _render_chat_response(text: str, *, placeholder=None) -> None:
 # ---- Statut auto-learner (fragment auto-rafraîchi toutes les 5s) ----
 @st.fragment(run_every=5)
 def _autolearn_live_status():
-    import json as _json
     from src.config import settings as _s
 
     # Compteur notes (recalculé à chaque refresh)
@@ -421,14 +402,11 @@ def _autolearn_live_status():
     _user_fps = {n["file_path"] for n in _user_notes}
     _total = len(_user_notes)
     _pf = _s.processed_notes_file
-    try:
-        _processed_map = _json.loads(_pf.read_text(encoding="utf-8")) if _pf.exists() else {}
-    except Exception:
-        _processed_map = {}
+    _processed_map = load_processed_notes_map(_pf)
     _processed = len([fp for fp in _processed_map if fp in _user_fps])
-    # Comptages filesystem avec cache TTL (évite rglob toutes les 5s)
-    _insights = _count_md_cached(_s.insights_dir, "insights")
-    _synapses = _count_md_cached(_s.synapses_dir, "synapses")
+    # Comptages via helpers Chroma (évite les scans filesystem ad hoc côté UI)
+    _insights = len(svc.chroma.list_notes_by_type("insight"))
+    _synapses = len(svc.chroma.list_notes_by_type("synapse"))
 
     if _processed < _total:
         st.progress(_processed / _total if _total else 0,
@@ -441,12 +419,8 @@ def _autolearn_live_status():
     ps = svc.learner.processing_status
     if not ps.get("log") and not ps.get("active"):
         # Lire depuis le fichier persisté si la mémoire est vide
-        try:
-            _sf = _s.processing_status_file
-            if _sf.exists():
-                ps = _json.loads(_sf.read_text(encoding="utf-8"))
-        except Exception:
-            pass
+        _sf = _s.processing_status_file
+        ps = load_processing_status(_sf) or ps
     if ps.get("active"):
         note = ps.get("note", "")
         step = ps.get("step", "")
@@ -476,15 +450,13 @@ def _autolearn_live_status():
 # ---- Sidebar ----
 with st.sidebar:
     st.markdown(
-        f'<h2 style="display:flex;align-items:center;gap:10px;margin:0">'
-        f'<img src="data:image/png;base64,{_icon_b64}" width="96" style="border-radius:4px">'
-        f'ObsiRAG</h2>',
+        build_sidebar_header_html(_icon_b64),
         unsafe_allow_html=True,
     )
     st.caption("Votre coffre Obsidian, augmenté par l'IA locale")
     st.divider()
 
-    st.metric("Notes indexées", svc.chroma.count())
+    st.metric("Notes indexées", svc.chroma.count_notes())
     st.metric("Chunks vectorisés", svc.chroma.count())
 
     # Compteur + statut auto-learner (auto-rafraîchi toutes les 5s)
@@ -577,14 +549,13 @@ with st.sidebar:
             if not nav_entries:
                 st.caption("Aucun tour ne correspond à ce filtre.")
             for entry in nav_entries:
-                st.markdown(f"**Tour {entry['turn']}** · {entry['preview']}")
-                meta_parts: list[str] = []
-                if entry.get("source_count"):
-                    meta_parts.append(f"{entry['source_count']} source(s)")
-                if entry.get("primary_source_title"):
-                    meta_parts.append(f"source: {entry['primary_source_title']}")
-                if meta_parts:
-                    st.caption(" · ".join(meta_parts))
+                st.markdown(build_navigation_turn_title(int(entry["turn"]), str(entry["preview"])))
+                meta_caption = build_navigation_meta(
+                    int(entry["source_count"]) if entry.get("source_count") else None,
+                    str(entry["primary_source_title"]) if entry.get("primary_source_title") else None,
+                )
+                if meta_caption:
+                    st.caption(meta_caption)
                 col_reuse, col_open = st.columns(2)
                 if col_reuse.button("↺ Reposer", key=f"chat_nav_reuse_{entry['turn']}", use_container_width=True):
                     st.session_state["_pending_query"] = entry["query"]
@@ -611,10 +582,7 @@ with st.sidebar:
                 st.caption("Aucune source citée pour l'instant.")
             for entry in cited_sources:
                 st.markdown(
-                    f"<div style='display:flex;align-items:center;gap:0.55rem;flex-wrap:wrap;'>"
-                    f"{render_note_badge(entry['file_path'])}"
-                    f"<strong>{entry['title']}</strong>"
-                    f"</div>",
+                    build_cited_source_row_html(entry["title"], render_note_badge(entry["file_path"])),
                     unsafe_allow_html=True,
                 )
                 st.caption(
@@ -642,8 +610,8 @@ with st.sidebar:
             if not filtered_saved:
                 st.caption("Aucune conversation ne correspond à ce filtre.")
             for entry in filtered_saved[:10]:
-                st.markdown(f"**{entry['title']}**")
-                st.caption(f"{entry['month']} · {entry['file_path']}")
+                st.markdown(build_saved_conversation_title(str(entry["title"])))
+                st.caption(build_saved_conversation_meta(str(entry["month"]), str(entry["file_path"])))
                 col_replace, col_append, col_duplicate, col_open = st.columns(4)
                 col_replace.button(
                     "↺ Remplacer",
@@ -682,9 +650,7 @@ with st.sidebar:
         c1, c2 = st.columns(2)
         c1.metric("Tokens", s["tokens"])
         c2.metric("Tok/s", f"{s['tps']:.0f}")
-        st.caption(
-            f"TTFT {s['ttft']:.1f}s · total {s['total']:.1f}s"
-        )
+        st.caption(build_generation_summary_caption(float(s["ttft"]), float(s["total"])))
 
     st.divider()
 
@@ -818,12 +784,17 @@ for mi, msg in enumerate(st.session_state.messages):
         continue
     with st.chat_message("assistant"):
         _render_chat_response(msg["content"], placeholder=None)
+        if msg.get("timeline"):
+            with st.expander("🧭 Timeline activité", expanded=False):
+                st.markdown(msg["timeline"])
         if msg.get("stats"):
             s = msg["stats"]
-            st.caption(
-                f"⚡ {s['tokens']} tokens · TTFT {s['ttft']:.1f}s · "
-                f"{s['total']:.1f}s total · {s['tps']:.0f} tok/s"
-            )
+            st.caption(build_message_stats_caption(
+                int(s.get("tokens", 0)),
+                float(s.get("ttft", 0.0)),
+                float(s.get("total", 0.0)),
+                float(s.get("tps", 0.0)),
+            ))
         _hist_not_in_vault = msg.get("content", "").strip().lower().startswith(
             "cette information n'est pas dans ton coffre"
         )
@@ -1007,6 +978,7 @@ if _pending_web:
                 "content": web_full,
                 "sources": [],
                 "stats": {},
+                "timeline": "",
             })
             _persist_active_chat_thread()
         else:
@@ -1016,6 +988,7 @@ if _pending_web:
                 "content": failure_message,
                 "sources": [],
                 "stats": {},
+                "timeline": "",
             })
             _persist_active_chat_thread()
 
@@ -1045,13 +1018,102 @@ if user_input:
         first_token_time: float | None = None
         sources: list = []
         gen_stats: dict = {}
+        ttft_val = 0.0
+        total = 0.0
+        tps_val = 0.0
+        timeline_entries: list[str] = []
+        timeline_lock = threading.Lock()
 
         t0 = time.perf_counter()
 
+        def _push_timeline(message: str) -> None:
+            if not message:
+                return
+            elapsed = time.perf_counter() - t0
+            entry = f"- `{elapsed:.1f}s` {message}"
+            with timeline_lock:
+                if timeline_entries and timeline_entries[-1].endswith(message):
+                    return
+                timeline_entries.append(entry)
+
         try:
             # Phase 1 — récupération RAG
-            status.markdown("🔍 *Recherche dans le coffre…*")
-            stream, sources = svc.rag.query_stream(user_input, chat_history=history)
+            retrieval_started_at = time.perf_counter()
+            progress_lock = threading.Lock()
+            progress_state: dict[str, object] = {
+                "message": "Recherche dans le coffre",
+                "phase": "retrieval",
+            }
+            phase_order = ("resolve", "retrieval", "context", "generation")
+            phase_labels = {
+                "resolve": "Analyse de la requête",
+                "retrieval": "Recherche dans le coffre",
+                "context": "Préparation du contexte",
+                "generation": "Génération MLX",
+            }
+
+            def _on_rag_progress(event: dict) -> None:
+                if not isinstance(event, dict):
+                    return
+                message = str(event.get("message") or "").strip()
+                if not message:
+                    return
+                phase = str(event.get("phase") or "retrieval")
+                phase_label = phase_labels.get(phase, "Activité")
+                _push_timeline(f"{phase_label} — {message}")
+                with progress_lock:
+                    progress_state.update(event)
+                    progress_state["message"] = message
+
+            def _supports_progress_callback(fn) -> bool:
+                try:
+                    params = inspect.signature(fn).parameters
+                except (TypeError, ValueError):
+                    return False
+                return "progress_callback" in params
+
+            def _run_query_stream_with_compat() -> tuple[object, list]:
+                rag_query_stream = svc.rag.query_stream
+                if _supports_progress_callback(rag_query_stream):
+                    try:
+                        return rag_query_stream(
+                            user_input,
+                            chat_history=history,
+                            progress_callback=_on_rag_progress,
+                        )
+                    except TypeError as exc:
+                        if "progress_callback" not in str(exc):
+                            raise
+                with progress_lock:
+                    progress_state["message"] = "Recherche dans le coffre (mode compatibilité)"
+                _push_timeline("Recherche dans le coffre — mode compatibilité")
+                return rag_query_stream(user_input, chat_history=history)
+
+            with ThreadPoolExecutor(max_workers=1) as pool:
+                retrieval_future = pool.submit(_run_query_stream_with_compat)
+                while not retrieval_future.done():
+                    elapsed = time.perf_counter() - retrieval_started_at
+                    with progress_lock:
+                        snapshot = dict(progress_state)
+                    status_message = str(snapshot.get("message") or "Recherche dans le coffre")
+                    dots = "." * ((int(elapsed * 2) % 3) + 1)
+                    status.markdown(
+                        f"🔍 *{status_message}{dots}*  \n"
+                        f"`{elapsed:.1f}s`"
+                    )
+                    time.sleep(0.2)
+                stream, sources = retrieval_future.result()
+            retrieval_elapsed = time.perf_counter() - retrieval_started_at
+            with progress_lock:
+                end_snapshot = dict(progress_state)
+            retrieved_chunks = int(end_snapshot.get("chunk_count") or len(sources))
+            retrieved_intent = str(end_snapshot.get("intent") or "")
+            intent_suffix = f" · intent `{retrieved_intent}`" if retrieved_intent else ""
+            status.markdown(
+                f"✅ *Contexte récupéré en {retrieval_elapsed:.1f}s*  \n"
+                f"`{retrieved_chunks} passage(s){intent_suffix}`"
+            )
+            _push_timeline(f"Contexte récupéré — {retrieved_chunks} passage(s){intent_suffix}")
 
             # Progression des notes dans le contexte
             seen: list[str] = []
@@ -1071,12 +1133,14 @@ if user_input:
                 f"{ctx_notes} note{'s' if ctx_notes > 1 else ''} · "
                 f"~{ctx_chars:,} caractères*"
             )
+            _push_timeline("Génération MLX — chargement du contexte")
 
             for token in stream:
                 if first_token_time is None:
                     first_token_time = time.perf_counter()
                     ttft = first_token_time - t0
                     status.markdown(f"⚡ *Génération en cours · premier token en {ttft:.1f}s*")
+                    _push_timeline(f"Génération MLX — premier token en {ttft:.1f}s")
 
                 full_response += token
                 token_count += 1
@@ -1102,25 +1166,14 @@ if user_input:
                 "total": total,
                 "tps": tps_val,
             }
-            status.caption(
-                f"✅ {token_count} tokens · "
-                f"TTFT {ttft_val:.1f}s · "
-                f"{total:.1f}s total · "
-                f"{tps_val:.0f} tok/s"
-            )
+            _push_timeline(f"Réponse finalisée — {token_count} token(s)")
+            status.caption(build_generation_status_caption(token_count, ttft_val, total, tps_val))
 
         except Exception as exc:
             full_response = f"❌ Erreur : {exc}"
             response_area.error(full_response)
             status.empty()
             sources = []
-
-        status.caption(
-                f"✅ {token_count} tokens · "
-                f"TTFT {ttft_val:.1f}s · "
-                f"{total:.1f}s total · "
-                f"{tps_val:.0f} tok/s"
-            )
 
         # Sources — dédupliquées par note (file_path), une seule entrée par note
         # Ne pas afficher les sources seulement si la réponse est un sentinel pur.
@@ -1138,6 +1191,14 @@ if user_input:
 
         # Bouton "Rechercher sur le web" — disponible après chaque réponse (hors résultat web)
         _is_web_result = full_response.startswith("🌐 **Résultat")
+
+        # Timeline activité — affichée après la réponse, expandée par défaut
+        with timeline_lock:
+            _timeline_now = "\n".join(timeline_entries[:16])
+        if _timeline_now:
+            with st.expander("🧭 Timeline activité", expanded=False):
+                st.markdown(_timeline_now)
+
         if not _response_is_sentinel and not _is_web_result:
             def _trigger_web_search(_q=user_input):
                 st.session_state["_pending_web_query"] = _q
@@ -1148,11 +1209,14 @@ if user_input:
             )
 
     # Sauvegarde dans l'historique et les stats sidebar
+    with timeline_lock:
+        timeline_text = "\n".join(timeline_entries[:16])
     st.session_state.messages.append({
         "role": "assistant",
         "content": full_response,
         "sources": sources[:8],
         "stats": gen_stats,
+        "timeline": timeline_text,
     })
     _persist_active_chat_thread()
     if gen_stats:
@@ -1188,6 +1252,7 @@ if user_input:
                     "content": web_full,
                     "sources": [],
                     "stats": {},
+                    "timeline": "",
                 })
                 _persist_active_chat_thread()
             else:
@@ -1197,6 +1262,7 @@ if user_input:
                     "content": failure_message,
                     "sources": [],
                     "stats": {},
+                    "timeline": "",
                 })
                 _persist_active_chat_thread()
     else:

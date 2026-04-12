@@ -652,6 +652,18 @@ class TestRAGQueryStreamAdvanced:
         assert list(stream) == ["Cette information n'est pas dans ton coffre."]
         assert sources == []
 
+    def test_query_stream_emits_progress_events(self, rag):
+        chunks = [_make_chunk(title="Python")]
+        events: list[dict] = []
+
+        with patch.object(rag, "_retrieve", return_value=(chunks, "general")):
+            stream, _ = rag.query_stream("Explique Python", progress_callback=events.append)
+
+        assert "".join(stream)
+        assert any(event.get("phase") == "resolve" for event in events)
+        assert any(event.get("phase") == "retrieval" and event.get("chunk_count") == 1 for event in events)
+        assert any(event.get("phase") == "generation" for event in events)
+
     def test_stream_returns_normalized_answer_for_synthesis_intent(self, rag, mock_llm):
         chunks = [_make_chunk(title="Python pour data science", text="Python et pandas.", fp="python.md")]
         mock_llm.chat.return_value = (

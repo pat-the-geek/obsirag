@@ -6,6 +6,8 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+from src.storage.safe_read import read_json_file
+
 
 class JsonStateStore:
     def __init__(self, path: Path, *, os_module=os, tempfile_module=tempfile) -> None:
@@ -16,10 +18,7 @@ class JsonStateStore:
     def load(self, default: Any):
         if not self._path.exists():
             return default
-        try:
-            return json.loads(self._path.read_text(encoding="utf-8"))
-        except Exception:
-            return default
+        return read_json_file(self._path, default=default)
 
     def save(self, value: Any, *, ensure_ascii: bool = False, indent: int | None = None) -> None:
         self._path.parent.mkdir(parents=True, exist_ok=True)

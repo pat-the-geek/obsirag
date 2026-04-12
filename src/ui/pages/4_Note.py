@@ -9,8 +9,8 @@ from pathlib import Path
 
 import streamlit as st
 
-from src.ui.chroma_compat import get_backlinks, list_notes_sorted_by_title
 from src.config import settings
+from src.storage.safe_read import read_text_file
 from src.ui.html_embed import render_html_document, run_inline_script
 from src.ui.mermaid_embed import build_mermaid_html_document, estimate_mermaid_height
 from src.ui.note_viewer import (
@@ -21,6 +21,11 @@ from src.ui.note_viewer import (
     make_note_anchor,
 )
 from src.ui.note_badges import prefix_note_label, render_note_badge
+from src.ui.note_ui_fragments import (
+    build_obsidian_open_link_html,
+    build_outline_item_html,
+    build_search_match_html,
+)
 
 from src.ui.services_cache import get_services
 from src.ui.theme import inject_theme, render_theme_toggle
@@ -79,7 +84,7 @@ def render_note(content: str, anchor_lines: set[int] | None = None) -> None:
 # Sidebar — sélecteur de note
 # ---------------------------------------------------------------------------
 
-notes = list_notes_sorted_by_title(svc.chroma)
+notes = svc.chroma.list_notes_sorted_by_title()
 notes_by_path = {note["file_path"]: note for note in notes}
 
 with st.sidebar:
@@ -175,12 +180,7 @@ with col_title:
     st.markdown(render_note_badge(selected_fp), unsafe_allow_html=True)
     st.caption(f"`{selected_fp}`")
     st.markdown(
-        f'<a href="{_obsidian_url}" target="_blank" style="'
-        'display:inline-flex;align-items:center;gap:6px;'
-        'background:#7C3AED;color:#fff;border-radius:6px;'
-        'padding:4px 12px;font-size:13px;font-weight:600;'
-        'text-decoration:none;">'
-        '🟣 Ouvrir dans Obsidian</a>',
+        build_obsidian_open_link_html(_obsidian_url),
         unsafe_allow_html=True,
     )
 with col_meta:
@@ -192,7 +192,7 @@ with col_meta:
 st.divider()
 
 # Contenu
-content = note_abs.read_text(encoding="utf-8", errors="replace")
+content = read_text_file(note_abs, default="", errors="replace")
 outline = extract_note_outline(content)
 local_search = st.text_input("🔎 Rechercher dans cette note", placeholder="Titre de section ou texte…")
 matches = find_note_matches(content, local_search) if local_search.strip() else []
@@ -203,7 +203,7 @@ summary_cols = st.columns(4)
 summary_cols[0].metric("Sections", len(outline))
 summary_cols[1].metric("Diagrammes", count_mermaid_blocks(content))
 summary_cols[2].metric("Liens sortants", len(wikilinks))
-backlinks = get_backlinks(svc.chroma, selected_fp)
+backlinks = svc.chroma.get_backlinks(selected_fp)
 summary_cols[3].metric("Rétroliens", len(backlinks))
 
 if outline:
@@ -211,9 +211,8 @@ if outline:
         for index, item in enumerate(outline[:30]):
             anchor_id = make_note_anchor(int(item["line"]))
             col_info, col_button = st.columns([8, 1])
-            indent = "&nbsp;" * max(0, (int(item["level"]) - 1) * 4)
             col_info.markdown(
-                f"{indent}<strong>{item['title']}</strong> <span style='opacity:.6'>(ligne {item['line']})</span>",
+                build_outline_item_html(item["title"], int(item["line"]), int(item["level"])),
                 unsafe_allow_html=True,
             )
             if col_button.button("↘", key=f"outline_jump_{index}_{item['line']}", help="Aller à cette section"):
@@ -227,7 +226,7 @@ if local_search.strip():
                 anchor_id = make_note_anchor(int(match["line"]))
                 col_info, col_button = st.columns([8, 1])
                 col_info.markdown(
-                    f"<strong>{match['section']}</strong> · ligne {match['line']}<br>{match['snippet']}",
+                    build_search_match_html(match["section"], int(match["line"]), match["snippet"]),
                     unsafe_allow_html=True,
                 )
                 if col_button.button("↘", key=f"search_jump_{index}_{match['line']}", help="Aller à cet extrait"):

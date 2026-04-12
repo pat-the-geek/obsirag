@@ -65,6 +65,30 @@ class TestAutoLearnNoteRenamer:
         assert "[[New Title#Section]]" in content
         owner._indexer.index_note.assert_called_once_with(linked)
 
+    def test_update_vault_wikilinks_prefers_indexed_note_list_when_available(self, tmp_path):
+        owner = MagicMock()
+        owner._chroma.list_notes.return_value = [
+            {"file_path": "Linked.md"},
+            {"file_path": "missing.md"},
+        ]
+        renamer = AutoLearnNoteRenamer(owner)
+        target = tmp_path / "New Title.md"
+        target.write_text("skip", encoding="utf-8")
+        linked = tmp_path / "Linked.md"
+        linked.write_text("[[Old Title]]", encoding="utf-8")
+
+        updated_files = renamer._update_vault_wikilinks(
+            tmp_path,
+            "Old Title",
+            "New Title",
+            skip_file=target,
+        )
+
+        assert updated_files == 1
+        assert "[[New Title]]" in linked.read_text(encoding="utf-8")
+        owner._chroma.list_notes.assert_called_once()
+        owner._metrics.increment.assert_not_called()
+
     def test_migrate_processed_map_moves_existing_entry(self, tmp_path):
         owner = MagicMock()
         owner._load_processed.return_value = {"Old Title.md": "2026-04-11T10:00:00"}
@@ -76,3 +100,20 @@ class TestAutoLearnNoteRenamer:
         renamer._migrate_processed_map(tmp_path, "Old Title.md", new_abs)
 
         owner._save_processed.assert_called_once_with({"folder/New Title.md": "2026-04-11T10:00:00"})
+
+    def test_iter_markdown_candidates_records_rglob_fallback_metrics(self, tmp_path):
+        owner = MagicMock()
+        owner._chroma.list_notes.return_value = []
+        renamer = AutoLearnNoteRenamer(owner)
+        (tmp_path / "a.md").write_text("A", encoding="utf-8")
+        (tmp_path / "nested").mkdir(parents=True, exist_ok=True)
+        (tmp_path / "nested" / "b.md").write_text("B", encoding="utf-8")
+
+        paths = renamer._iter_markdown_candidates(tmp_path)
+
+        assert len(paths) == 2
+        owner._metrics.increment.assert_any_call("autolearn_fs_fallback_rename_rglob_total")
+        owner._metrics.observe.assert_called()
+        metric_name, metric_value = owner._metrics.observe.call_args[0]
+        assert metric_name == "autolearn_fs_fallback_rename_rglob_seconds"
+        assert float(metric_value) >= 0.0

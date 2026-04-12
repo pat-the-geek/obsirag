@@ -6,6 +6,7 @@ ce qui évite le disque, le modèle sentence-transformers et les ports réseau.
 """
 from __future__ import annotations
 
+import os
 import sqlite3
 import tempfile
 import time
@@ -21,6 +22,13 @@ from src.indexer.chunker import Chunk
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+_IS_CI = os.environ.get("CI", "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _perf_threshold(local_value: float, *, ci_factor: float = 4.0) -> float:
+    """Seuil perf robuste local/CI pour limiter les faux positifs de timing."""
+    return local_value * ci_factor if _IS_CI else local_value
 
 def _make_chunk(idx: int, file_hash: str = "abc", file_path: str = "note.md") -> Chunk:
     from datetime import datetime
@@ -84,6 +92,8 @@ def _make_chroma_store(tmp_path):
     store._collection = collection
     store._list_notes_cache = None
     store._list_notes_ts = 0.0
+    store._note_views_cache = None
+    store._note_views_ts = 0.0
     store._count_cache = None
     store._count_ts = 0.0
 
@@ -95,12 +105,17 @@ def _make_chroma_store(tmp_path):
         "search_by_tags", "search_by_entity", "search_by_keyword",
         "search_by_date_range", "find_similar_notes",
         "get_notes_by_file_paths", "get_note_by_file_path", "list_user_notes",
+        "list_generated_notes", "list_notes_sorted_by_title", "list_recent_notes",
+        "count_notes", "list_note_folders", "list_note_tags", "list_notes_by_type",
+        "list_insight_notes", "list_synapse_notes", "list_report_notes", "get_backlinks",
     ]:
         real_method = getattr(ChromaStore, method)
         setattr(store, method, lambda *a, m=real_method, s=store, **kw: m(s, *a, **kw))
 
     # Les méthodes statiques/privées doivent aussi être accessibles via l'instance mock
     store._format_results = ChromaStore._format_results
+    store._build_note_views = lambda *a, s=store, **kw: ChromaStore._build_note_views(s, *a, **kw)
+    store._get_note_views = lambda *a, s=store, **kw: ChromaStore._get_note_views(s, *a, **kw)
 
     return store
 
@@ -287,6 +302,37 @@ class TestChromaNoteHelpers:
 
         assert note == {"file_path": "a.md", "title": "A"}
 
+    def test_get_notes_by_file_paths_uses_derived_index_when_available(self):
+        from src.database.chroma_store import ChromaStore
+
+        chroma = MagicMock()
+        chroma._get_note_views.return_value = {
+            "by_file_path": {
+                "a.md": {"file_path": "a.md", "title": "A"},
+                "c.md": {"file_path": "c.md", "title": "C"},
+            }
+        }
+
+        notes = ChromaStore.get_notes_by_file_paths(chroma, ["a.md", "c.md"])
+
+        assert [note["file_path"] for note in notes] == ["a.md", "c.md"]
+        chroma._get_note_views.assert_called_once()
+
+    def test_get_note_by_file_path_uses_derived_index_when_available(self):
+        from src.database.chroma_store import ChromaStore
+
+        chroma = MagicMock()
+        chroma._get_note_views.return_value = {
+            "by_file_path": {
+                "a.md": {"file_path": "a.md", "title": "A"},
+            }
+        }
+
+        note = ChromaStore.get_note_by_file_path(chroma, "a.md")
+
+        assert note == {"file_path": "a.md", "title": "A"}
+        chroma._get_note_views.assert_called_once()
+
     def test_list_user_notes_filters_obsirag_generated_paths(self, chroma):
         from src.database.chroma_store import ChromaStore
 
@@ -386,6 +432,87 @@ class TestChromaNoteHelpers:
         ])
 
         assert ChromaStore.list_note_tags(chroma) == ["ia", "ml", "python"]
+
+    def test_list_notes_by_type_filters_generated_artifacts_by_path(self, chroma):
+        from src.database.chroma_store import ChromaStore
+
+        chroma.list_notes = MagicMock(return_value=[
+            {"file_path": "notes/a.md", "title": "A"},
+            {"file_path": "obsirag/insights/alpha.md", "title": "Insight"},
+            {"file_path": "obsirag/synapses/link.md", "title": "Synapse"},
+            {"file_path": "obsirag/synthesis/week.md", "title": "Report"},
+        ])
+
+        assert [note["file_path"] for note in ChromaStore.list_notes_by_type(chroma, "insight")] == [
+            "obsirag/insights/alpha.md"
+        ]
+        assert [note["file_path"] for note in ChromaStore.list_notes_by_type(chroma, "synapse")] == [
+            "obsirag/synapses/link.md"
+        ]
+        assert [note["file_path"] for note in ChromaStore.list_notes_by_type(chroma, "report")] == [
+            "obsirag/synthesis/week.md"
+        ]
+
+    def test_list_insight_synapse_and_report_notes_delegate_to_type_helper(self, chroma):
+        from src.database.chroma_store import ChromaStore
+
+        chroma.list_notes_by_type = MagicMock(side_effect=lambda note_type: [{"file_path": f"{note_type}.md"}])
+
+        assert ChromaStore.list_insight_notes(chroma) == [{"file_path": "insight.md"}]
+        assert ChromaStore.list_synapse_notes(chroma) == [{"file_path": "synapse.md"}]
+        assert ChromaStore.list_report_notes(chroma) == [{"file_path": "report.md"}]
+
+    def test_derived_note_views_reuse_single_list_notes_snapshot(self):
+        from src.database.chroma_store import ChromaStore
+
+        store = MagicMock()
+        store._note_views_cache = None
+        store._note_views_ts = 0.0
+        store.list_notes = MagicMock(return_value=[
+            {
+                "file_path": "notes/a.md",
+                "title": "Alpha",
+                "date_modified": "2026-04-03T10:00:00",
+                "tags": ["ia"],
+                "wikilinks": ["Target"],
+            },
+            {
+                "file_path": "obsirag/insights/b.md",
+                "title": "Beta",
+                "date_modified": "2026-04-01T10:00:00",
+                "tags": ["ml"],
+                "wikilinks": [],
+            },
+            {
+                "file_path": "notes/Target.md",
+                "title": "Target",
+                "date_modified": "",
+                "tags": [],
+                "wikilinks": [],
+            },
+        ])
+        store._build_note_views = lambda *a, s=store, **kw: ChromaStore._build_note_views(s, *a, **kw)
+        store._get_note_views = lambda *a, s=store, **kw: ChromaStore._get_note_views(s, *a, **kw)
+
+        assert ChromaStore.count_notes(store) == 3
+        assert ChromaStore.list_note_folders(store) == ["notes", "obsirag/insights"]
+        assert [note["file_path"] for note in ChromaStore.list_notes_by_type(store, "insight")] == ["obsirag/insights/b.md"]
+        assert [note["file_path"] for note in ChromaStore.get_backlinks(store, "notes/Target.md")] == ["notes/a.md"]
+        assert store.list_notes.call_count == 1
+
+    def test_invalidate_list_notes_cache_resets_derived_views_cache(self):
+        from src.database.chroma_store import ChromaStore
+
+        store = MagicMock()
+        store._list_notes_ts = 12.0
+        store._note_views_ts = 12.0
+        store._count_ts = 12.0
+
+        ChromaStore.invalidate_list_notes_cache(store)
+
+        assert store._list_notes_ts == 0.0
+        assert store._note_views_ts == 0.0
+        assert store._count_ts == 0.0
 
     def test_keyword_partial_match(self, chroma):
         chroma.add_chunks([_make_chunk(0)])
@@ -815,6 +942,176 @@ class TestChromaAdvancedBranches:
         assert formatted == [{"chunk_id": "a", "text": "doc", "metadata": {}, "score": 0.8}]
 
 
+# ---------------------------------------------------------------------------
+# Tests de non-régression — vues dérivées de list_notes()
+# ---------------------------------------------------------------------------
+
+@pytest.mark.unit
+class TestChromaDerivedViewsNonRegression:
+    """Garantit que les vues dérivées n'invoquent PAS list_notes() plus d'une fois."""
+
+    @staticmethod
+    def _make_store(notes: list[dict]):
+        from src.database.chroma_store import ChromaStore
+        store = MagicMock()
+        store._note_views_cache = None
+        store._note_views_ts = 0.0
+        store._list_notes_ts = 0.0
+        store._count_ts = 0.0
+        store.list_notes = MagicMock(return_value=notes)
+        store._build_note_views = lambda *a, s=store, **kw: ChromaStore._build_note_views(s, *a, **kw)
+        store._get_note_views = lambda *a, s=store, **kw: ChromaStore._get_note_views(s, *a, **kw)
+        # Bind derived helpers so self.list_notes_by_type etc. resolve to real methods
+        for _mname in (
+            "count_notes", "list_note_folders", "list_note_tags",
+            "list_notes_sorted_by_title", "list_recent_notes", "list_notes_by_type",
+            "list_user_notes", "list_generated_notes", "list_insight_notes",
+            "list_synapse_notes", "list_report_notes", "get_backlinks",
+        ):
+            _real = getattr(ChromaStore, _mname)
+            setattr(store, _mname, lambda *a, m=_real, s=store, **kw: m(s, *a, **kw))
+        return store
+
+    def test_all_nine_derived_helpers_share_single_snapshot(self):
+        """9 helpers dérivés appelés en séquence → list_notes() appelé exactement une fois."""
+        from src.database.chroma_store import ChromaStore
+
+        notes = [
+            {
+                "file_path": "notes/a.md",
+                "title": "Alpha",
+                "date_modified": "2026-04-03T10:00:00",
+                "tags": ["ia", "ml"],
+                "wikilinks": ["b"],  # stem de obsirag/insights/b.md
+            },
+            {
+                "file_path": "obsirag/insights/b.md",
+                "title": "Beta",
+                "date_modified": "2026-04-01T10:00:00",
+                "tags": ["ml"],
+                "wikilinks": [],
+            },
+            {
+                "file_path": "obsirag/synapses/c.md",
+                "title": "Gamma",
+                "date_modified": "2026-04-02T12:00:00",
+                "tags": [],
+                "wikilinks": [],
+            },
+        ]
+        store = self._make_store(notes)
+
+        ChromaStore.count_notes(store)
+        ChromaStore.list_note_folders(store)
+        ChromaStore.list_note_tags(store)
+        ChromaStore.list_notes_sorted_by_title(store)
+        ChromaStore.list_recent_notes(store)
+        ChromaStore.list_notes_by_type(store, "insight")
+        ChromaStore.list_user_notes(store)
+        ChromaStore.list_generated_notes(store)
+        ChromaStore.get_backlinks(store, "obsirag/insights/b.md")
+
+        assert store.list_notes.call_count == 1, (
+            f"list_notes() invoqué {store.list_notes.call_count} fois au lieu de 1 — "
+            "régression : une vue dérivée ne réutilise pas le snapshot partagé."
+        )
+
+    def test_repeated_calls_to_same_helper_stay_cached(self):
+        """100 appels consécutifs à count_notes() → list_notes() toujours invoqué une seule fois."""
+        from src.database.chroma_store import ChromaStore
+
+        store = self._make_store([
+            {"file_path": f"n{i}.md", "title": f"N{i}", "date_modified": "", "tags": [], "wikilinks": []}
+            for i in range(50)
+        ])
+
+        for _ in range(100):
+            ChromaStore.count_notes(store)
+
+        assert store.list_notes.call_count == 1
+
+    def test_invalidation_then_two_helpers_trigger_exactly_one_rebuild(self):
+        """Après invalidation, le premier accès déclenche exactement un rebuild.
+        Les accès suivants (dans le TTL) réutilisent ce snapshot."""
+        from src.database.chroma_store import ChromaStore
+
+        store = self._make_store([
+            {"file_path": "n.md", "title": "N", "date_modified": "", "tags": [], "wikilinks": []},
+        ])
+
+        # Warm
+        ChromaStore.count_notes(store)
+        assert store.list_notes.call_count == 1
+
+        # Invalider
+        ChromaStore.invalidate_list_notes_cache(store)
+
+        # Accès multiples après invalidation
+        ChromaStore.count_notes(store)
+        ChromaStore.list_note_folders(store)
+        ChromaStore.list_note_tags(store)
+        ChromaStore.list_notes_sorted_by_title(store)
+
+        assert store.list_notes.call_count == 2, (
+            f"list_notes() invoqué {store.list_notes.call_count} fois — "
+            "doit être 2 exactement (1 warm + 1 rebuild post-invalidation)."
+        )
+
+    def test_insight_synapse_report_helpers_all_use_shared_snapshot(self):
+        """list_insight_notes, list_synapse_notes, list_report_notes partagent le même snapshot."""
+        from src.database.chroma_store import ChromaStore
+
+        notes = [
+            {"file_path": "obsirag/insights/i.md", "title": "I", "date_modified": "", "tags": [], "wikilinks": []},
+            {"file_path": "obsirag/synapses/s.md", "title": "S", "date_modified": "", "tags": [], "wikilinks": []},
+            {"file_path": "obsirag/synthesis/r.md", "title": "R", "date_modified": "", "tags": [], "wikilinks": []},
+            {"file_path": "notes/u.md", "title": "U", "date_modified": "", "tags": [], "wikilinks": []},
+        ]
+        store = self._make_store(notes)
+
+        insights = ChromaStore.list_insight_notes(store)
+        synapses = ChromaStore.list_synapse_notes(store)
+        reports = ChromaStore.list_report_notes(store)
+        users = ChromaStore.list_user_notes(store)
+
+        assert [n["file_path"] for n in insights] == ["obsirag/insights/i.md"]
+        assert [n["file_path"] for n in synapses] == ["obsirag/synapses/s.md"]
+        assert [n["file_path"] for n in reports] == ["obsirag/synthesis/r.md"]
+        assert [n["file_path"] for n in users] == ["notes/u.md"]
+        assert store.list_notes.call_count == 1
+
+    def test_get_note_views_results_are_consistent(self):
+        """Les vues dérivées produced par le snapshot sont cohérentes entre elles."""
+        from src.database.chroma_store import ChromaStore
+
+        notes = [
+            {
+                "file_path": "folder/a.md",
+                "title": "Alpha",
+                "date_modified": "2026-04-03T10:00:00",
+                "tags": ["x", "y"],
+                "wikilinks": ["b"],  # stem de folder/b.md
+            },
+            {
+                "file_path": "folder/b.md",
+                "title": "Beta",
+                "date_modified": "2026-04-01T10:00:00",
+                "tags": ["y", "z"],
+                "wikilinks": [],
+            },
+        ]
+        store = self._make_store(notes)
+
+        assert ChromaStore.count_notes(store) == 2
+        assert ChromaStore.list_note_folders(store) == ["folder"]
+        assert ChromaStore.list_note_tags(store) == ["x", "y", "z"]
+        titles = [n["title"] for n in ChromaStore.list_notes_sorted_by_title(store)]
+        assert titles == ["Alpha", "Beta"]
+        recent = ChromaStore.list_recent_notes(store, limit=1)
+        assert recent[0]["file_path"] == "folder/a.md"
+        backlinks = ChromaStore.get_backlinks(store, "folder/b.md")
+        assert [n["file_path"] for n in backlinks] == ["folder/a.md"]
+
 
 # ---------------------------------------------------------------------------
 # Tests de performance — ChromaStore
@@ -867,3 +1164,112 @@ class TestChromaPerformance:
         with perf_timer.measure("add_1000_chunks", max_seconds=30.0):
             chroma.add_chunks(chunks)
         assert chroma.count() == 1000
+
+    def test_derived_view_cache_hit_under_100us(self):
+        """Après warm-up, un appel de vue dérivée (cache hit) doit prendre <100µs."""
+        from src.database.chroma_store import ChromaStore
+
+        notes = [
+            {"file_path": f"n{i}.md", "title": f"Note {i}", "date_modified": "", "tags": [f"t{i % 5}"], "wikilinks": []}
+            for i in range(200)
+        ]
+        store = MagicMock()
+        store._note_views_cache = None
+        store._note_views_ts = 0.0
+        store.list_notes = MagicMock(return_value=notes)
+        store._build_note_views = lambda *a, s=store, **kw: ChromaStore._build_note_views(s, *a, **kw)
+        store._get_note_views = lambda *a, s=store, **kw: ChromaStore._get_note_views(s, *a, **kw)
+
+        # Warm
+        ChromaStore.count_notes(store)
+        assert store._note_views_cache is not None
+
+        N = 200
+        t0 = time.perf_counter()
+        for _ in range(N):
+            ChromaStore.count_notes(store)
+        per_call = (time.perf_counter() - t0) / N
+
+        threshold = _perf_threshold(100e-6, ci_factor=6.0)
+        assert per_call < threshold, (
+            "Vue dérivée (cache hit) trop lente : "
+            f"{per_call * 1e6:.1f}µs/appel — seuil {threshold * 1e6:.1f}µs"
+        )
+        # list_notes() invoqué exactement une fois (le warm initial)
+        assert store.list_notes.call_count == 1
+
+    def test_build_note_views_for_500_notes_under_200ms(self):
+        """Construction du snapshot dérivé (_build_note_views) pour 500 notes < 200ms."""
+        from src.database.chroma_store import ChromaStore
+
+        notes = [
+            {
+                "file_path": f"notes/n{i}.md",
+                "title": f"Note {i}",
+                "date_modified": "2026-04-01T10:00:00",
+                "tags": [f"tag{i % 8}"],
+                "wikilinks": [f"n{(i + 1) % 500}"],
+            }
+            for i in range(500)
+        ]
+        store = MagicMock()
+        store._note_views_cache = None
+        store._note_views_ts = 0.0
+        store.list_notes = MagicMock(return_value=notes)
+        store._build_note_views = lambda *a, s=store, **kw: ChromaStore._build_note_views(s, *a, **kw)
+        store._get_note_views = lambda *a, s=store, **kw: ChromaStore._get_note_views(s, *a, **kw)
+
+        t0 = time.perf_counter()
+        views = ChromaStore._get_note_views(store)
+        elapsed = time.perf_counter() - t0
+
+        threshold = _perf_threshold(0.2, ci_factor=3.0)
+        assert elapsed < threshold, (
+            "_build_note_views() trop lent pour 500 notes : "
+            f"{elapsed * 1000:.1f}ms — seuil {threshold * 1000:.1f}ms"
+        )
+        assert views["count_notes"] == 500
+        assert len(views["folders"]) > 0
+
+    def test_nine_derived_helpers_after_warm_stay_under_500us_total(self):
+        """9 helpers dérivés appelés en cache hit ← <500µs au total."""
+        from src.database.chroma_store import ChromaStore
+
+        notes = [
+            {
+                "file_path": f"folder/n{i}.md",
+                "title": f"Note {i}",
+                "date_modified": "2026-04-01T10:00:00",
+                "tags": [f"t{i % 3}"],
+                "wikilinks": [f"n{(i + 1) % 100}"],
+            }
+            for i in range(100)
+        ]
+        store = MagicMock()
+        store._note_views_cache = None
+        store._note_views_ts = 0.0
+        store.list_notes = MagicMock(return_value=notes)
+        store._build_note_views = lambda *a, s=store, **kw: ChromaStore._build_note_views(s, *a, **kw)
+        store._get_note_views = lambda *a, s=store, **kw: ChromaStore._get_note_views(s, *a, **kw)
+
+        # Warm
+        ChromaStore.count_notes(store)
+
+        t0 = time.perf_counter()
+        ChromaStore.count_notes(store)
+        ChromaStore.list_note_folders(store)
+        ChromaStore.list_note_tags(store)
+        ChromaStore.list_notes_sorted_by_title(store)
+        ChromaStore.list_recent_notes(store)
+        ChromaStore.list_notes_by_type(store, "user")
+        ChromaStore.list_user_notes(store)
+        ChromaStore.list_generated_notes(store)
+        ChromaStore.get_backlinks(store, "folder/n0.md")
+        elapsed = time.perf_counter() - t0
+
+        threshold = _perf_threshold(500e-6, ci_factor=8.0)
+        assert elapsed < threshold, (
+            "9 helpers dérivés (cache hit) trop lents : "
+            f"{elapsed * 1000:.2f}ms — seuil {threshold * 1000:.2f}ms"
+        )
+

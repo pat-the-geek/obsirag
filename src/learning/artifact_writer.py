@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import re
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from loguru import logger
+
+from src.storage.safe_read import read_text_file
 
 if TYPE_CHECKING:
     from src.learning.autolearn import AutoLearner
@@ -108,25 +111,79 @@ class AutoLearnArtifactWriter:
         safe_name = re.sub(r"[^\w\s-]", "", note_title).strip().replace(" ", "_")[:60].lower()
         new_ner_set = {tag for tag in ner_tags if "/" in tag}
 
+        candidate_paths: list[Path] = []
+        list_insight_notes = getattr(self._owner._chroma, "list_insight_notes", None)
+        if callable(list_insight_notes):
+            try:
+                notes = list_insight_notes()
+                if isinstance(notes, list):
+                    vault_root = self._owner._get_settings().vault
+                    candidate_paths = [
+                        vault_root / note["file_path"]
+                        for note in notes
+                        if isinstance(note, dict) and note.get("file_path")
+                    ]
+            except Exception:
+                candidate_paths = []
+        if not candidate_paths:
+            # Prefer shallow monthly layout first (obsirag/insights/YYYY-MM/*.md), then fallback.
+            fallback_started_at = time.perf_counter()
+            candidate_paths = list(insights_root.glob("*/*.md"))
+            self._record_metric(
+                "autolearn_fs_fallback_insight_glob_total",
+                elapsed=time.perf_counter() - fallback_started_at,
+                observe_metric="autolearn_fs_fallback_insight_glob_seconds",
+            )
+            if not candidate_paths:
+                fallback_started_at = time.perf_counter()
+                candidate_paths = list(insights_root.rglob("*.md"))
+                self._record_metric(
+                    "autolearn_fs_fallback_insight_rglob_total",
+                    elapsed=time.perf_counter() - fallback_started_at,
+                    observe_metric="autolearn_fs_fallback_insight_rglob_seconds",
+                )
+
         best_path: Path | None = None
         best_score = 0
-        for path in insights_root.rglob("*.md"):
-            score = 0
-            if path.stem.lower().startswith(safe_name):
-                score += 10
-            if new_ner_set:
-                try:
-                    existing_tags = self._owner._read_frontmatter_tags(path.read_text(encoding="utf-8"))
-                    existing_ner = {tag for tag in existing_tags if "/" in tag}
-                    overlap = len(new_ner_set & existing_ner)
-                    if overlap >= 2:
-                        score += overlap * 2
-                except Exception:
-                    pass
+        for path in candidate_paths:
+            # Ignorer les fichiers archivés (suffixe _archive_YYYYMMDD_HHMMSS)
+            if re.search(r"_archive_\d{8}_\d{6}", path.stem):
+                continue
+            if safe_name and path.stem.lower().startswith(safe_name):
+                # Fast path: title-prefix match is strong enough and avoids costly file reads.
+                score = 10
+            else:
+                score = 0
+                if new_ner_set:
+                    try:
+                        existing_tags = self._owner._read_frontmatter_tags(read_text_file(path, default=""))
+                        existing_ner = {tag for tag in existing_tags if "/" in tag}
+                        overlap = len(new_ner_set & existing_ner)
+                        if overlap >= 2:
+                            score += overlap * 2
+                    except Exception:
+                        pass
             if score > best_score:
                 best_score = score
                 best_path = path
         return best_path if best_score >= 4 else None
+
+    def _record_metric(
+        self,
+        increment_metric: str,
+        *,
+        elapsed: float | None = None,
+        observe_metric: str | None = None,
+    ) -> None:
+        metrics = getattr(self._owner, "_metrics", None)
+        if metrics is None:
+            return
+        try:
+            metrics.increment(increment_metric)
+            if observe_metric and elapsed is not None:
+                metrics.observe(observe_metric, max(0.0, float(elapsed)))
+        except Exception:
+            pass
 
     def build_new_insight_document(
         self,
@@ -181,7 +238,7 @@ class AutoLearnArtifactWriter:
         provenance: str,
         entity_images: list[dict] | None = None,
     ) -> None:
-        content = path.read_text(encoding="utf-8")
+        content = read_text_file(path, default="")
         existing_count = len(re.findall(r"^## Question \d+", content, re.MULTILINE))
         content = self._owner._merge_frontmatter_tags(content, ner_tags)
         content = self.maybe_add_frontmatter_location(content, entity_images)

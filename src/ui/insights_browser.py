@@ -6,10 +6,42 @@ from pathlib import Path
 from typing import Callable
 
 
+def build_artifact_entries(notes: list[dict]) -> list[tuple[str, float]]:
+    entries: list[tuple[str, float]] = []
+    seen_paths: set[str] = set()
+
+    for note in notes:
+        path_str = str(note.get("file_path") or "")
+        if not path_str or path_str in seen_paths:
+            continue
+        seen_paths.add(path_str)
+        entries.append((path_str, _parse_note_timestamp(note.get("date_modified", ""))))
+
+    entries.sort(key=lambda item: item[1], reverse=True)
+    return entries
+
+
+def build_artifact_expander_label(path_str: str, mtime: float, icon: str) -> str:
+    stem = Path(path_str).stem
+    if mtime > 0:
+        date_str = datetime.fromtimestamp(mtime).strftime("%Y-%m-%d %H:%M")
+    else:
+        date_str = "date inconnue"
+    return f"{icon} {stem} — {date_str}"
+
+
+def build_artifact_panel_caption(filtered_count: int, total_count: int, label: str, obsidian_subpath: str) -> str:
+    return (
+        f"{filtered_count} / {total_count} {label} · "
+        f"Visibles dans Obsidian sous `{obsidian_subpath}`"
+    )
+
+
 def build_month_options(entries: list[tuple[str, float]]) -> list[str]:
     months = {
         datetime.fromtimestamp(mtime).strftime("%Y-%m")
         for _path, mtime in entries
+        if mtime > 0
     }
     return ["Tous"] + sorted(months, reverse=True)
 
@@ -76,3 +108,14 @@ def filter_queries(
         filtered.append(query)
 
     return filtered
+
+
+def _parse_note_timestamp(value: str) -> float:
+    if not value:
+        return 0.0
+    for candidate in (value, value.replace("Z", "+00:00")):
+        try:
+            return datetime.fromisoformat(candidate).timestamp()
+        except ValueError:
+            continue
+    return 0.0

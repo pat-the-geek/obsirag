@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from datetime import datetime, timedelta
+from typing import Any, Callable, cast
 from typing import TYPE_CHECKING
 
 from loguru import logger
@@ -14,18 +15,49 @@ class RetrievalStrategy:
     def __init__(self, owner: "RAGPipeline") -> None:
         self._owner = owner
 
-    def retrieve(self, query: str) -> tuple[list[dict], str]:
+    @staticmethod
+    def _emit_progress(
+        progress_callback: Callable[[dict[str, Any]], None] | None,
+        message: str,
+        **metadata: Any,
+    ) -> None:
+        if not callable(progress_callback):
+            return
+        payload: dict[str, Any] = {
+            "phase": "retrieval",
+            "message": message,
+        }
+        payload.update(metadata)
+        try:
+            progress_callback(payload)
+        except Exception:
+            pass
+
+    def retrieve(
+        self,
+        query: str,
+        progress_callback: Callable[[dict[str, Any]], None] | None = None,
+    ) -> tuple[list[dict], str]:
         cfg = self._owner._get_settings()
         query = self._owner._normalize_query(query)
+        self._emit_progress(progress_callback, "Détection de l'intention", query=query)
         tags = self._owner._tag_pattern.findall(query)
         if tags:
-            return self._owner._chroma.search_by_tags(tags, top_k=cfg.search_top_k), "tags"
+            self._emit_progress(progress_callback, "Filtrage par tags", retrieval_mode="tags", tags=len(tags))
+            chunks = self._owner._chroma.search_by_tags(tags, top_k=cfg.search_top_k)
+            self._emit_progress(progress_callback, f"Recherche tags terminée ({len(chunks)} résultat(s))", chunk_count=len(chunks), retrieval_mode="tags")
+            return chunks, "tags"
 
         relation_match = self._owner._relation_pattern.search(query)
         if relation_match:
             entity_a = relation_match.group(1).strip().strip('"\'«»')
             entity_b = relation_match.group(2).strip().strip('"\'«»')
             logger.info(f"RAG intent=relation entités: {entity_a!r} ↔ {entity_b!r}")
+            self._emit_progress(
+                progress_callback,
+                f"Recherche relationnelle entre {entity_a} et {entity_b}",
+                retrieval_mode="relation",
+            )
             chunks_a = self._owner._chroma.search(entity_a, top_k=cfg.search_top_k)
             chunks_b = self._owner._chroma.search(entity_b, top_k=cfg.search_top_k)
             chunks_ab = self._owner._chroma.search(f"{entity_a} {entity_b}", top_k=cfg.search_top_k)
@@ -35,34 +67,50 @@ class RetrievalStrategy:
                 if chunk["chunk_id"] not in seen_ids:
                     seen_ids.add(chunk["chunk_id"])
                     merged.append(chunk)
-            return merged[: cfg.search_top_k * 2], "relation"
+            chunks = merged[: cfg.search_top_k * 2]
+            self._emit_progress(progress_callback, f"Recherche relationnelle terminée ({len(chunks)} résultat(s))", chunk_count=len(chunks), retrieval_mode="relation")
+            return chunks, "relation"
 
         days = self._owner._detect_temporal(query)
         if days is not None:
+            self._emit_progress(progress_callback, f"Filtrage temporel sur {days} jour(s)", retrieval_mode="temporal", days=days)
             since = datetime.now() - timedelta(days=days)
             chunks = self._owner._chroma.search_by_date_range(query, since=since, top_k=cfg.search_top_k)
             if not chunks:
+                self._emit_progress(progress_callback, "Aucun résultat temporel, fallback sémantique", retrieval_mode="temporal")
                 chunks = self._owner._chroma.search(query, top_k=cfg.search_top_k)
+            self._emit_progress(progress_callback, f"Recherche temporelle terminée ({len(chunks)} résultat(s))", chunk_count=len(chunks), retrieval_mode="temporal")
             return chunks, "temporal"
 
         entity_match = self._owner._entity_patterns.search(query)
         if entity_match:
             entity = entity_match.group(1).strip()
             if self._owner._is_entity_target(entity):
+                self._emit_progress(progress_callback, f"Recherche par entité: {entity}", retrieval_mode="entity")
                 chunks = self._owner._chroma.search_by_entity(entity, top_k=cfg.search_top_k)
-                return self._owner._filter_supported_chunks(query, chunks, "entity"), "entity"
+                filtered = self._owner._filter_supported_chunks(query, chunks, "entity")
+                self._emit_progress(progress_callback, f"Recherche entité terminée ({len(filtered)} résultat(s))", chunk_count=len(filtered), retrieval_mode="entity")
+                return filtered, "entity"
 
         proper_nouns = self._owner._extract_proper_nouns(query)
         if self._owner._synthesis_patterns.search(query):
             if proper_nouns:
+                self._emit_progress(progress_callback, "Recherche hybride de synthèse", retrieval_mode="synthesis")
                 chunks = self._owner._retrieve_hybrid_chunks(query, proper_nouns)
+                self._emit_progress(progress_callback, f"Recherche hybride terminée ({len(chunks[: cfg.search_top_k])} résultat(s))", chunk_count=len(chunks[: cfg.search_top_k]), retrieval_mode="synthesis")
                 return chunks[: cfg.search_top_k], "synthesis"
-            return self._owner._chroma.search(query, top_k=cfg.search_top_k), "synthesis"
+            self._emit_progress(progress_callback, "Recherche sémantique de synthèse", retrieval_mode="synthesis")
+            chunks = self._owner._chroma.search(query, top_k=cfg.search_top_k)
+            self._emit_progress(progress_callback, f"Recherche synthèse terminée ({len(chunks)} résultat(s))", chunk_count=len(chunks), retrieval_mode="synthesis")
+            return chunks, "synthesis"
 
         if proper_nouns:
+            self._emit_progress(progress_callback, "Recherche hybride multi-termes", retrieval_mode="hybrid")
             chunks = self._owner._retrieve_hybrid_chunks(query, proper_nouns)
+            self._emit_progress(progress_callback, f"Recherche hybride terminée ({len(chunks[: cfg.search_top_k])} résultat(s))", chunk_count=len(chunks[: cfg.search_top_k]), retrieval_mode="hybrid")
             return chunks[: cfg.search_top_k], "hybrid"
 
+        self._emit_progress(progress_callback, "Recherche sémantique générale", retrieval_mode="general")
         chunks = self._owner._chroma.search(query, top_k=cfg.search_top_k)
         stop_words = {
             "quelles", "quelle", "quel", "quels", "comment", "pourquoi",
@@ -77,6 +125,7 @@ class RetrievalStrategy:
                 if len(cleaned) >= 4 and cleaned not in stop_words:
                     keyword_extra.extend(self._owner._chroma.search_by_keyword(cleaned, top_k=3))
             if keyword_extra:
+                self._emit_progress(progress_callback, "Fallback mots-clés activé", retrieval_mode="general_kw_fallback")
                 seen_ids: set[str] = set()
                 merged: list[dict] = []
                 for chunk in keyword_extra + chunks:
@@ -89,11 +138,20 @@ class RetrievalStrategy:
                     merged[: cfg.search_top_k],
                     "general_kw_fallback",
                 )
+                self._emit_progress(progress_callback, f"Recherche fallback terminée ({len(filtered)} résultat(s))", chunk_count=len(filtered), retrieval_mode="general_kw_fallback")
                 return filtered, "general_kw_fallback"
-        return self._owner._filter_supported_chunks(query, chunks, "general"), "general"
+        filtered = self._owner._filter_supported_chunks(query, chunks, "general")
+        self._emit_progress(progress_callback, f"Recherche générale terminée ({len(filtered)} résultat(s))", chunk_count=len(filtered), retrieval_mode="general")
+        return filtered, "general"
 
-    def retrieve_hybrid_chunks(self, query: str, proper_nouns: list[str]) -> list[dict]:
+    def retrieve_hybrid_chunks(
+        self,
+        query: str,
+        proper_nouns: list[str],
+        progress_callback: Callable[[dict[str, Any]], None] | None = None,
+    ) -> list[dict]:
         cfg = self._owner._get_settings()
+        self._emit_progress(progress_callback, "Hybrid retrieval: recherche sémantique")
         semantic = self._owner._prefer_informative_chunks(
             self._owner._chroma.search(query, top_k=cfg.search_top_k)
         )
@@ -101,6 +159,7 @@ class RetrievalStrategy:
         retrieval_terms = self._owner._expand_retrieval_terms(query, proper_nouns)
         focus_terms = self._owner._select_focus_terms(retrieval_terms)
         logger.info(f"RAG hybrid termes={retrieval_terms}")
+        self._emit_progress(progress_callback, f"Hybrid retrieval: {len(retrieval_terms)} terme(s) analysé(s)")
         for noun in retrieval_terms:
             title_hits = self._owner._chroma.search_by_note_title(noun, top_k=3)
             keyword_hits = self._owner._chroma.search_by_keyword(noun, top_k=3)
@@ -205,7 +264,9 @@ class RetrievalStrategy:
         chunks = merged[: cfg.search_top_k * 2]
         has_symbolic_hits = any(per_term_chunks)
         if not has_symbolic_hits and all(chunk["score"] < 0.55 for chunk in chunks):
+            self._emit_progress(progress_callback, "Hybrid retrieval: fallback sémantique global")
             chunks = self._owner._chroma.search(query, top_k=cfg.search_top_k * 2)
+        self._emit_progress(progress_callback, f"Hybrid retrieval terminé ({len(cast(list[dict], chunks))} résultat(s))")
         return chunks
 
     def prepare_context_chunks(self, chunks: list[dict], query: str, intent: str) -> list[dict]:

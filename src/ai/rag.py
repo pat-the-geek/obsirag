@@ -14,7 +14,7 @@ import unicodedata
 from collections.abc import Iterator
 from datetime import datetime, timedelta
 from itertools import chain
-from typing import Any
+from typing import Any, Callable
 
 from loguru import logger
 from src.ai.answer_prompting import AnswerPrompting
@@ -156,11 +156,42 @@ class RAGPipeline:
         self,
         user_query: str,
         history: list[dict[str, str]],
+        progress_callback: Callable[[dict[str, Any]], None] | None = None,
     ) -> tuple[str, list[dict], str]:
+        self._emit_progress(progress_callback, phase="resolve", message="Analyse de la requête")
         resolved_query = self._resolve_query_with_history(user_query, history)
-        chunks, intent = self._retrieve(resolved_query)
+        self._emit_progress(progress_callback, phase="retrieval", message="Recherche des passages pertinents")
+        chunks, intent = self._retrieve(resolved_query, progress_callback=progress_callback)
+        self._emit_progress(
+            progress_callback,
+            phase="retrieval",
+            message=f"{len(chunks)} passage(s) retenu(s)",
+            chunk_count=len(chunks),
+            intent=intent,
+        )
         chunks = self._mark_primary_sources(chunks, resolved_query, intent)
+        self._emit_progress(progress_callback, phase="context", message="Contextualisation des sources")
         return resolved_query, chunks, intent
+
+    @staticmethod
+    def _emit_progress(
+        progress_callback: Callable[[dict[str, Any]], None] | None,
+        *,
+        phase: str,
+        message: str,
+        **metadata: Any,
+    ) -> None:
+        if not callable(progress_callback):
+            return
+        payload: dict[str, Any] = {
+            "phase": phase,
+            "message": message,
+        }
+        payload.update(metadata)
+        try:
+            progress_callback(payload)
+        except Exception:
+            pass
 
     def _iter_query_attempts(
         self,
@@ -227,6 +258,7 @@ class RAGPipeline:
         self,
         user_query: str,
         chat_history: list[dict[str, str]] | None = None,
+        progress_callback: Callable[[dict[str, Any]], None] | None = None,
     ) -> tuple[Iterator[str], list[dict]]:
         """Retourne (stream_generator, sources). Réduit le contexte si dépassement."""
         try:
@@ -234,9 +266,14 @@ class RAGPipeline:
         except Exception:
             pass
         history = chat_history or []
-        resolved_query, chunks, intent = self._prepare_query_execution(user_query, history)
+        resolved_query, chunks, intent = self._prepare_query_execution(
+            user_query,
+            history,
+            progress_callback=progress_callback,
+        )
         if not chunks:
             logger.info("RAG: aucun chunk retenu, retour sentinel immédiat")
+            self._emit_progress(progress_callback, phase="retrieval", message="Aucune source pertinente trouvée")
             try:
                 self._metrics.increment("rag_sentinel_answers_total")
             except Exception:
@@ -252,9 +289,19 @@ class RAGPipeline:
             intent,
         ):
             try:
+                self._emit_progress(
+                    progress_callback,
+                    phase="generation",
+                    message="Préparation du prompt modèle",
+                    context_chars=len(context),
+                    context_budget=budget,
+                    intent=intent,
+                )
                 if intent in {"synthesis", "relation", "hybrid"}:
+                    self._emit_progress(progress_callback, phase="generation", message="Génération de la réponse")
                     answer = self._run_chat_attempt(messages, context, history, resolved_query, intent)
                     return iter([answer]), chunks
+                self._emit_progress(progress_callback, phase="generation", message="Démarrage du flux de génération")
                 return self._stream_first_token_or_empty(messages), chunks
             except BadRequestError as exc:
                 if self._is_context_error(exc):
@@ -263,6 +310,12 @@ class RAGPipeline:
                     except Exception:
                         pass
                     logger.warning(f"Contexte trop grand (budget={budget}), réduction…")
+                    self._emit_progress(
+                        progress_callback,
+                        phase="generation",
+                        message="Contexte trop large, nouvelle tentative réduite",
+                        context_budget=budget,
+                    )
                     continue
                 raise
 
@@ -608,8 +661,12 @@ class RAGPipeline:
 
         return True
 
-    def _retrieve(self, query: str) -> tuple[list[dict], str]:
-        return self._retrieval_strategy.retrieve(query)
+    def _retrieve(
+        self,
+        query: str,
+        progress_callback: Callable[[dict[str, Any]], None] | None = None,
+    ) -> tuple[list[dict], str]:
+        return self._retrieval_strategy.retrieve(query, progress_callback=progress_callback)
 
     @staticmethod
     def _extract_proper_nouns(query: str) -> list[str]:

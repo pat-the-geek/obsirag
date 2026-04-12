@@ -13,6 +13,7 @@ from loguru import logger
 
 from src.config import settings
 from src.indexer.chunker import Chunk, TextChunker
+from src.storage.safe_read import read_json_file
 from src.vault.parser import NoteParser
 
 
@@ -220,10 +221,7 @@ class IndexingPipeline:
     def _load_state(self) -> dict[str, str]:
         f = settings.index_state_file
         if f.exists():
-            try:
-                return json.loads(f.read_text())
-            except Exception:
-                return {}
+            return read_json_file(f, default={})
         return {}
 
     def _save_state(self) -> None:

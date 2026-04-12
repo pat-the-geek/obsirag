@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-import json
 import re
 import unicodedata
-from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from loguru import logger
+
+from src.learning.entity_cache import GeocodeCache, WuddaiCache
 
 
 class AutoLearnEntityServices:
@@ -14,49 +14,14 @@ class AutoLearnEntityServices:
         self._owner = owner
 
     def load_wuddai_entities(self) -> list[dict]:
-        cache_file = self._owner._get_settings().data_dir / "wuddai_entities_cache.json"
-        if cache_file.exists():
-            try:
-                cached = json.loads(cache_file.read_text(encoding="utf-8"))
-                fetched_at = datetime.fromisoformat(cached.get("fetched_at", "2000-01-01"))
-                if fetched_at.tzinfo is None:
-                    fetched_at = fetched_at.replace(tzinfo=UTC)
-                if self._owner._utc_now() - fetched_at < timedelta(hours=24):
-                    return cached["entities"]
-            except Exception:
-                pass
-        try:
-            import urllib.request
-
-            settings = self._owner._get_settings()
-            url = f"{settings.wuddai_entities_url}/api/entities/export?limit=5000&images=true"
-            req = urllib.request.Request(url, headers={"User-Agent": "ObsiRAG/1.0"})
-            with urllib.request.urlopen(req, timeout=10) as resp:
-                data = json.loads(resp.read().decode("utf-8"))
-            entities = [
-                {
-                    "type": entity["type"],
-                    "value": entity["value"],
-                    "value_normalized": self._owner._normalize_entity_name(entity["value"]),
-                    "mentions": entity.get("mentions", 0),
-                    "image_url": entity.get("image", {}).get("url") if entity.get("image") else None,
-                }
-                for entity in data.get("entities", [])
-            ]
-            cache_file.parent.mkdir(parents=True, exist_ok=True)
-            cache_file.write_text(
-                json.dumps(
-                    {"fetched_at": self._owner._utc_now().isoformat(), "entities": entities},
-                    ensure_ascii=False,
-                    indent=2,
-                ),
-                encoding="utf-8",
-            )
-            logger.info(f"WUDD.ai entities cache rafraîchi : {len(entities)} entités")
-            return entities
-        except Exception as exc:
-            logger.warning(f"Impossible de charger les entités WUDD.ai : {exc}")
-            return []
+        settings = self._owner._get_settings()
+        cache = WuddaiCache(
+            data_dir=settings.data_dir,
+            utc_now_fn=self._owner._utc_now,
+            normalize_fn=self._owner._normalize_entity_name,
+            wuddai_url=settings.wuddai_entities_url,
+        )
+        return cache.load()
 
     def extract_validated_entities(self, text: str) -> tuple[list[str], list[dict]]:
         wuddai_entities = self._owner._load_wuddai_entities()
@@ -167,51 +132,11 @@ class AutoLearnEntityServices:
 
     def fetch_gpe_coordinates(self, entity_name: str) -> tuple[float, float] | None:
         settings = self._owner._get_settings()
-        cache_file = settings.data_dir / "geocode_cache.json"
-        try:
-            cache: dict = json.loads(cache_file.read_text(encoding="utf-8")) if cache_file.exists() else {}
-        except Exception:
-            cache = {}
-
-        key = self._owner._normalize_entity_name(entity_name)
-        if key in cache:
-            return tuple(cache[key]) if cache[key] else None  # type: ignore[return-value]
-
-        coords = None
-        for lang in ("fr", "en"):
-            try:
-                import urllib.parse
-                import urllib.request
-
-                params = urllib.parse.urlencode({
-                    "action": "query",
-                    "prop": "coordinates",
-                    "titles": entity_name,
-                    "format": "json",
-                    "redirects": "1",
-                })
-                url = f"https://{lang}.wikipedia.org/w/api.php?{params}"
-                req = urllib.request.Request(url, headers={"User-Agent": "ObsiRAG/1.0"})
-                with urllib.request.urlopen(req, timeout=5) as resp:
-                    data = json.loads(resp.read().decode("utf-8"))
-                pages = data.get("query", {}).get("pages", {})
-                for page in pages.values():
-                    coordinates = page.get("coordinates", [])
-                    if coordinates:
-                        coords = (coordinates[0]["lat"], coordinates[0]["lon"])
-                        break
-                if coords:
-                    break
-            except Exception:
-                pass
-
-        cache[key] = list(coords) if coords else None
-        try:
-            cache_file.parent.mkdir(parents=True, exist_ok=True)
-            cache_file.write_text(json.dumps(cache, ensure_ascii=False, indent=2), encoding="utf-8")
-        except Exception:
-            pass
-        return coords
+        cache = GeocodeCache(
+            data_dir=settings.data_dir,
+            normalize_fn=self._owner._normalize_entity_name,
+        )
+        return cache.get_coords(entity_name)
 
     @staticmethod
     def _extract_spacy_candidates(text: str) -> list[tuple[str, str]]:
