@@ -66,6 +66,24 @@ class Settings(BaseSettings):
     # Taille maximale d'un artefact insight/synapse avant création d'un nouveau fichier
     max_insight_size_bytes: int = 200_000  # 200 KB
 
+    # Observabilité des fallbacks filesystem
+    fallback_alert_window_minutes: int = 60
+    fallback_alert_rglob_threshold: int = 5
+    fallback_snapshot_max_lines: int = 2000
+    fallback_snapshot_retention_days: int = 14
+    fallback_snapshot_budget_mb: float = 5.0
+
+    # Observabilité perf Chroma
+    chroma_perf_report_retention_days: int = 30
+    chroma_perf_report_max_files: int = 200
+    chroma_perf_report_budget_mb: float = 50.0
+    chroma_perf_trend_warn_pct: float = 20.0
+
+    # Export hebdomadaire compact des deltas observabilité
+    observability_weekly_retention_days: int = 180
+    observability_weekly_max_files: int = 104
+    observability_weekly_budget_mb: float = 20.0
+
     # ---- Propriétés dérivées ----
 
     @property
@@ -97,6 +115,22 @@ class Settings(BaseSettings):
     @property
     def token_stats_file(self) -> Path:
         return self.data_dir / "stats" / "token_usage.json"
+
+    @property
+    def runtime_metrics_file(self) -> Path:
+        return self.data_dir / "stats" / "metrics.json"
+
+    @property
+    def fallback_snapshot_file(self) -> Path:
+        return self.data_dir / "stats" / "fallback_metrics_history.jsonl"
+
+    @property
+    def chroma_perf_reports_dir(self) -> Path:
+        return self.data_dir / "stats" / "chroma_perf_reports"
+
+    @property
+    def observability_weekly_reports_dir(self) -> Path:
+        return self.data_dir / "stats" / "observability_weekly"
 
     @property
     def processing_times_file(self) -> Path:
