@@ -1,33 +1,52 @@
 """
 Page Paramètres — Configuration, statistiques, consommation de tokens.
 """
-import json
+import subprocess
+import sys
+from datetime import datetime, UTC
 from pathlib import Path
-from datetime import datetime
 
 import streamlit as st
 
 from src.config import settings
-from src.ui.chroma_compat import count_notes, list_recent_notes
+from src.ui.runtime_state_store import load_processing_status, read_operational_log_tail
+from src.ui.telemetry_store import (
+    append_fallback_snapshot,
+    compute_chroma_trend_alerts,
+    compute_fallback_alert_window,
+    load_latest_json,
+    load_runtime_metrics_last_update,
+    load_runtime_metrics_payload,
+    load_token_usage_payload,
+    save_json,
+)
 from src.ui.services_cache import get_services
 from src.ui.theme import inject_theme, render_theme_toggle
 
 _icon = str(Path(__file__).parent.parent / "static" / "favicon-32x32.png")
 
 
-def _load_json_payload(path: Path) -> dict:
-    if not path.exists():
-        return {}
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
-        return {}
-
-
 def _format_metric_number(value: float | int) -> str:
     if isinstance(value, float):
         return f"{value:,.3f}"
     return f"{value:,}"
+
+
+def _parse_iso_ts(value: str) -> float:
+    if not value:
+        return 0.0
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
+    except Exception:
+        return 0.0
+
+
+def _format_age_hours(hours: float) -> str:
+    if hours < 0:
+        return "inconnu"
+    if hours < 1:
+        return f"{hours * 60:.0f} min"
+    return f"{hours:.1f} h"
 
 
 st.set_page_config(page_title="Paramètres — ObsiRAG", page_icon=_icon, layout="wide")
@@ -91,10 +110,10 @@ with tab_tokens:
     st.markdown("### Consommation de tokens par appel LLM")
 
     token_file = settings.token_stats_file
-    if not token_file.exists():
+    data = load_token_usage_payload(token_file)
+    if not data:
         st.info("Aucune donnée de tokens encore enregistrée.")
     else:
-        data = json.loads(token_file.read_text())
         cumul = data.get("cumulative", {})
 
         c1, c2, c3 = st.columns(3)
@@ -125,23 +144,43 @@ with tab_tokens:
 # ---- Metriques runtime ----
 with tab_runtime_metrics:
     st.markdown("### Activité interne d'ObsiRAG")
-    metrics_file = settings.data_dir / "stats" / "metrics.json"
-    metrics_payload = _load_json_payload(metrics_file)
+    metrics_file = settings.runtime_metrics_file
+    metrics_payload = load_runtime_metrics_payload(metrics_file)
 
     if not metrics_payload:
         st.info("Aucune métrique runtime encore enregistrée.")
     else:
         counters = metrics_payload.get("counters", {})
         summaries = metrics_payload.get("summaries", {})
-        last_update = datetime.fromtimestamp(metrics_file.stat().st_mtime).strftime("%Y-%m-%d %H:%M")
+        last_update = load_runtime_metrics_last_update(metrics_file) or "Inconnue"
+        st.caption(f"Dernière mise à jour métriques : {last_update}")
 
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Compteurs suivis", len(counters))
-        c2.metric("Agrégats suivis", len(summaries))
-        c3.metric("Dernière mise à jour", last_update)
+        # Snapshot glissant des compteurs fallback pour alerte de fréquence.
+        append_fallback_snapshot(
+            settings.fallback_snapshot_file,
+            counters,
+            max_lines=settings.fallback_snapshot_max_lines,
+            max_age_days=settings.fallback_snapshot_retention_days,
+            max_total_mb=settings.fallback_snapshot_budget_mb,
+        )
+        fallback_alert = compute_fallback_alert_window(
+            settings.fallback_snapshot_file,
+            window_minutes=settings.fallback_alert_window_minutes,
+            threshold=settings.fallback_alert_rglob_threshold,
+        )
+        if fallback_alert.should_warn:
+            st.warning(
+                "⚠️ Fréquence fallback rglob élevée : "
+                f"{fallback_alert.summary}. "
+                "Chemin nominal indexé potentiellement dégradé."
+            )
+        else:
+            st.caption(
+                "Fallback rglob (fenêtre glissante) : "
+                f"{fallback_alert.summary}."
+            )
 
         key_metrics = [
-            ("rag_queries_total", "Requêtes RAG"),
             ("rag_sentinel_answers_total", "Réponses sentinelle"),
             ("rag_context_retries_total", "Retries de contexte"),
             ("autolearn_insights_created_total", "Insights créés"),
@@ -155,6 +194,22 @@ with tab_runtime_metrics:
             cols = st.columns(min(3, len(available_metrics)))
             for index, (key, label) in enumerate(available_metrics):
                 cols[index % len(cols)].metric(label, _format_metric_number(counters[key]))
+
+        st.divider()
+        st.markdown("#### Fallback filesystem (learning)")
+        fallback_rows = [
+            ("autolearn_fs_fallback_insight_glob_total", "Fallback glob insights"),
+            ("autolearn_fs_fallback_insight_rglob_total", "Fallback rglob insights"),
+            ("autolearn_fs_fallback_rename_rglob_total", "Fallback rglob renommage"),
+        ]
+        fallback_cols = st.columns(3)
+        for index, (metric_name, label) in enumerate(fallback_rows):
+            fallback_cols[index].metric(label, int(counters.get(metric_name, 0)))
+        st.caption(
+            "Seuil d'alerte : "
+            f"{settings.fallback_alert_rglob_threshold} fallback(s) rglob / "
+            f"{settings.fallback_alert_window_minutes} min"
+        )
 
         if counters:
             st.divider()
@@ -184,16 +239,196 @@ with tab_runtime_metrics:
             ]
             st.dataframe(pd.DataFrame(summary_rows), use_container_width=True, hide_index=True)
 
+    st.divider()
+    st.markdown("#### Export comparatif perf Chroma (local/CI)")
+    report_dir = settings.chroma_perf_reports_dir
+    latest_local = report_dir / "latest_local.json"
+    latest_ci = report_dir / "latest_ci.json"
+    latest_cmp = report_dir / "latest_comparison.md"
+    baseline_local = report_dir / "baseline_local.json"
+
+    if st.button("🧪 Exporter un rapport perf Chroma", key="export_chroma_perf"):
+        try:
+            result = subprocess.run(
+                [sys.executable, "scripts/export_chroma_perf_report.py"],
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+            output = (result.stdout or "").strip()
+            st.success("Rapport exporté avec succès.")
+            if output:
+                st.caption(output)
+        except Exception as exc:
+            st.warning(f"Export perf Chroma indisponible: {exc}")
+
+    if st.button("🗓️ Export hebdomadaire compact", key="export_observability_weekly"):
+        try:
+            result = subprocess.run(
+                [sys.executable, "scripts/export_observability_weekly.py"],
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+            output = (result.stdout or "").strip()
+            st.success("Export hebdomadaire observabilité généré.")
+            if output:
+                st.caption(output)
+        except Exception as exc:
+            st.warning(f"Export hebdomadaire indisponible: {exc}")
+
+    st.caption(f"Dossier rapports : {report_dir}")
+    st.caption(
+        "Derniers rapports : "
+        f"local={'OK' if latest_local.exists() else 'absent'} · "
+        f"ci={'OK' if latest_ci.exists() else 'absent'} · "
+        f"comparatif={'OK' if latest_cmp.exists() else 'absent'}"
+    )
+
+    st.markdown("##### Navigation rapide fichiers")
+    quick_links = [
+        ("latest_local.json", latest_local),
+        ("latest_ci.json", latest_ci),
+        ("latest_comparison.md", latest_cmp),
+        ("latest_weekly.json", settings.observability_weekly_reports_dir / "latest_weekly.json"),
+        ("latest_weekly.md", settings.observability_weekly_reports_dir / "latest_weekly.md"),
+        ("fallback_metrics_history.jsonl", settings.fallback_snapshot_file),
+    ]
+    for label, path in quick_links:
+        if path.exists():
+            st.markdown(f"- [{label}]({path.as_uri()})")
+        else:
+            st.caption(f"- {label} (absent)")
+
+    local_payload = load_latest_json(latest_local)
+    if local_payload and st.button("📌 Définir la baseline locale", key="set_chroma_baseline"):
+        save_json(baseline_local, local_payload)
+        st.success("Baseline locale mise à jour.")
+
+    baseline_payload = load_latest_json(baseline_local)
+    trend_alerts = []
+    if local_payload and baseline_payload:
+        trend_alerts = compute_chroma_trend_alerts(
+            local_payload,
+            baseline_payload,
+            warn_pct=settings.chroma_perf_trend_warn_pct,
+        )
+        if trend_alerts:
+            st.warning(
+                "⚠️ Alerte tendance perf Chroma: dégradation détectée "
+                f"(seuil {settings.chroma_perf_trend_warn_pct:.1f}%)."
+            )
+            for alert in trend_alerts:
+                st.caption(
+                    f"- {alert.metric}: {alert.latest_value:.4f} vs baseline {alert.baseline_value:.4f} "
+                    f"({alert.degrade_pct:.2f}%)"
+                )
+        else:
+            st.caption(
+                "Tendance perf Chroma stable par rapport à la baseline "
+                f"(seuil {settings.chroma_perf_trend_warn_pct:.1f}%)."
+            )
+
+    st.divider()
+    st.markdown("#### Tableau de bord santé observabilité")
+    now_ts = datetime.now(UTC).timestamp()
+    local_age_h = -1.0
+    ci_age_h = -1.0
+    fallback_age_h = -1.0
+    if local_payload:
+        local_ts = _parse_iso_ts(str(local_payload.get("ts_utc", "")))
+        if local_ts > 0:
+            local_age_h = max(0.0, (now_ts - local_ts) / 3600.0)
+    latest_ci_payload = load_latest_json(latest_ci)
+    if latest_ci_payload:
+        ci_ts = _parse_iso_ts(str(latest_ci_payload.get("ts_utc", "")))
+        if ci_ts > 0:
+            ci_age_h = max(0.0, (now_ts - ci_ts) / 3600.0)
+    if settings.fallback_snapshot_file.exists():
+        fallback_age_h = max(0.0, (now_ts - settings.fallback_snapshot_file.stat().st_mtime) / 3600.0)
+
+    health_status = "green"
+    health_reason = "Observabilité nominale"
+    if fallback_alert.should_warn or bool(trend_alerts) or local_age_h < 0 or local_age_h > 48:
+        health_status = "red"
+        health_reason = "Signal critique: fallback/perf/fraîcheur locale"
+    elif ci_age_h < 0 or ci_age_h > 168 or fallback_age_h < 0 or fallback_age_h > 24:
+        health_status = "orange"
+        health_reason = "Signal d'attention: fraîcheur CI/snapshots"
+
+    status_label = {
+        "green": "🟢 Vert",
+        "orange": "🟠 Orange",
+        "red": "🔴 Rouge",
+    }[health_status]
+    if health_status == "green":
+        st.success(f"{status_label} — {health_reason}")
+    elif health_status == "orange":
+        st.warning(f"{status_label} — {health_reason}")
+    else:
+        st.error(f"{status_label} — {health_reason}")
+
+    c_health_1, c_health_2, c_health_3 = st.columns(3)
+    c_health_1.metric("Fallback rglob fenêtre", fallback_alert.rglob_events_in_window)
+    c_health_2.metric("Alertes tendance perf", len(trend_alerts))
+    c_health_3.metric("Âge report local", _format_age_hours(local_age_h))
+    st.caption(
+        "Fraîcheur complémentaire : "
+        f"CI={_format_age_hours(ci_age_h)} · "
+        f"snapshots fallback={_format_age_hours(fallback_age_h)}"
+    )
+
+    st.caption(
+        "Rétention active : "
+        f"fallback={settings.fallback_snapshot_retention_days}j/{settings.fallback_snapshot_max_lines} lignes/"
+        f"{settings.fallback_snapshot_budget_mb:.1f}MB · "
+        f"chroma={settings.chroma_perf_report_retention_days}j/{settings.chroma_perf_report_max_files} fichiers/"
+        f"{settings.chroma_perf_report_budget_mb:.1f}MB"
+    )
+    if latest_cmp.exists():
+        st.markdown("##### Dernier comparatif local/CI")
+        st.markdown(latest_cmp.read_text(encoding="utf-8"))
+
+    st.divider()
+    st.markdown("#### État de traitement auto-learner")
+    processing_status = load_processing_status(settings.processing_status_file)
+    if not processing_status:
+        st.caption("Aucun état de traitement persistant disponible.")
+    else:
+        status_label = "Actif" if processing_status.get("active") else "Inactif"
+        st.caption(f"Statut : {status_label}")
+        if processing_status.get("note"):
+            st.caption(f"Note : {processing_status.get('note')}")
+        if processing_status.get("step"):
+            st.caption(f"Étape : {processing_status.get('step')}")
+        if processing_status.get("log"):
+            st.code("\n".join(str(item) for item in processing_status.get("log", [])[-15:]), language=None)
+
+    st.divider()
+    st.markdown("#### Journal opérationnel récent")
+    log_lines = read_operational_log_tail(
+        Path(settings.log_dir) / "obsirag.log",
+        fallback_path=Path("logs") / "obsirag.log",
+        lines=30,
+    )
+    if log_lines:
+        st.code("\n".join(log_lines), language=None)
+    else:
+        st.caption("Aucune ligne de log disponible.")
+
 # ---- Index ChromaDB ----
 with tab_index:
     st.markdown("### État de l'index vectoriel")
     st.caption(f"Stocké dans le volume Docker `obsirag-app-data` — pas dans iCloud")
 
-    recent_notes = list_recent_notes(svc.chroma, limit=20)
+    recent_notes = svc.chroma.list_recent_notes(limit=20)
     user_notes = svc.chroma.list_user_notes()
     generated_notes = svc.chroma.list_generated_notes()
     c1, c2, c3 = st.columns(3)
-    c1.metric("Notes indexées", count_notes(svc.chroma))
+    total_notes = svc.chroma.count_notes()
+    c1.metric("Notes indexées", total_notes)
     c2.metric("Notes utilisateur", len(user_notes))
     c3.metric("Artefacts générés", len(generated_notes))
     st.caption(f"Chunks total : {svc.chroma.count()}")
