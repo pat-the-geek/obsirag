@@ -9,7 +9,10 @@ Détecte l'intention de la requête et adapte la stratégie de récupération :
 """
 from __future__ import annotations
 
+import hashlib
 import re
+import threading
+import time
 import unicodedata
 from collections.abc import Iterator
 from datetime import datetime, timedelta
@@ -26,6 +29,112 @@ class _ContextTooLargeError(Exception):
     pass
 
 BadRequestError = _ContextTooLargeError  # alias de compatibilité
+
+
+class _AnswerCache:
+    """Cache mémoire réponse RAG avec TTL.
+
+    Clé = SHA-1 de (query normalisée + historique condensé).
+    Évite les doubles inférences sur les rechargements de page Streamlit
+    ou les requêtes identiques soumises en rafale.
+    TTL par défaut : 300 s (5 min).
+    """
+
+    def __init__(self, ttl_s: float = 300.0, max_size: int = 128) -> None:
+        self._lock = threading.Lock()
+        self._store: dict[str, tuple[str, list, float]] = {}  # key → (answer, sources, ts)
+        self._ttl = ttl_s
+        self._max_size = max_size
+
+    @staticmethod
+    def _make_key(query: str, history: list[dict[str, str]]) -> str:
+        norm = unicodedata.normalize("NFC", query.strip().lower())
+        history_sig = "|".join(f"{m.get('role','')}:{m.get('content','')}" for m in history[-4:])
+        return hashlib.sha1(f"{norm}\x00{history_sig}".encode()).hexdigest()  # noqa: S324
+
+    def get(self, query: str, history: list[dict[str, str]]) -> tuple[str, list] | None:
+        key = self._make_key(query, history)
+        with self._lock:
+            entry = self._store.get(key)
+            if entry is None:
+                return None
+            answer, sources, ts = entry
+            if time.monotonic() - ts > self._ttl:
+                del self._store[key]
+                return None
+        return answer, sources
+
+    def put(self, query: str, history: list[dict[str, str]], answer: str, sources: list) -> None:
+        key = self._make_key(query, history)
+        with self._lock:
+            if len(self._store) >= self._max_size:
+                # Éviction LRU simplifiée : supprime les entrées les plus anciennes
+                oldest = sorted(self._store.items(), key=lambda kv: kv[1][2])[:16]
+                for k, _ in oldest:
+                    del self._store[k]
+            self._store[key] = (answer, sources, time.monotonic())
+
+    def invalidate(self, query: str, history: list[dict[str, str]]) -> None:
+        key = self._make_key(query, history)
+        with self._lock:
+            self._store.pop(key, None)
+
+    @property
+    def size(self) -> int:
+        with self._lock:
+            return len(self._store)
+
+
+class _InferenceBackpressure:
+    """Limite la concurrence MLX à 1 inférence active + max_queue en attente.
+
+    MLX/Metal n'accepte pas les appels GPU simultanés.  Sans borne sur la file
+    d'attente, des requêtes concurrentes s'accumulent et dégradent le P99.
+    Cette gate applique la politique :
+      - 1 inférence active à la fois
+      - max_queue requêtes supplémentaires tolérées en attente
+      - rejet immédiat si la file est pleine (RuntimeError)
+      - timeout défensif pour les verrous bloqués
+    """
+
+    def __init__(self, max_queue: int = 2, timeout_s: float = 120.0) -> None:
+        self._sem = threading.Semaphore(1)  # 1 inférence à la fois
+        self._lock = threading.Lock()
+        self._active = 0  # requêtes en attente + en cours
+        self._max_active = 1 + max_queue
+        self._timeout = timeout_s
+
+    @property
+    def queue_depth(self) -> int:
+        """Nombre de requêtes actuellement en attente ou en cours d'inférence."""
+        with self._lock:
+            return self._active
+
+    def acquire(self) -> None:
+        """Entre dans la gate.  Lève RuntimeError si la file est saturée ou si le délai expire."""
+        with self._lock:
+            if self._active >= self._max_active:
+                raise RuntimeError(
+                    f"File d'inférence saturée ({self._active} requêtes en cours/attente) "
+                    "— réessaie dans un instant."
+                )
+            self._active += 1
+        acquired = self._sem.acquire(timeout=self._timeout)
+        if not acquired:
+            with self._lock:
+                self._active = max(0, self._active - 1)
+            raise RuntimeError(
+                f"Délai d'attente de la gate d'inférence dépassé ({self._timeout:.0f} s)."
+            )
+        logger.debug(f"[backpressure] inférence démarrée — queue_depth={self._active}")
+
+    def release(self) -> None:
+        """Libère le slot d'inférence."""
+        self._sem.release()
+        with self._lock:
+            self._active = max(0, self._active - 1)
+        logger.debug(f"[backpressure] inférence terminée — queue_depth={self._active}")
+
 
 from src.config import settings
 from src.database.chroma_store import ChromaStore
@@ -147,6 +256,27 @@ class RAGPipeline:
         self._synthesis_patterns = _SYNTHESIS_PATTERNS
         self._retrieval_strategy = RetrievalStrategy(self)
         self._answer_prompting = AnswerPrompting(self)
+        # PERF-14 : gate de backpressure (désactivable via settings.rag_backpressure_enabled)
+        self._backpressure: _InferenceBackpressure | None = (
+            _InferenceBackpressure(
+                max_queue=settings.rag_backpressure_max_queue,
+                timeout_s=settings.rag_backpressure_timeout_s,
+            )
+            if settings.rag_backpressure_enabled
+            else None
+        )
+        # PERF-15a : cache réponse (désactivable via settings.rag_answer_cache_enabled)
+        self._answer_cache: _AnswerCache | None = (
+            _AnswerCache(
+                ttl_s=settings.rag_answer_cache_ttl_s,
+                max_size=settings.rag_answer_cache_max_size,
+            )
+            if settings.rag_answer_cache_enabled
+            else None
+        )
+        # PERF-12 : pré-chauffe du cache KV pour le prompt système (si le LLM le supporte)
+        if hasattr(self._llm, "configure_prefix_cache"):
+            self._llm.configure_prefix_cache([{"role": "system", "content": _SYSTEM_PROMPT}])
 
     @staticmethod
     def _get_settings():
@@ -220,7 +350,11 @@ class RAGPipeline:
         resolved_query: str,
         intent: str,
     ) -> str:
-        answer = self._llm.chat(messages, operation="rag_query")
+        answer = self._llm.chat(
+            messages,
+            max_tokens=self._max_tokens_for_intent(intent),
+            operation="rag_query",
+        )
         answer = self._retry_forced_study_synthesis(
             answer=answer,
             query=resolved_query,
@@ -239,18 +373,79 @@ class RAGPipeline:
     def _stream_first_token_or_empty(
         self,
         messages: list[dict[str, str]],
+        intent: str,
     ) -> Iterator[str]:
-        raw_stream = self._llm.stream(messages, operation="rag_query")
+        raw_stream = self._llm.stream(
+            messages,
+            max_tokens=self._max_tokens_for_intent(intent),
+            operation="rag_query",
+        )
         first = next(raw_stream, None)
         if first is None:
             return iter([])
         return chain([first], raw_stream)
+
+    def _gated_stream(self, stream: Iterator[str]) -> Iterator[str]:
+        """Wraps a stream iterator; releases the backpressure gate on exhaustion or error."""
+        try:
+            yield from stream
+        finally:
+            if self._backpressure is not None:
+                self._backpressure.release()
+
+    def _gated_and_cached_stream(
+        self,
+        stream: Iterator[str],
+        query: str,
+        history: list[dict[str, str]],
+        sources: list,
+    ) -> Iterator[str]:
+        """Wraps a stream: releases backpressure gate + stores completed answer in cache."""
+        parts: list[str] = []
+        try:
+            for token in stream:
+                parts.append(token)
+                yield token
+        finally:
+            if self._backpressure is not None:
+                self._backpressure.release()
+        if parts and self._answer_cache is not None:
+            self._answer_cache.put(query, history, "".join(parts), sources)
+
+    @staticmethod
+    def _max_tokens_for_intent(intent: str) -> int:
+        """Budget de génération adaptatif selon l'intention.
+
+        Réduit la latence moyenne sur les intents factuels, tout en gardant
+        un plafond plus élevé pour les synthèses multi-notes.
+        """
+        caps = {
+            "general": 640,
+            "general_kw_fallback": 700,
+            "entity": 700,
+            "temporal": 720,
+            "tag": 700,
+            "hybrid": 1100,
+            "synthesis": 1100,
+            "relation": 1200,
+        }
+        return caps.get(intent, 800)
 
     def _get_linked_chunks_by_note_title(self, note_title: str, limit: int = 2) -> list[dict]:
         return self._chroma.get_chunks_by_note_title(note_title, limit=limit)
 
     def _get_linked_chunks_by_file_path(self, file_path: str, limit: int = 2) -> list[dict]:
         return self._chroma.get_chunks_by_file_path(file_path, limit=limit)
+
+    def _get_linked_chunks_by_file_paths(self, file_paths: list[str], limit_per_path: int = 2) -> dict[str, list[dict]]:
+        getter = getattr(self._chroma, "get_chunks_by_file_paths", None)
+        if callable(getter):
+            return getter(file_paths, limit_per_path=limit_per_path)
+
+        return {
+            file_path: self._get_linked_chunks_by_file_path(file_path, limit=limit_per_path)
+            for file_path in file_paths
+        }
 
     # ---- API publique ----
 
@@ -266,6 +461,16 @@ class RAGPipeline:
         except Exception:
             pass
         history = chat_history or []
+        # PERF-15a : cache hit → retour immédiat sans inférence
+        cached = self._answer_cache.get(user_query, history) if self._answer_cache is not None else None
+        if cached is not None:
+            logger.debug("[answer_cache] HIT query_stream")
+            try:
+                self._metrics.increment("rag_cache_hits_total")
+            except Exception:
+                pass
+            cached_answer, cached_sources = cached
+            return iter([cached_answer]), cached_sources
         resolved_query, chunks, intent = self._prepare_query_execution(
             user_query,
             history,
@@ -299,10 +504,27 @@ class RAGPipeline:
                 )
                 if intent in {"synthesis", "relation", "hybrid"}:
                     self._emit_progress(progress_callback, phase="generation", message="Génération de la réponse")
-                    answer = self._run_chat_attempt(messages, context, history, resolved_query, intent)
+                    if self._backpressure is not None:
+                        self._backpressure.acquire()
+                    try:
+                        answer = self._run_chat_attempt(messages, context, history, resolved_query, intent)
+                    finally:
+                        if self._backpressure is not None:
+                            self._backpressure.release()
+                    if self._answer_cache is not None:
+                        self._answer_cache.put(user_query, history, answer, chunks)
                     return iter([answer]), chunks
                 self._emit_progress(progress_callback, phase="generation", message="Démarrage du flux de génération")
-                return self._stream_first_token_or_empty(messages), chunks
+                if self._backpressure is not None:
+                    self._backpressure.acquire()
+                try:
+                    stream = self._stream_first_token_or_empty(messages, intent)
+                except Exception:
+                    if self._backpressure is not None:
+                        self._backpressure.release()
+                    raise
+                # Pour le stream, on enveloppe pour stocker la réponse dans le cache à la fin
+                return self._gated_and_cached_stream(stream, user_query, history, chunks), chunks
             except BadRequestError as exc:
                 if self._is_context_error(exc):
                     try:
@@ -332,6 +554,15 @@ class RAGPipeline:
         except Exception:
             pass
         history = chat_history or []
+        # PERF-15a : cache hit → retour immédiat sans inférence
+        cached = self._answer_cache.get(user_query, history) if self._answer_cache is not None else None
+        if cached is not None:
+            logger.debug("[answer_cache] HIT query")
+            try:
+                self._metrics.increment("rag_cache_hits_total")
+            except Exception:
+                pass
+            return cached
         resolved_query, chunks, intent = self._prepare_query_execution(user_query, history)
         if not chunks:
             logger.info("RAG: aucun chunk retenu, retour sentinel immédiat")
@@ -341,25 +572,32 @@ class RAGPipeline:
                 pass
             return "Cette information n'est pas dans ton coffre.", []
 
-        for budget, context, messages in self._iter_query_attempts(
-            user_query,
-            history,
-            resolved_query,
-            chunks,
-            intent,
-        ):
-            try:
-                answer = self._run_chat_attempt(messages, context, history, resolved_query, intent)
-                return answer, chunks
-            except BadRequestError as exc:
-                if self._is_context_error(exc):
-                    try:
-                        self._metrics.increment("rag_context_retries_total")
-                    except Exception:
-                        pass
-                    logger.warning(f"Contexte trop grand (budget={budget}), réduction…")
-                    continue
-                raise
+        self._backpressure.acquire() if self._backpressure is not None else None
+        try:
+            for budget, context, messages in self._iter_query_attempts(
+                user_query,
+                history,
+                resolved_query,
+                chunks,
+                intent,
+            ):
+                try:
+                    answer = self._run_chat_attempt(messages, context, history, resolved_query, intent)
+                    if self._answer_cache is not None:
+                        self._answer_cache.put(user_query, history, answer, chunks)
+                    return answer, chunks
+                except BadRequestError as exc:
+                    if self._is_context_error(exc):
+                        try:
+                            self._metrics.increment("rag_context_retries_total")
+                        except Exception:
+                            pass
+                        logger.warning(f"Contexte trop grand (budget={budget}), réduction…")
+                        continue
+                    raise
+        finally:
+            if self._backpressure is not None:
+                self._backpressure.release()
 
         raise RuntimeError("Impossible d'envoyer la requête : contexte trop grand même après réductions.")
 
@@ -372,12 +610,25 @@ class RAGPipeline:
         intent: str,
     ) -> str:
         """Quand une question d'étude renvoie à tort le hard sentinel malgré un contexte riche,
-        forcer une seconde tentative explicitement synthétique."""
+        forcer une seconde tentative explicitement synthétique.
+
+        PERF-15b : on n'effectue le retry que si le contexte est à la fois
+        suffisamment long (≥ 300 c) ET dense en sources distinctes (≥ 2 notes).
+        Cela évite un 2e appel LLM quand une seule note courte a été trouvée —
+        cas où la réponse sentinel est probablement correcte.
+        """
         if intent not in {"synthesis", "relation", "hybrid"}:
             return answer
         if not answer or not answer.strip().lower().startswith(_HARD_SENTINEL.rstrip(".")):
             return answer
         if len(context.strip()) < 300:
+            return answer
+        # PERF-15b : exige au moins 2 notes distinctes pour justifier un 2e appel LLM
+        distinct_sources = len({line.lstrip("#").strip().split("\n")[0]
+                                 for line in context.split("## ")
+                                 if line.strip()})
+        if distinct_sources < 2:
+            logger.debug("[retry_synthesis] skipped — source unique dans le contexte")
             return answer
 
         retry_messages = self._build_messages(
@@ -388,7 +639,12 @@ class RAGPipeline:
             force_study_answer=True,
         )
         try:
-            retried = self._llm.chat(retry_messages, temperature=0.1, operation="rag_query_retry")
+            retried = self._llm.chat(
+                retry_messages,
+                max_tokens=self._max_tokens_for_intent(intent),
+                temperature=0.1,
+                operation="rag_query_retry",
+            )
             retried = (retried or "").strip()
             if retried and not retried.lower().startswith(_HARD_SENTINEL.rstrip(".")):
                 logger.info("RAG retry synthesis: hard sentinel remplacé par une synthèse forcée")

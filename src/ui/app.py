@@ -46,6 +46,7 @@ from src.ui.chat_ui_fragments import (
 )
 from src.ui.html_embed import render_html_document
 from src.ui.note_badges import render_note_badge
+from src.ui.path_resolver import resolve_vault_path
 from src.ui.chat_view_models import (
     build_generation_summary_caption,
     build_navigation_meta,
@@ -55,7 +56,8 @@ from src.ui.chat_view_models import (
     build_web_sources_markdown,
 )
 from src.ui.runtime_state_store import load_processed_notes_map, load_processing_status
-from src.ui.theme import inject_theme, render_nav_bar, render_theme_toggle
+from src.ui.theme import inject_theme, render_theme_toggle
+from src.ui.side_menu import render_side_menu
 from src.ai.web_search import enrich_sync, is_not_in_vault
 
 # ---- Configuration de la page ----
@@ -66,8 +68,13 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded",
 )
+
 inject_theme()
-render_nav_bar()
+# Ajout à l'historique navigation
+HISTO_KEY = "obsirag_historique"
+st.session_state.setdefault(HISTO_KEY, [])
+if not st.session_state[HISTO_KEY] or st.session_state[HISTO_KEY][-1] != "Chat":
+    st.session_state[HISTO_KEY].append("Chat")
 
 svc = get_services()
 
@@ -229,10 +236,11 @@ def _open_note_cb(fp: str) -> None:
 
 
 def _load_saved_conversation_cb(path_str: str, mode: str = "replace") -> None:
-    messages = load_saved_conversation(Path(path_str))
+    resolved_path = resolve_vault_path(path_str)
+    messages = load_saved_conversation(resolved_path)
     if not messages:
         return
-    label = Path(path_str).stem
+    label = resolved_path.stem
     if mode == "append":
         st.session_state.messages = append_loaded_conversation(
             st.session_state.get("messages", []),
@@ -448,6 +456,8 @@ def _autolearn_live_status():
 
 # ---- Sidebar ----
 with st.sidebar:
+    # Menu latéral ObsiRAG (navigation, favoris, historique)
+    render_side_menu()
     st.metric("Notes indexées", svc.chroma.count_notes())
     st.metric("Chunks vectorisés", svc.chroma.count())
 
@@ -800,7 +810,7 @@ for mi, msg in enumerate(st.session_state.messages):
 
 # ---- Génération des suggestions dynamiques ----
 
-def _generate_suggestions() -> list[str]:
+def _generate_suggestions(on_suggestion=None) -> list[str]:
     """Génère 4 questions, basées sur un extrait réel de 4 notes tirées aléatoirement parmi les 30 plus récentes."""
     import random
 
@@ -811,9 +821,18 @@ def _generate_suggestions() -> list[str]:
         "Quelles connexions vois-tu entre mes notes récentes ?",
     ]
 
+    def _emit(question: str) -> None:
+        if callable(on_suggestion):
+            try:
+                on_suggestion(question)
+            except Exception:
+                pass
+
     try:
         notes = svc.chroma.list_user_notes()
         if not notes:
+            for question in fallback:
+                _emit(question)
             return fallback
 
         # 4 notes distinctes tirées aléatoirement parmi les 30 plus récentes
@@ -875,12 +894,17 @@ def _generate_suggestions() -> list[str]:
                 words_lower = set(re.sub(r"[^\w\s]", "", q.lower()).split())
                 if not (words_lower & _EN_MARKERS):
                     questions.append(q)
+                    _emit(q)
 
         if len(questions) < 4:
-            questions += fallback[len(questions):]
+            for question in fallback[len(questions):]:
+                questions.append(question)
+                _emit(question)
 
         return questions
     except Exception:
+        for question in fallback:
+            _emit(question)
         return fallback
 
 
@@ -889,26 +913,38 @@ def _generate_suggestions() -> list[str]:
 @st.cache_resource
 def _get_sug_state() -> dict:
     """Retourne un état partagé persistant pour la génération des suggestions."""
-    return {"lock": threading.Lock(), "result": None, "generating": False}
+    return {"lock": threading.Lock(), "items": [], "result": None, "generating": False, "done": False}
 
 
 def _ensure_suggestions_bg() -> None:
     """Lance la génération des suggestions dans un thread daemon si pas déjà fait."""
     state = _get_sug_state()
     with state["lock"]:
-        if state["result"] is not None or state["generating"]:
+        if state["done"] or state["generating"]:
             return
+        state["items"] = []
+        state["result"] = None
+        state["done"] = False
         state["generating"] = True
 
     def _run() -> None:
+        def _on_suggestion(question: str) -> None:
+            s = _get_sug_state()
+            with s["lock"]:
+                if question not in s["items"]:
+                    s["items"].append(question)
+
         try:
-            result = _generate_suggestions()
+            result = _generate_suggestions(on_suggestion=_on_suggestion)
         except Exception:
             result = []
         s = _get_sug_state()
         with s["lock"]:
             s["result"] = result
             s["generating"] = False
+            s["done"] = True
+            if not s["items"] and result:
+                s["items"] = list(result)
 
     threading.Thread(target=_run, daemon=True).start()
 
@@ -922,20 +958,25 @@ if not st.session_state.messages and not user_input:
     _ensure_suggestions_bg()
     state = _get_sug_state()
     with state["lock"]:
-        _sug_ready = state["result"] is not None
-        _sug_result = list(state["result"]) if _sug_ready else []
+        _sug_result = list(state["items"])
+        _sug_done = bool(state["done"])
+        _sug_generating = bool(state["generating"])
 
     st.markdown("#### Exemples de questions")
-    if _sug_ready:
+    if _sug_result:
         cols = st.columns(2)
         for i, sug in enumerate(_sug_result):
             with cols[i % 2]:
                 if st.button(sug, use_container_width=True, key=f"sug_{i}"):
                     st.session_state._pending_query = sug
                     st.rerun()
+        if _sug_generating and not _sug_done:
+            st.caption("⏳ Génération des suggestions…")
+            time.sleep(0.25)
+            st.rerun()
     else:
         st.caption("⏳ Génération des suggestions…")
-        time.sleep(0.4)
+        time.sleep(0.25)
         st.rerun()
 
 # Recherche web déclenchée par le bouton (indépendamment du chat input)

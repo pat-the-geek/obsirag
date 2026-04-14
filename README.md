@@ -37,6 +37,8 @@ Exemples de requêtes :
 - [docs/architecture.md](docs/architecture.md) — architecture actuelle, frontières entre modules, invariants et flux runtime
 - [docs/conversation-management.md](docs/conversation-management.md) — gestion des conversations, relances, note dominante, garde-fous anti hors-sujet et formatage des réponses
 - [docs/performances.md](docs/performances.md) — mesures de performances, comparaison MLX/Ollama et recommandations matérielles
+- [docs/performance-roadmap.md](docs/performance-roadmap.md) — feuille de route performance sprintable, gates Go/No-Go Rust et KPIs de pilotage
+- [docs/performance-tracker.md](docs/performance-tracker.md) — suivi d'execution hebdomadaire (statuts, mesures, blocages, decisions)
 - [docs/improvements-report.md](docs/improvements-report.md) — rapport a jour des travaux d'amelioration, validations et impacts produit
 
 ## Validation locale post-changement
@@ -580,6 +582,7 @@ cd obsirag
 # Configurer l'environnement
 cp .env.example .env
 # Éditer .env : renseigner VAULT_PATH, MLX_CHAT_MODEL, etc.
+# Pour un acces reseau via IP/Tailscale : STREAMLIT_SERVER_ADDRESS=0.0.0.0
 
 # Installer les dépendances Python et configurer le service
 ./setup.sh
@@ -598,6 +601,31 @@ Pour installer ObsiRAG comme service macOS (démarrage automatique au login) :
 ```bash
 ./install_service.sh
 ```
+
+## Acces reseau
+
+Pour exposer l'application sur le reseau de la machine :
+
+```bash
+echo 'STREAMLIT_SERVER_ADDRESS=0.0.0.0' >> .env
+./stop.sh
+./start.sh
+```
+
+Si vous utilisez le service launchd, reappliquez ensuite l'installation pour regenerer le plist :
+
+```bash
+./install_service.sh
+```
+
+Vous pourrez alors acceder a ObsiRAG via `http://IP_DE_LA_MACHINE:8501`.
+
+Important : l'adresse `100.65.216.90` appartient typiquement a Tailscale (plage `100.64.0.0/10`). Elle est joignable depuis les machines connectees a votre tailnet, mais ce n'est pas une IP publique routable sur Internet. Pour une exposition publique reelle, il faut ajouter un tunnel ou une publication dediee, par exemple :
+
+- redirection NAT/routeur + ouverture du pare-feu macOS,
+- Tailscale Funnel,
+- Cloudflare Tunnel,
+- un reverse proxy public en frontal.
 
 ---
 

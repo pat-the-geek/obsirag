@@ -21,7 +21,8 @@ from src.ui.telemetry_store import (
     save_json,
 )
 from src.ui.services_cache import get_services
-from src.ui.theme import inject_theme, render_nav_bar, render_theme_toggle
+from src.ui.theme import inject_theme, render_theme_toggle
+from src.ui.side_menu import render_side_menu
 
 _icon = str(Path(__file__).parent.parent / "static" / "favicon-32x32.png")
 
@@ -49,11 +50,18 @@ def _format_age_hours(hours: float) -> str:
     return f"{hours:.1f} h"
 
 
+# Icône et config page
 st.set_page_config(page_title="Paramètres — ObsiRAG", page_icon=_icon, layout="wide", initial_sidebar_state="expanded")
+
 inject_theme()
+# Ajout à l'historique navigation
+HISTO_KEY = "obsirag_historique"
+st.session_state.setdefault(HISTO_KEY, [])
+if not st.session_state[HISTO_KEY] or st.session_state[HISTO_KEY][-1] != "Paramètres":
+    st.session_state[HISTO_KEY].append("Paramètres")
+render_side_menu()
 svc = get_services()
 
-render_nav_bar()
 render_theme_toggle()
 st.title("⚙️ Paramètres & Statistiques")
 

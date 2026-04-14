@@ -274,7 +274,9 @@ class RetrievalStrategy:
         if not self._owner._should_focus_dominant_note(intent, query):
             return chunks
 
-        dominant_note_key = self._owner._select_dominant_note_key(query, chunks)
+        dominant_note_key = self._extract_primary_note_hint(chunks)
+        if not dominant_note_key:
+            dominant_note_key = self._owner._select_dominant_note_key(query, chunks)
         if not dominant_note_key:
             return chunks
 
@@ -290,6 +292,15 @@ class RetrievalStrategy:
         prepared = dominant_chunks + supporting_chunks[:remaining]
         return prepared[: cfg.max_context_chunks]
 
+    @staticmethod
+    def _extract_primary_note_hint(chunks: list[dict]) -> str | None:
+        for chunk in chunks:
+            metadata = chunk.get("metadata") or {}
+            hint = str(metadata.get("primary_note_key_hint") or "").strip()
+            if hint:
+                return hint
+        return None
+
     def mark_primary_sources(self, chunks: list[dict], query: str, intent: str) -> list[dict]:
         if not chunks:
             return chunks
@@ -300,6 +311,8 @@ class RetrievalStrategy:
             clone = dict(chunk)
             metadata = dict(chunk.get("metadata") or {})
             metadata["is_primary"] = bool(dominant_note_key and self._owner._chunk_note_key(chunk) == dominant_note_key)
+            if dominant_note_key:
+                metadata["primary_note_key_hint"] = dominant_note_key
             clone["metadata"] = metadata
             marked.append(clone)
         return marked

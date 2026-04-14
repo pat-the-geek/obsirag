@@ -24,6 +24,8 @@ set -o allexport
 source "$SCRIPT_DIR/.env"
 set +o allexport
 
+STREAMLIT_SERVER_ADDRESS="${STREAMLIT_SERVER_ADDRESS:-127.0.0.1}"
+
 # Remplace host.docker.internal → localhost (héritage Docker)
 if [[ "${OLLAMA_BASE_URL:-}" == *"host.docker.internal"* ]]; then
   export OLLAMA_BASE_URL="${OLLAMA_BASE_URL/host.docker.internal/localhost}"
@@ -40,6 +42,6 @@ mkdir -p "$APP_DATA_DIR" "$LOG_DIR"
 
 # ---- Streamlit (premier plan — launchd gère le cycle de vie) -
 exec "$VENV_STREAMLIT" run src/ui/app.py \
-  --server.address=127.0.0.1 \
+  --server.address="$STREAMLIT_SERVER_ADDRESS" \
   --server.port=8501 \
   --server.headless=true

@@ -22,9 +22,46 @@ class AnswerPrompting:
             return "Aucune note trouvée dans le coffre pour cette requête."
 
         chunks = self._owner._prepare_context_chunks(chunks, query, intent)
+        chunks = self._dedupe_context_chunks(chunks)
         seen_notes = self.group_chunks_by_note(chunks[: cfg.max_context_chunks])
         self.enrich_seen_notes_with_linked_chunks(seen_notes)
         return self.render_context_from_seen_notes(seen_notes, char_budget)
+
+    @staticmethod
+    def _dedupe_context_chunks(chunks: list[dict]) -> list[dict]:
+        """Réduit les redondances évidentes pour compacter le contexte envoyé au modèle.
+
+        Règles légères et stables:
+        - supprime les doublons exacts par `chunk_id`
+        - supprime les quasi-doublons de texte au sein d'une même note
+          (normalisation simple + préfixe de signature)
+        """
+        deduped: list[dict] = []
+        seen_ids: set[str] = set()
+        seen_text_signatures: set[tuple[str, str]] = set()
+
+        for chunk in chunks:
+            chunk_id = str(chunk.get("chunk_id") or "").strip()
+            if chunk_id and chunk_id in seen_ids:
+                continue
+
+            metadata = chunk.get("metadata") or {}
+            file_path = str(metadata.get("file_path") or "")
+            text = str(chunk.get("text") or "")
+            normalized = " ".join(text.lower().split())
+            signature = normalized[:220]
+            text_key = (file_path, signature)
+
+            if signature and text_key in seen_text_signatures:
+                continue
+
+            if chunk_id:
+                seen_ids.add(chunk_id)
+            if signature:
+                seen_text_signatures.add(text_key)
+            deduped.append(chunk)
+
+        return deduped
 
     @staticmethod
     def group_chunks_by_note(chunks: list[dict]) -> dict[str, list[dict]]:
@@ -73,7 +110,18 @@ class AnswerPrompting:
         if not linked_targets:
             return
         linked_budget = max(1, cfg.max_context_chunks // 2)
-        for linked_target in list(linked_targets)[:linked_budget]:
+        selected_targets = list(linked_targets)[:linked_budget]
+        file_path_targets = [target for target in selected_targets if not target.startswith("__title__:")]
+        title_targets = [target for target in selected_targets if target.startswith("__title__:")]
+
+        bulk_chunks_by_path = self._owner._get_linked_chunks_by_file_paths(file_path_targets, limit_per_path=2)
+        for file_path, linked_chunks in bulk_chunks_by_path.items():
+            for chunk in linked_chunks:
+                resolved_path = chunk["metadata"].get("file_path", file_path)
+                if resolved_path not in seen_notes:
+                    seen_notes[resolved_path] = [chunk]
+
+        for linked_target in title_targets:
             linked_chunks = self.load_linked_chunks(linked_target)
             for chunk in linked_chunks:
                 file_path = chunk["metadata"].get("file_path", linked_target)
@@ -88,6 +136,10 @@ class AnswerPrompting:
         cfg = self._owner._get_settings()
         parts: list[str] = []
         budget = char_budget if char_budget is not None else cfg.max_context_chars
+        seen_line_signatures: set[str] = set()
+        effective_max_chunk_chars = cfg.max_chunk_chars
+        if len(seen_notes) >= 5:
+            effective_max_chunk_chars = max(180, int(cfg.max_chunk_chars * 0.75))
 
         for file_path, note_chunks in seen_notes.items():
             if budget <= 0:
@@ -102,10 +154,15 @@ class AnswerPrompting:
                 if budget <= 0:
                     break
                 section = chunk["metadata"].get("section_title", "")
-                text = chunk["text"][: cfg.max_chunk_chars]
-                if len(chunk["text"]) > cfg.max_chunk_chars:
+                text = chunk["text"][:effective_max_chunk_chars]
+                if len(chunk["text"]) > effective_max_chunk_chars:
                     text += "…"
                 line = (f"**{section}** — {text}") if section else text
+                signature = self._line_signature(line)
+                if signature and signature in seen_line_signatures:
+                    continue
+                if signature:
+                    seen_line_signatures.add(signature)
                 if len(line) <= budget:
                     parts.append(line)
                     budget -= len(line)
@@ -115,6 +172,16 @@ class AnswerPrompting:
             parts.append("")
 
         return "\n".join(parts)
+
+    @staticmethod
+    def _line_signature(line: str) -> str:
+        normalized = " ".join(line.lower().split())
+        if not normalized:
+            return ""
+        tokens = [token for token in normalized.split(" ") if len(token) > 2]
+        if not tokens:
+            return normalized[:120]
+        return " ".join(tokens[:18])
 
     def build_messages(
         self,

@@ -2,7 +2,7 @@
 streamlit>=1.35.0
 
 # Base de données vectorielle
-chromadb>=0.5.3
+chromadb==1.5.6
 
 # Embeddings locaux multilingues
 sentence-transformers>=3.1.0

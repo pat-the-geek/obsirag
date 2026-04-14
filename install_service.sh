@@ -78,6 +78,8 @@ AUTOLEARN_ENABLED="$(_env_val AUTOLEARN_ENABLED)"
 AUTOLEARN_ENABLED="${AUTOLEARN_ENABLED:-true}"
 AUTOLEARN_INTERVAL_MINUTES="$(_env_val AUTOLEARN_INTERVAL_MINUTES)"
 AUTOLEARN_INTERVAL_MINUTES="${AUTOLEARN_INTERVAL_MINUTES:-60}"
+STREAMLIT_SERVER_ADDRESS="$(_env_val STREAMLIT_SERVER_ADDRESS)"
+STREAMLIT_SERVER_ADDRESS="${STREAMLIT_SERVER_ADDRESS:-127.0.0.1}"
 
 # APP_DATA_DIR par défaut
 APP_DATA_DIR="${APP_DATA_DIR:-$HOME/Library/Application Support/ObsiRAG}"
@@ -101,7 +103,7 @@ cat > "$PLIST_DST" <<PLIST
         <string>streamlit</string>
         <string>run</string>
         <string>${PROJECT_DIR}/src/ui/app.py</string>
-        <string>--server.address=127.0.0.1</string>
+        <string>--server.address=${STREAMLIT_SERVER_ADDRESS}</string>
         <string>--server.port=8501</string>
         <string>--server.headless=true</string>
     </array>
@@ -117,6 +119,8 @@ cat > "$PLIST_DST" <<PLIST
         <string>${PROJECT_DIR}/.venv/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
         <key>HOME</key>
         <string>${HOME}</string>
+        <key>STREAMLIT_SERVER_ADDRESS</key>
+        <string>${STREAMLIT_SERVER_ADDRESS}</string>
         <key>VAULT_PATH</key>
         <string>${VAULT_PATH}</string>
         <key>APP_DATA_DIR</key>

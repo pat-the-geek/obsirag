@@ -19,6 +19,12 @@ if [ ! -f ".env" ]; then
   exit 1
 fi
 
+set -o allexport
+source ./.env
+set +o allexport
+
+STREAMLIT_SERVER_ADDRESS="${STREAMLIT_SERVER_ADDRESS:-127.0.0.1}"
+
 if [ -f "$PID_FILE" ]; then
   OLD_PID=$(cat "$PID_FILE")
   if kill -0 "$OLD_PID" 2>/dev/null; then
@@ -35,6 +41,11 @@ mkdir -p logs
 
 APP_PID=$!
 echo "$APP_PID" > "$PID_FILE"
-echo "==> ObsiRAG démarré (PID $APP_PID) — http://localhost:8501"
+if [ "$STREAMLIT_SERVER_ADDRESS" = "0.0.0.0" ]; then
+  echo "==> ObsiRAG démarré (PID $APP_PID) — http://localhost:8501"
+  echo "    Exposition reseau active : utilise l'IP de cette machine ou l'IP Tailscale sur le port 8501"
+else
+  echo "==> ObsiRAG démarré (PID $APP_PID) — http://localhost:8501"
+fi
 echo "    Logs  : tail -f logs/obsirag.log"
 echo "    Arrêt : ./stop.sh"

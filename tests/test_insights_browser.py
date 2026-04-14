@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -107,3 +108,17 @@ class TestInsightsBrowserHelpers:
             entries = build_artifact_entries(notes)
 
         assert [path for path, _ in entries] == ["obsirag/insights/b.md", "obsirag/insights/a.md"]
+
+    def test_build_artifact_entries_deduplicates_absolute_and_relative_paths(self, tmp_settings):
+        absolute = tmp_settings.vault / "obsirag" / "insights" / "demo.md"
+        absolute.parent.mkdir(parents=True, exist_ok=True)
+        absolute.write_text("# Demo", encoding="utf-8")
+        notes = [
+            {"file_path": str(absolute), "date_modified": "2026-04-11T10:00:00"},
+            {"file_path": "obsirag/insights/demo.md", "date_modified": "2026-04-10T10:00:00"},
+        ]
+
+        with patch("src.ui.path_resolver.settings", SimpleNamespace(vault=tmp_settings.vault)):
+            entries = build_artifact_entries(notes)
+
+        assert [path for path, _mtime in entries] == ["obsirag/insights/demo.md"]

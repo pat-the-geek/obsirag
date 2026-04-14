@@ -20,9 +20,11 @@ from src.ui.insights_browser import (
     filter_queries,
 )
 from src.ui.note_badges import render_note_badge
+from src.ui.path_resolver import resolve_vault_path
 from src.ui.query_history_store import list_query_history_entries
 from src.ui.services_cache import get_services
-from src.ui.theme import inject_theme, render_nav_bar, render_theme_toggle
+from src.ui.theme import inject_theme, render_theme_toggle
+from src.ui.side_menu import render_side_menu
 
 _PAGE_SIZE = 15  # nombre d'items par page
 
@@ -31,7 +33,7 @@ _PAGE_SIZE = 15  # nombre d'items par page
 def _read_md_file(path_str: str, mtime: float) -> str:
     """Lecture mise en cache du fichier Markdown (TTL 2 min, invalidée si mtime change)."""
     return read_text_file(
-        Path(path_str),
+        resolve_vault_path(path_str),
         default="*Fichier introuvable (archivé ou déplacé).*",
     )
 
@@ -58,12 +60,19 @@ def _paginate(key: str, items: list, page_size: int) -> list:
 
     return slice_
 
+# Icône et config page
 _icon = str(Path(__file__).parent.parent / "static" / "favicon-32x32.png")
 st.set_page_config(page_title="Insights — ObsiRAG", page_icon=_icon, layout="wide", initial_sidebar_state="expanded")
+
 inject_theme()
+# Ajout à l'historique navigation
+HISTO_KEY = "obsirag_historique"
+st.session_state.setdefault(HISTO_KEY, [])
+if not st.session_state[HISTO_KEY] or st.session_state[HISTO_KEY][-1] != "Insights":
+    st.session_state[HISTO_KEY].append("Insights")
+render_side_menu()
 svc = get_services()
 
-render_nav_bar()
 render_theme_toggle()
 st.title("💡 Insights")
 st.caption("Connaissances générées automatiquement et historique de vos questions")

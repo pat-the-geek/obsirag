@@ -21,6 +21,7 @@ from src.ui.note_viewer import (
     make_note_anchor,
 )
 from src.ui.note_badges import prefix_note_label, render_note_badge
+from src.ui.path_resolver import normalize_vault_relative_path, resolve_vault_path
 from src.ui.note_ui_fragments import (
     build_obsidian_open_link_html,
     build_outline_item_html,
@@ -28,12 +29,20 @@ from src.ui.note_ui_fragments import (
 )
 
 from src.ui.services_cache import get_services
-from src.ui.theme import inject_theme, render_nav_bar, render_theme_toggle
+from src.ui.theme import inject_theme, render_theme_toggle
+from src.ui.side_menu import render_side_menu
 
 _icon = str(Path(__file__).parent.parent / "static" / "favicon-32x32.png")
 st.set_page_config(page_title="Note — ObsiRAG", page_icon=_icon, layout="wide", initial_sidebar_state="expanded")
+
 inject_theme()
-render_nav_bar()
+# Ajout à l'historique navigation
+HISTO_KEY = "obsirag_historique"
+st.session_state.setdefault(HISTO_KEY, [])
+note_fp = st.session_state.get("viewing_note")
+if note_fp and (not st.session_state[HISTO_KEY] or st.session_state[HISTO_KEY][-1] != note_fp):
+    st.session_state[HISTO_KEY].append(note_fp)
+render_side_menu()
 svc = get_services()
 
 # ---------------------------------------------------------------------------
@@ -86,9 +95,11 @@ def render_note(content: str, anchor_lines: set[int] | None = None) -> None:
 # ---------------------------------------------------------------------------
 
 notes = svc.chroma.list_notes_sorted_by_title()
-notes_by_path = {note["file_path"]: note for note in notes}
+notes_by_path = {normalize_vault_relative_path(note["file_path"]): note for note in notes}
 
 with st.sidebar:
+    # Composant invisible pour empêcher la fermeture totale de la sidebar
+    st.markdown('<div style="height:1px;opacity:0;">.</div>', unsafe_allow_html=True)
     st.markdown("### 📄 Sélectionner une note")
 
     search_term = st.text_input("🔍 Rechercher", placeholder="Titre ou chemin…")
@@ -122,13 +133,24 @@ with st.sidebar:
     if labels:
         # Navigation externe : une autre page a positionné note_nav_request
         _nav_fp = st.session_state.pop(_NAV_KEY, None)
+        # Synchronisation avec viewing_note si défini
+        _viewing_fp = st.session_state.get("viewing_note")
         if _nav_fp:
+            normalized_nav_fp = normalize_vault_relative_path(_nav_fp)
             _nav_label = next(
-                (lbl for lbl, fp in label_to_fp.items() if fp == _nav_fp),
+                (lbl for lbl, fp in label_to_fp.items() if normalize_vault_relative_path(fp) == normalized_nav_fp),
                 None,
             )
             if _nav_label:
                 st.session_state[_SELECTOR_KEY] = _nav_label
+        elif _viewing_fp:
+            normalized_viewing_fp = normalize_vault_relative_path(_viewing_fp)
+            _viewing_label = next(
+                (lbl for lbl, fp in label_to_fp.items() if normalize_vault_relative_path(fp) == normalized_viewing_fp),
+                None,
+            )
+            if _viewing_label:
+                st.session_state[_SELECTOR_KEY] = _viewing_label
         elif st.session_state.get(_SELECTOR_KEY) not in labels:
             # Premier chargement ou liste filtrée ne contient plus la sélection
             st.session_state[_SELECTOR_KEY] = labels[0]
@@ -139,7 +161,7 @@ with st.sidebar:
             key=_SELECTOR_KEY,
             label_visibility="collapsed",
         )
-        selected_fp = label_to_fp.get(selected_label, "")
+        selected_fp = normalize_vault_relative_path(label_to_fp.get(selected_label, ""))
         st.session_state.viewing_note = selected_fp
     else:
         selected_fp = ""
@@ -157,7 +179,7 @@ if not selected_fp:
     st.info("Aucune note sélectionnée. Utilisez le sélecteur dans la barre latérale.")
     st.stop()
 
-note_abs = settings.vault / selected_fp
+note_abs = resolve_vault_path(selected_fp)
 if not note_abs.exists():
     st.error(f"Fichier introuvable : `{selected_fp}`")
     st.stop()

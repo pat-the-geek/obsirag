@@ -5,13 +5,15 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
+from src.ui.path_resolver import normalize_vault_relative_path
+
 
 def build_artifact_entries(notes: list[dict]) -> list[tuple[str, float]]:
     entries: list[tuple[str, float]] = []
     seen_paths: set[str] = set()
 
     for note in notes:
-        path_str = str(note.get("file_path") or "")
+        path_str = normalize_vault_relative_path(str(note.get("file_path") or ""))
         if not path_str or path_str in seen_paths:
             continue
         seen_paths.add(path_str)

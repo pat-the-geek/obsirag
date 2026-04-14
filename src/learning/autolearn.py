@@ -293,15 +293,23 @@ class AutoLearner:
         *,
         sleep_between_questions: int | None = None,
         sleep_after_note: int = 0,
+        adaptive_sleep_after_note: bool = False,
         error_prefix: str,
     ) -> bool:
         try:
             started_at = time.perf_counter()
             self._process_note(note_meta, sleep_between_questions=sleep_between_questions)
+            processing_secs = time.perf_counter() - started_at
             self._mark_processed(note_meta["file_path"])
             if sleep_after_note > 0:
-                time.sleep(sleep_after_note)
-            self._record_processing_time(time.perf_counter() - started_at)
+                effective_sleep = float(sleep_after_note)
+                if adaptive_sleep_after_note:
+                    # Si la note a déjà consommé du temps CPU/LLM, on réduit la pause
+                    # pour éviter de dégrader inutilement le débit global.
+                    effective_sleep = max(0.0, effective_sleep - min(processing_secs, effective_sleep))
+                if effective_sleep > 0:
+                    time.sleep(effective_sleep)
+            self._record_processing_time(processing_secs)
             return True
         except Exception as exc:
             logger.warning(f"{error_prefix} {note_meta['file_path']} : {exc}")
@@ -576,6 +584,7 @@ class AutoLearner:
                 if self._process_and_mark_note(
                     note_meta,
                     sleep_after_note=self._SLEEP_BETWEEN_NOTES,
+                    adaptive_sleep_after_note=True,
                     error_prefix="Auto-learner : erreur sur",
                 ):
                     processed_count += 1
@@ -597,6 +606,7 @@ class AutoLearner:
                 if self._process_and_mark_note(
                     note_meta,
                     sleep_after_note=self._SLEEP_BETWEEN_NOTES,
+                    adaptive_sleep_after_note=True,
                     error_prefix="Auto-learner full-scan : erreur sur",
                 ):
                     processed_count += 1

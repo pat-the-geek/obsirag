@@ -9,12 +9,13 @@ from __future__ import annotations
 import os
 import sqlite3
 import tempfile
+import threading
 import time
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
-from chromadb.errors import InternalError
+from chromadb.errors import InternalError, NotFoundError
 
 from src.indexer.chunker import Chunk
 
@@ -90,6 +91,9 @@ def _make_chroma_store(tmp_path):
     store = MagicMock()
     store._client = client
     store._collection = collection
+    store._embed_fn = _FakeEmbedFn()
+    store._lock = threading.RLock()
+    store._persist_dir = str(tmp_path / "chroma-test")
     store._list_notes_cache = None
     store._list_notes_ts = 0.0
     store._note_views_cache = None
@@ -108,6 +112,7 @@ def _make_chroma_store(tmp_path):
         "list_generated_notes", "list_notes_sorted_by_title", "list_recent_notes",
         "count_notes", "list_note_folders", "list_note_tags", "list_notes_by_type",
         "list_insight_notes", "list_synapse_notes", "list_report_notes", "get_backlinks",
+        "_collection_get", "_refresh_collection", "_run_collection_op",
     ]:
         real_method = getattr(ChromaStore, method)
         setattr(store, method, lambda *a, m=real_method, s=store, **kw: m(s, *a, **kw))
@@ -202,6 +207,33 @@ class TestChromaCountCache:
             assert chroma.count() == 1
         finally:
             cs_module._LIST_NOTES_TTL = original_ttl
+
+    def test_count_recovers_when_collection_handle_is_stale(self, chroma):
+        chroma.add_chunks([_make_chunk(0)])
+        stale_collection = chroma._collection
+        original_count = stale_collection.count
+
+        def _broken_count(**_kwargs):
+            raise NotFoundError("Collection handle invalide")
+
+        stale_collection.count = _broken_count
+        chroma._count_cache = None
+        chroma._count_ts = 0.0
+
+        with patch.object(
+            chroma,
+            "_refresh_collection",
+            side_effect=lambda: setattr(stale_collection, "count", original_count),
+        ):
+            assert chroma.count() == 1
+
+    def test_count_returns_fallback_value_when_sqlite_and_chroma_fail(self, chroma):
+        chroma._count_cache = 7
+        chroma._count_ts = 0.0
+
+        with patch("src.database.chroma_store.sqlite3.connect", side_effect=RuntimeError("sqlite down")):
+            with patch.object(chroma, "_run_collection_op", side_effect=NotFoundError("missing collection")):
+                assert chroma.count() == 7
 
 
 # ---------------------------------------------------------------------------

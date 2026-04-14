@@ -296,7 +296,7 @@ class TestRAGConversationBehavior:
     def test_stream_first_token_or_empty_returns_empty_iterator(self, rag, mock_llm):
         mock_llm.stream.return_value = iter([])
 
-        stream = rag._stream_first_token_or_empty([{"role": "user", "content": "Q"}])
+        stream = rag._stream_first_token_or_empty([{"role": "user", "content": "Q"}], "general")
 
         assert list(stream) == []
 
@@ -326,10 +326,15 @@ class TestRAGConversationBehavior:
     def test_retry_forced_study_synthesis_returns_retry_when_successful(self, rag, mock_llm):
         mock_llm.chat.return_value = "Synthèse forcée utile"
 
+        # PERF-15b : le retry exige >= 2 notes distinctes dans le contexte
+        context = (
+            "## Note A\n" + "x" * 200 + "\n"
+            "## Note B\n" + "y" * 200 + "\n"
+        )
         answer = rag._retry_forced_study_synthesis(
             answer="Cette information n'est pas dans ton coffre.",
             query="relation entre A et B",
-            context="x" * 400,
+            context=context,
             history=[],
             intent="relation",
         )
@@ -839,6 +844,210 @@ class TestRAGPerformance:
             rag._retrieve(f"Question numéro {i} ?")
         elapsed = time.perf_counter() - t0
         assert elapsed < 1.0, f"10 retrievals trop lents : {elapsed:.3f}s"
+
+
+# ---------------------------------------------------------------------------
+# PERF-14 — Backpressure gate (_InferenceBackpressure)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.unit
+class TestInferenceBackpressure:
+    """Tests de la gate de backpressure sans LLM réel."""
+
+    def _make_gate(self, max_queue=2, timeout_s=0.1):
+        from src.ai.rag import _InferenceBackpressure
+        return _InferenceBackpressure(max_queue=max_queue, timeout_s=timeout_s)
+
+    def test_acquire_release_cycle(self):
+        gate = self._make_gate()
+        assert gate.queue_depth == 0
+        gate.acquire()
+        assert gate.queue_depth == 1
+        gate.release()
+        assert gate.queue_depth == 0
+
+    def test_rejects_when_queue_full(self):
+        """La gate doit rejeter dès que active >= 1 + max_queue."""
+        gate = self._make_gate(max_queue=0)
+        gate.acquire()  # slot unique occupé
+        # le second thread ne peut pas entrer — rejection immédiate car max_active=1
+        # (max_queue=0 → max_active=1, déjà atteint)
+        with pytest.raises(RuntimeError, match="satur"):
+            gate.acquire()
+        gate.release()
+
+    def test_timeout_raises_runtime_error(self):
+        """Quand le semaphore est occupé et le timeout expire, RuntimeError est levée."""
+        gate = self._make_gate(max_queue=1, timeout_s=0.05)
+        gate.acquire()  # slot occupé par ce thread lui-même
+        # Avec max_queue=1, on peut en avoir 2 en _active ; on tente un 2e acquire.
+        # Le semaphore ne sera jamais libéré → timeout s'écoule.
+        import threading
+        error_caught = []
+        def _try_acquire():
+            try:
+                gate.acquire()
+            except RuntimeError as e:
+                error_caught.append(str(e))
+
+        t = threading.Thread(target=_try_acquire)
+        t.start()
+        t.join(timeout=1.0)
+        assert not t.is_alive(), "Le thread ne s'est pas terminé dans les temps"
+        assert error_caught, "Aucune RuntimeError capturée"
+        assert "D\u00e9lai" in error_caught[0]
+        gate.release()
+
+    def test_query_acquires_and_releases_gate(self, rag, mock_llm):
+        """Après query(), la gate doit être revenue à 0."""
+        assert rag._backpressure.queue_depth == 0
+        rag.query("Qu'est-ce que Python ?")
+        assert rag._backpressure.queue_depth == 0
+
+    def test_query_stream_acquires_and_releases_gate(self, rag, mock_llm):
+        """Après consommation complète du stream, la gate doit être revenue à 0."""
+        stream, _ = rag.query_stream("Qu'est-ce que Python ?")
+        list(stream)  # consomme entièrement
+        assert rag._backpressure.queue_depth == 0
+
+    def test_query_stream_synthesis_acquires_and_releases_gate(self, rag, mock_llm):
+        """Pour les intents synthesis, la gate est libérée dès le retour de query_stream."""
+        from unittest.mock import patch
+        chunks = [_make_chunk(title="Python")]
+        mock_llm.chat.return_value = "Synthèse Python."
+        with patch.object(rag, "_retrieve", return_value=(chunks, "synthesis")):
+            stream, _ = rag.query_stream("Fais une synthèse sur Python")
+        list(stream)
+        assert rag._backpressure.queue_depth == 0
+
+    def test_no_chunks_bypasses_gate(self, rag):
+        """Le chemin 'aucun résultat' ne doit pas acquérir la gate."""
+        from unittest.mock import patch
+        with patch.object(rag, "_retrieve", return_value=([], "general")):
+            stream, _ = rag.query_stream("Sujet absent")
+        list(stream)
+        assert rag._backpressure.queue_depth == 0
+
+
+# ---------------------------------------------------------------------------
+# PERF-15a — Cache réponse (_AnswerCache)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.unit
+class TestAnswerCache:
+    def _make_cache(self, ttl_s=60.0):
+        from src.ai.rag import _AnswerCache
+        return _AnswerCache(ttl_s=ttl_s, max_size=16)
+
+    def test_miss_returns_none(self):
+        cache = self._make_cache()
+        assert cache.get("Qu'est-ce que Python ?", []) is None
+
+    def test_put_then_get(self):
+        cache = self._make_cache()
+        cache.put("Question", [], "Réponse", [{"source": "a"}])
+        result = cache.get("Question", [])
+        assert result is not None
+        answer, sources = result
+        assert answer == "Réponse"
+        assert sources == [{"source": "a"}]
+
+    def test_normalization_ignores_case_and_whitespace(self):
+        cache = self._make_cache()
+        cache.put("Python", [], "Réponse", [])
+        assert cache.get("python", []) is not None
+        assert cache.get("  Python  ", []) is not None
+
+    def test_ttl_expiry(self):
+        import time as _time
+        cache = self._make_cache(ttl_s=0.05)
+        cache.put("Q", [], "R", [])
+        _time.sleep(0.1)
+        assert cache.get("Q", []) is None
+
+    def test_different_history_is_different_key(self):
+        cache = self._make_cache()
+        h1 = [{"role": "user", "content": "contexte A"}]
+        h2 = [{"role": "user", "content": "contexte B"}]
+        cache.put("Q", h1, "Réponse A", [])
+        assert cache.get("Q", h2) is None
+
+    def test_invalidate_removes_entry(self):
+        cache = self._make_cache()
+        cache.put("Q", [], "R", [])
+        cache.invalidate("Q", [])
+        assert cache.get("Q", []) is None
+
+    def test_max_size_evicts_oldest(self):
+        cache = self._make_cache()
+        for i in range(20):
+            cache.put(f"Q{i}", [], f"R{i}", [])
+        assert cache.size <= 16
+
+    def test_query_uses_cache_on_second_call(self, rag, mock_llm):
+        rag.query("Qu'est-ce que Python ?")
+        mock_llm.chat.reset_mock()
+        rag.query("Qu'est-ce que Python ?")
+        mock_llm.chat.assert_not_called()
+
+    def test_query_stream_uses_cache_on_second_call(self, rag, mock_llm):
+        stream1, _ = rag.query_stream("Qu'est-ce que Python ?")
+        list(stream1)  # consomme pour déclencher le stockage
+        mock_llm.stream.reset_mock()
+        stream2, _ = rag.query_stream("Qu'est-ce que Python ?")
+        list(stream2)
+        mock_llm.stream.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# PERF-15b — Retry synthesis conditionnel
+# ---------------------------------------------------------------------------
+
+@pytest.mark.unit
+class TestRetrySynthesisConditional:
+    def test_skip_retry_when_single_source_in_context(self, rag, mock_llm):
+        """Avec une seule note dans le contexte, pas de 2e appel LLM."""
+        context = "## Note unique\nQuelques lignes sur Python.\n" * 5  # > 300 chars
+        answer_sentinel = "Cette information n'est pas dans ton coffre."
+        result = rag._retry_forced_study_synthesis(
+            answer=answer_sentinel,
+            query="Synthèse sur Python",
+            context=context,
+            history=[],
+            intent="synthesis",
+        )
+        mock_llm.chat.assert_not_called()
+        assert result == answer_sentinel
+
+    def test_retry_triggered_with_multiple_sources(self, rag, mock_llm):
+        """Avec 2+ notes distinctes, le retry est tenté."""
+        context = (
+            "## Note A\n" + "Python est un langage. " * 20 + "\n"
+            "## Note B\n" + "Data science et Python. " * 20 + "\n"
+        )
+        answer_sentinel = "Cette information n'est pas dans ton coffre."
+        mock_llm.chat.return_value = "Voici une synthèse utile."
+        result = rag._retry_forced_study_synthesis(
+            answer=answer_sentinel,
+            query="Synthèse sur Python",
+            context=context,
+            history=[],
+            intent="synthesis",
+        )
+        mock_llm.chat.assert_called_once()
+        assert result == "Voici une synthèse utile."
+
+    def test_no_retry_for_non_synthesis_intent(self, rag, mock_llm):
+        context = "## Note A\n" + "x" * 400 + "\n## Note B\n" + "y" * 400
+        result = rag._retry_forced_study_synthesis(
+            answer="Cette information n'est pas dans ton coffre.",
+            query="Qu'est-ce que Python ?",
+            context=context,
+            history=[],
+            intent="general",
+        )
+        mock_llm.chat.assert_not_called()
+        assert "coffre" in result
 
 
 # ---------------------------------------------------------------------------

@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 import chromadb
-from chromadb.errors import InternalError
+from chromadb.errors import InternalError, NotFoundError
 from chromadb.utils.embedding_functions import EmbeddingFunction
 from loguru import logger
 
@@ -72,9 +72,11 @@ class ChromaStore:
 
     def __init__(self) -> None:
         persist_dir = settings.chroma_persist_dir
+        self._persist_dir = persist_dir
         logger.info(f"Initialisation ChromaDB → {persist_dir}")
 
         embed_fn = _build_embedding_function()
+        self._embed_fn = embed_fn
         self._client, self._collection = self._init_with_recovery(
             persist_dir, embed_fn
         )
@@ -88,10 +90,7 @@ class ChromaStore:
         self._count_cache: int | None = None
         self._count_ts: float = 0.0
 
-        logger.info(
-            f"Collection '{settings.chroma_collection}' — "
-            f"{self._collection.count()} chunks existants"
-        )
+        logger.info(f"Collection '{settings.chroma_collection}' prête")
 
     def _init_with_recovery(self, persist_dir: str, embed_fn: EmbeddingFunction):
         """Ouvre ChromaDB. En cas de corruption HNSW, efface et repart à zéro."""
@@ -103,8 +102,6 @@ class ChromaStore:
                     embedding_function=embed_fn,
                     metadata={"hnsw:space": "cosine"},
                 )
-                # Force un count() pour détecter la corruption dès maintenant
-                collection.count()
                 return client, collection
             except InternalError as e:
                 if attempt == 0:
@@ -126,11 +123,36 @@ class ChromaStore:
                     raise
 
     def _collection_get(self, **kwargs) -> dict:
+        return self._run_collection_op("get", **kwargs)
+
+    def _refresh_collection(self) -> None:
+        self._collection = self._client.get_or_create_collection(
+            name=settings.chroma_collection,
+            embedding_function=getattr(self, "_embed_fn", None),
+            metadata={"hnsw:space": "cosine"},
+        )
+
+    def _run_collection_op(self, operation: str, **kwargs):
         lock = getattr(self, "_lock", None)
+
+        def _invoke():
+            method = getattr(self._collection, operation)
+            return method(**kwargs)
+
+        def _invoke_with_recovery():
+            try:
+                return _invoke()
+            except NotFoundError:
+                logger.warning(
+                    f"Collection Chroma introuvable pendant '{operation}' — reouverture automatique"
+                )
+                self._refresh_collection()
+                return _invoke()
+
         if lock is None:
-            return self._collection.get(**kwargs)
+            return _invoke_with_recovery()
         with lock:
-            return self._collection.get(**kwargs)
+            return _invoke_with_recovery()
 
     @staticmethod
     def _metadata_to_chunk(doc: str, meta: dict | None, *, fallback_value: str, score: float = 0.0) -> dict:
@@ -170,12 +192,12 @@ class ChromaStore:
         if not chunks:
             return
         t0 = time.perf_counter()
-        with self._lock:
-            self._collection.upsert(
-                ids=[c.chunk_id for c in chunks],
-                documents=[c.text for c in chunks],
-                metadatas=[c.as_metadata() for c in chunks],
-            )
+        self._run_collection_op(
+            "upsert",
+            ids=[c.chunk_id for c in chunks],
+            documents=[c.text for c in chunks],
+            metadatas=[c.as_metadata() for c in chunks],
+        )
         elapsed = time.perf_counter() - t0
         backend = settings.ollama_embed_model or settings.embedding_model
         logger.info(
@@ -187,16 +209,17 @@ class ChromaStore:
     def delete_by_file(self, rel_path: str) -> None:
         try:
             total_deleted = 0
-            with self._lock:
-                while True:
-                    results = self._collection.get(
-                        where={"file_path": rel_path}, limit=500
-                    )
-                    ids = results.get("ids", [])
-                    if not ids:
-                        break
-                    self._collection.delete(ids=ids)
-                    total_deleted += len(ids)
+            while True:
+                results = self._run_collection_op(
+                    "get",
+                    where={"file_path": rel_path},
+                    limit=500,
+                )
+                ids = results.get("ids", [])
+                if not ids:
+                    break
+                self._run_collection_op("delete", ids=ids)
+                total_deleted += len(ids)
             if total_deleted:
                 logger.debug(f"Suppression de {total_deleted} chunk(s) pour {rel_path}")
                 self.invalidate_list_notes_cache()
@@ -213,15 +236,17 @@ class ChromaStore:
     ) -> list[dict]:
         kwargs: dict[str, Any] = {
             "query_texts": [query],
-            "n_results": min(top_k, max(1, self._collection.count())),
+            # Evite count() sur le client rust Chroma: observé instable en runtime
+            # sur certains runs benchmark. Chroma limite naturellement aux résultats
+            # disponibles si n_results > taille réelle de la collection.
+            "n_results": max(1, top_k),
             "include": ["documents", "metadatas", "distances"],
         }
         if where:
             kwargs["where"] = where
 
         t0 = time.perf_counter()
-        with self._lock:
-            results = self._collection.query(**kwargs)
+        results = self._run_collection_op("query", **kwargs)
         elapsed = time.perf_counter() - t0
         backend = settings.ollama_embed_model or settings.embedding_model
         logger.debug(
@@ -305,6 +330,50 @@ class ChromaStore:
 
     def get_chunks_by_file_path(self, file_path: str, limit: int = 2) -> list[dict]:
         return self._get_chunks_by_metadata("file_path", file_path, limit=limit)
+
+    def get_chunks_by_file_paths(self, file_paths: list[str], limit_per_path: int = 2) -> dict[str, list[dict]]:
+        if not file_paths:
+            return {}
+
+        normalized_paths: list[str] = []
+        seen_paths: set[str] = set()
+        for file_path in file_paths:
+            candidate = str(file_path or "").strip()
+            if not candidate or candidate in seen_paths:
+                continue
+            seen_paths.add(candidate)
+            normalized_paths.append(candidate)
+
+        if not normalized_paths:
+            return {}
+
+        max_results = max(1, len(normalized_paths) * max(1, limit_per_path) * 4)
+        try:
+            raw = ChromaStore._collection_get(
+                self,
+                where={"file_path": {"$in": normalized_paths}},
+                limit=max_results,
+                include=["documents", "metadatas"],
+            )
+        except Exception:
+            return {
+                file_path: self.get_chunks_by_file_path(file_path, limit=limit_per_path)
+                for file_path in normalized_paths
+            }
+
+        grouped: dict[str, list[dict]] = {file_path: [] for file_path in normalized_paths}
+        for doc, meta in zip(raw.get("documents") or [], raw.get("metadatas") or []):
+            metadata = dict(meta or {})
+            file_path = str(metadata.get("file_path") or "").strip()
+            if file_path not in grouped:
+                continue
+            if len(grouped[file_path]) >= limit_per_path:
+                continue
+            grouped[file_path].append(
+                ChromaStore._metadata_to_chunk(doc, metadata, fallback_value=file_path)
+            )
+
+        return grouped
 
     def get_notes_by_file_paths(self, file_paths: list[str]) -> list[dict]:
         if not file_paths:
@@ -514,8 +583,35 @@ class ChromaStore:
         now = time.monotonic()
         if self._count_cache is not None and (now - self._count_ts) < _LIST_NOTES_TTL:
             return self._count_cache
-        with self._lock:
-            result = self._collection.count()
+
+        db_path = Path(getattr(self, "_persist_dir", settings.chroma_persist_dir)) / "chroma.sqlite3"
+        result: int | None = None
+        try:
+            con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+            try:
+                row = con.execute(
+                    """
+                    SELECT COUNT(*)
+                    FROM embeddings e
+                    INNER JOIN segments s ON s.id = e.segment_id
+                    INNER JOIN collections c ON c.id = s.collection
+                    WHERE c.name = ?
+                    """,
+                    (settings.chroma_collection,),
+                ).fetchone()
+                result = int(row[0] or 0) if row else 0
+            finally:
+                con.close()
+        except Exception as exc:
+            logger.debug(f"count SQLite direct failed ({exc}), fallback ChromaDB API")
+            try:
+                result = self._run_collection_op("count")
+            except Exception as fallback_exc:
+                logger.warning(
+                    f"count Chroma indisponible ({fallback_exc}) — retour valeur de secours"
+                )
+                result = self._count_cache if self._count_cache is not None else 0
+
         self._count_cache = result
         self._count_ts = now
         return result

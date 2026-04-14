@@ -157,6 +157,36 @@ def _css_block(p: dict) -> str:
         background-color: {p["bg2"]} !important;
         border-right: 1px solid {p["border"]} !important;
     }}
+    @media (min-width: 769px) {{
+        section[data-testid="stSidebar"],
+        [data-testid="stSidebar"] {{
+            display: block !important;
+            visibility: visible !important;
+            transform: translateX(0) !important;
+            margin-left: 0 !important;
+            min-width: 21rem !important;
+            max-width: 21rem !important;
+            width: 21rem !important;
+        }}
+        section[data-testid="stSidebar"][aria-expanded="false"],
+        [data-testid="stSidebar"][aria-expanded="false"] {{
+            display: block !important;
+            visibility: visible !important;
+            transform: translateX(0) !important;
+            margin-left: 0 !important;
+            min-width: 21rem !important;
+            max-width: 21rem !important;
+            width: 21rem !important;
+        }}
+        [data-testid="stExpandSidebarButton"],
+        [data-testid="stSidebarCollapseButton"],
+        [data-testid="stSidebarCollapsedControl"],
+        [data-testid="collapsedControl"] {{
+            display: none !important;
+            visibility: hidden !important;
+            pointer-events: none !important;
+        }}
+    }}
     [data-testid="stSidebarNav"],
     [data-testid="stSidebarNavItems"],
     [data-testid="stSidebarNavSeparator"],
@@ -650,7 +680,6 @@ def inject_theme() -> None:
 
     # Synchronise localStorage pour les iframes Mermaid (même clé)
     _sync_localstorage(pref)
-    _inject_sidebar_toggle_control()
 
 
 def _sync_localstorage(pref: str) -> None:
@@ -660,149 +689,6 @@ def _sync_localstorage(pref: str) -> None:
         try {{ localStorage.setItem({repr(_LS_KEY)}, {repr(pref)}); }} catch(e) {{}}
         """
     )
-
-
-def _inject_sidebar_toggle_control() -> None:
-    """Ajoute un bouton flottant robuste pour rouvrir la sidebar Streamlit."""
-    run_inline_script(
-    """
-    (function() {
-                    function getRootDocument() {
-                        try {
-                            if (window.parent && window.parent.document) {
-                                return window.parent.document;
-                            }
-                        } catch (error) {
-                        }
-                        return document;
-                    }
-
-                    const rootDocument = getRootDocument();
-                    const rootWindow = rootDocument.defaultView || window;
-                    const selectors = [
-                        '[data-testid="stSidebarCollapsedControl"]',
-                        '[data-testid="collapsedControl"]',
-                        '[data-testid="stSidebarCollapsedControl"] button',
-                        '[data-testid="collapsedControl"] button',
-                        '[data-testid="stSidebarCollapseButton"]',
-                        '[data-testid="stSidebarCollapseButton"] button',
-                        'button[aria-label*="sidebar" i]',
-                        'button[title*="sidebar" i]'
-                    ];
-
-                    function getSidebar() {
-                        return rootDocument.querySelector('section[data-testid="stSidebar"]')
-                            || rootDocument.querySelector('[data-testid="stSidebar"]');
-                    }
-
-                    function ensureButton() {
-                        let button = rootDocument.getElementById('obsirag-sidebar-toggle');
-                        if (!button) {
-                            button = rootDocument.createElement('button');
-                            button.id = 'obsirag-sidebar-toggle';
-                            button.type = 'button';
-                            button.setAttribute('aria-label', 'Ouvrir la barre laterale');
-                            button.setAttribute('title', 'Ouvrir la barre laterale');
-                            button.textContent = '☰';
-                            Object.assign(button.style, {
-                                position: 'fixed',
-                                top: '0.75rem',
-                                left: '0.75rem',
-                                width: '2.5rem',
-                                height: '2.5rem',
-                                borderRadius: '0.75rem',
-                                border: '1px solid #0066b8',
-                                background: '#f7f7f7',
-                                color: '#0066b8',
-                                boxShadow: '0 10px 30px rgba(0, 0, 0, 0.18)',
-                                zIndex: '2147483647',
-                                display: 'flex',
-                                alignItems: 'center',
-                                justifyContent: 'center',
-                                cursor: 'pointer',
-                                fontSize: '1.1rem',
-                                lineHeight: '1',
-                                pointerEvents: 'auto'
-                            });
-                            rootDocument.body.appendChild(button);
-                        }
-                        return button;
-                    }
-
-                    function sidebarIsExpanded() {
-                        const sidebar = getSidebar();
-                        if (!sidebar) {
-                            return false;
-                        }
-                        const expanded = sidebar.getAttribute('aria-expanded');
-                        if (expanded === 'true') {
-                            return true;
-                        }
-                        const rect = sidebar.getBoundingClientRect();
-                        return rect.width > 100;
-                    }
-
-                    function findNativeToggle() {
-                        for (const selector of selectors) {
-                            const element = rootDocument.querySelector(selector);
-                            if (element) {
-                                return element.tagName === 'BUTTON' ? element : element.querySelector('button') || element;
-                            }
-                        }
-                        return null;
-                    }
-
-                    function forceOpenSidebar() {
-                        const sidebar = getSidebar();
-                        if (!sidebar) {
-                            return;
-                        }
-                        sidebar.setAttribute('aria-expanded', 'true');
-                        sidebar.style.transform = 'translateX(0)';
-                        sidebar.style.marginLeft = '0';
-                        sidebar.style.width = '21rem';
-                        sidebar.style.minWidth = '21rem';
-                        sidebar.style.maxWidth = '21rem';
-                    }
-
-                    function openSidebar() {
-                        const nativeToggle = findNativeToggle();
-                        if (nativeToggle) {
-                            nativeToggle.click();
-                        } else {
-                            forceOpenSidebar();
-                        }
-                    }
-
-                    const button = ensureButton();
-                    if (button.dataset.obsiragBound !== '1') {
-                        button.dataset.obsiragBound = '1';
-                        button.addEventListener('click', function(event) {
-                            event.preventDefault();
-                            event.stopPropagation();
-                            openSidebar();
-                            rootWindow.setTimeout(syncButtonVisibility, 50);
-                            rootWindow.setTimeout(syncButtonVisibility, 250);
-                        });
-                    }
-
-                    function syncButtonVisibility() {
-                        button.style.display = sidebarIsExpanded() ? 'none' : 'flex';
-                    }
-
-                    syncButtonVisibility();
-                    if (!rootWindow.__obsiragSidebarToggleObserver) {
-                        rootWindow.__obsiragSidebarToggleObserver = new MutationObserver(syncButtonVisibility);
-                        rootWindow.__obsiragSidebarToggleObserver.observe(rootDocument.body, {
-                            attributes: true,
-                            childList: true,
-                            subtree: true,
-                        });
-                        rootWindow.addEventListener('resize', syncButtonVisibility);
-                    }
-            })();
-            """
-            )
 
 
 _NAV_PAGES = [

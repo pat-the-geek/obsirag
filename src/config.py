@@ -79,6 +79,14 @@ class Settings(BaseSettings):
     chroma_perf_report_budget_mb: float = 50.0
     chroma_perf_trend_warn_pct: float = 20.0
 
+    # Feature flags runtime (rollback rapide PERF-14 / PERF-15)
+    rag_backpressure_enabled: bool = True       # PERF-14 : gate de concurrence MLX
+    rag_backpressure_max_queue: int = 2         # requêtes max en attente derrière le slot actif
+    rag_backpressure_timeout_s: float = 120.0   # délai max avant rejet
+    rag_answer_cache_enabled: bool = True       # PERF-15a : cache réponse en mémoire
+    rag_answer_cache_ttl_s: float = 300.0       # TTL cache réponse (secondes)
+    rag_answer_cache_max_size: int = 128        # nombre max d'entrées dans le cache
+
     # Export hebdomadaire compact des deltas observabilité
     observability_weekly_retention_days: int = 180
     observability_weekly_max_files: int = 104

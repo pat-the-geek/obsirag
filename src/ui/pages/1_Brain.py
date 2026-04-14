@@ -17,15 +17,23 @@ from src.ui.note_badges import get_note_type_options, prefix_note_label, render_
 from src.ui.services_cache import get_services
 from src.ui.components.note_bridge_component import note_bridge as _note_bridge
 from src.ui.html_embed import render_html_document
-from src.ui.theme import inject_theme, render_nav_bar, render_theme_toggle
+from src.ui.theme import inject_theme, render_theme_toggle
+from src.ui.side_menu import render_side_menu
 
+# Icône et config page
 _icon = str(Path(__file__).parent.parent / "static" / "favicon-32x32.png")
 _brain_b64 = base64.b64encode(
     (Path(__file__).parent.parent / "static" / "brain_transparent.svg").read_bytes()
 ).decode()
 st.set_page_config(page_title="Cerveau — ObsiRAG", page_icon=_icon, layout="wide", initial_sidebar_state="expanded")
 inject_theme()
-render_nav_bar()
+
+# Ajout à l'historique navigation
+HISTO_KEY = "obsirag_historique"
+st.session_state.setdefault(HISTO_KEY, [])
+if not st.session_state[HISTO_KEY] or st.session_state[HISTO_KEY][-1] != "Cerveau":
+    st.session_state[HISTO_KEY].append("Cerveau")
+render_side_menu()
 
 svc = get_services()
 
