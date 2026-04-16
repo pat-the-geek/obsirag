@@ -91,6 +91,9 @@ class TestGraphBuilder:
         assert "document.createElement('iframe')" in html
         assert "localStorage.setItem('obsirag_open_note', fp)" in html
         assert "window.parent.postMessage({ obsirag_open_note: fp }, '*')" in html
+        assert 'name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"' in html
+        assert "window.matchMedia('(max-width: 768px)').matches" in html
+        assert "network.once('stabilizationIterationsDone'" in html
         fake_net.add_node.assert_called_once()
 
     def test_to_pyvis_html_colors_semantic_edges_in_green(self):

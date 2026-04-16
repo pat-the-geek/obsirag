@@ -57,7 +57,7 @@ from src.ui.chat_view_models import (
 )
 from src.ui.runtime_state_store import load_processed_notes_map, load_processing_status
 from src.ui.theme import inject_theme, render_theme_toggle
-from src.ui.side_menu import render_side_menu
+from src.ui.side_menu import render_mobile_main_menu, render_side_menu
 from src.ai.web_search import enrich_sync, is_not_in_vault
 
 # ---- Configuration de la page ----
@@ -70,6 +70,7 @@ st.set_page_config(
 )
 
 inject_theme()
+render_mobile_main_menu()
 # Ajout à l'historique navigation
 HISTO_KEY = "obsirag_historique"
 st.session_state.setdefault(HISTO_KEY, [])

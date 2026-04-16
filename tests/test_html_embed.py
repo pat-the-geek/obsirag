@@ -33,3 +33,40 @@ class TestHtmlEmbed:
             "<script>console.log('demo');</script>",
             unsafe_allow_javascript=True,
         )
+
+    def test_render_html_document_can_use_inline_transport(self):
+        document = "<div id='graph'></div><script>console.log('graph');</script>"
+
+        with patch("src.ui.html_embed.st.html") as html:
+            render_html_document(document, height=320, transport="inline")
+
+        html.assert_called_once_with(
+            document,
+            width="stretch",
+            unsafe_allow_javascript=True,
+        )
+
+    def test_render_html_document_can_use_srcdoc_transport(self):
+        document = "<html><body><script>console.log(\"graph\")</script></body></html>"
+
+        with patch("src.ui.html_embed.st.html") as html_mock:
+            render_html_document(document, height=320, transport="srcdoc")
+
+        html_mock.assert_called_once()
+        args, kwargs = html_mock.call_args
+        assert "<iframe" in args[0]
+        assert 'sandbox="allow-scripts allow-same-origin allow-popups"' in args[0]
+        assert 'height:320px' in args[0]
+        assert "srcdoc=" in args[0]
+        assert "<script>" not in args[0]
+        assert "&lt;script&gt;" in args[0]
+        assert "&quot;graph&quot;" in args[0]
+        assert kwargs == {"width": "stretch"}
+
+    def test_render_html_document_can_use_component_transport(self):
+        document = "<html><body><script>console.log('graph')</script></body></html>"
+
+        with patch("src.ui.html_embed.st_components.html") as component_html:
+            render_html_document(document, height=320, transport="component")
+
+        component_html.assert_called_once_with(document, height=320, scrolling=False)

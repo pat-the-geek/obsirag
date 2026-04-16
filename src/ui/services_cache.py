@@ -228,46 +228,23 @@ def _ensure_init_started() -> None:
             _init_thread.start()
 
 
-def get_services() -> ServiceManager:
-    # Injecte le CSS compact sur chaque page (idempotent)
-    st.markdown(_COMPACT_CSS, unsafe_allow_html=True)
-    run_inline_script(_HEAD_TAGS_SCRIPT)
+def _drain_startup_steps() -> list[str]:
+    st.session_state.setdefault("_startup_steps", [])
 
-    # Lance le thread d'init si ce n'est pas encore fait
-    _ensure_init_started()
-
-    # Chemin rapide : init terminée avec succès
-    if _services_instance is not None:
-      if not _is_services_instance_compatible(_services_instance):
-        _reset_cached_services()
-        st.session_state["_startup_steps"] = [
-          "Compatibilite runtime detectee — reconstruction des services…"
-        ]
-        _ensure_init_started()
-      else:
-        _services_instance.signal_ui_active()
-        st.session_state["_svc_ready"] = True
-        return _services_instance
-
-    # Init terminée mais en erreur
-    if _init_done.is_set():
-        st.error(f"❌ Erreur au démarrage d'ObsiRAG : {_init_error}")
-        st.stop()
-
-    # Init encore en cours — collecter les étapes et afficher l'écran de chargement
-    if "_startup_steps" not in st.session_state:
-        st.session_state["_startup_steps"] = []
-
-    # Drainer la queue des messages de progression
+    drained_steps: list[str] = []
     while True:
         try:
-            st.session_state["_startup_steps"].append(_step_queue.get_nowait())
+            drained_steps.append(_step_queue.get_nowait())
         except queue.Empty:
             break
 
-    steps: list[str] = st.session_state["_startup_steps"]
+    if drained_steps:
+        st.session_state["_startup_steps"].extend(drained_steps)
 
-    # Centrer l'écran de chargement dans la colonne du milieu
+    return drained_steps
+
+
+def _render_startup_screen(steps: list[str]) -> None:
     _, col, _ = st.columns([1, 2, 1])
     with col:
         st.markdown("### ⏳ Démarrage d'ObsiRAG…")
@@ -276,6 +253,46 @@ def get_services() -> ServiceManager:
                 st.write(step)
         else:
             st.write("Initialisation en cours…")
+
+
+def get_services() -> ServiceManager:
+    # Injecte le CSS compact sur chaque page (idempotent)
+    st.markdown(_COMPACT_CSS, unsafe_allow_html=True)
+    run_inline_script(_HEAD_TAGS_SCRIPT)
+
+    st.session_state.setdefault("_svc_ready", False)
+
+    # Lance le thread d'init si ce n'est pas encore fait
+    _ensure_init_started()
+
+    _drain_startup_steps()
+
+    # Chemin rapide : init terminée avec succès
+    if _services_instance is not None:
+      if not _is_services_instance_compatible(_services_instance):
+        _reset_cached_services()
+        st.session_state["_svc_ready"] = False
+        st.session_state["_startup_steps"] = [
+          "Compatibilite runtime detectee — reconstruction des services…"
+        ]
+        _ensure_init_started()
+      else:
+        if not st.session_state["_svc_ready"]:
+          st.session_state["_svc_ready"] = True
+          _render_startup_screen(st.session_state["_startup_steps"])
+          time.sleep(0.5)
+          st.rerun()
+
+        _services_instance.signal_ui_active()
+        return _services_instance
+
+    # Init terminée mais en erreur
+    if _init_done.is_set():
+        st.error(f"❌ Erreur au démarrage d'ObsiRAG : {_init_error}")
+        st.stop()
+
+    # Init encore en cours — afficher l'écran de chargement
+    _render_startup_screen(st.session_state["_startup_steps"])
 
     # Rerun dans 500 ms pour rafraîchir la progression
     time.sleep(0.5)

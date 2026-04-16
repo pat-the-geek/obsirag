@@ -66,6 +66,7 @@ class TestServiceManager:
         assert manager.learner is learner_instance
         assert manager.watcher is watcher_instance
         assert len(steps) >= 7
+        assert steps[-1] == "✅ Tous les services sont opérationnels"
 
     def test_signal_ui_active_updates_timestamp_and_autoloads_if_needed(self):
         manager = ServiceManager.__new__(ServiceManager)

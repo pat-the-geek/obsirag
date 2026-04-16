@@ -68,6 +68,7 @@ class ServiceManager:
         _step("🚀 Lancement des services en arrière-plan…")
         self._start_background_services()
         logger.info("Tous les services sont opérationnels")
+        _step("✅ Tous les services sont opérationnels")
 
     def _init_data_dirs(self) -> None:
         # Données système (volume Docker)

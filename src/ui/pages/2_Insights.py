@@ -24,7 +24,7 @@ from src.ui.path_resolver import resolve_vault_path
 from src.ui.query_history_store import list_query_history_entries
 from src.ui.services_cache import get_services
 from src.ui.theme import inject_theme, render_theme_toggle
-from src.ui.side_menu import render_side_menu
+from src.ui.side_menu import render_mobile_main_menu, render_side_menu
 
 _PAGE_SIZE = 15  # nombre d'items par page
 
@@ -65,6 +65,7 @@ _icon = str(Path(__file__).parent.parent / "static" / "favicon-32x32.png")
 st.set_page_config(page_title="Insights — ObsiRAG", page_icon=_icon, layout="wide", initial_sidebar_state="expanded")
 
 inject_theme()
+render_mobile_main_menu()
 # Ajout à l'historique navigation
 HISTO_KEY = "obsirag_historique"
 st.session_state.setdefault(HISTO_KEY, [])

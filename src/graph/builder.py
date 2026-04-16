@@ -181,6 +181,22 @@ class GraphBuilder:
         # Surcharge CSS des boutons de navigation pyvis + fix canvas HiDPI
         nav_css = """
 <style>
+html, body {
+    width: 100%;
+    max-width: 100%;
+    overflow: hidden;
+    margin: 0;
+    padding: 0;
+    -webkit-text-size-adjust: 100%;
+}
+body {
+    touch-action: manipulation;
+}
+@media (max-width: 768px) {
+    div.vis-network div.vis-navigation {
+        display: none !important;
+    }
+}
 div.vis-network div.vis-navigation div.vis-button {
     background-color: rgba(255,255,255,0.15) !important;
     border-radius: 4px !important;
@@ -229,6 +245,20 @@ div.vis-network div.vis-navigation div.vis-button:hover {
 <script>
 (function waitForNetwork() {
     if (typeof network === 'undefined') { setTimeout(waitForNetwork, 100); return; }
+    var isMobile = window.matchMedia('(max-width: 768px)').matches;
+
+    if (isMobile) {
+        network.setOptions({
+            interaction: {
+                navigationButtons: false,
+                keyboard: false,
+                multiselect: false
+            },
+            physics: {
+                stabilization: { fit: true }
+            }
+        });
+    }
 
     // -- Tooltip custom persistant --
     // Construire un dictionnaire nodeId → HTML décodé
@@ -322,11 +352,19 @@ div.vis-network div.vis-navigation div.vis-button:hover {
     network.on('zoom', function() {
         setTimeout(function() { network.redraw(); }, 80);
     });
+    network.once('stabilizationIterationsDone', function() {
+        try {
+            network.fit({ animation: isMobile ? false : { duration: 250, easingFunction: 'easeInOutQuad' } });
+        } catch (e) {
+            network.fit();
+        }
+    });
 })();
 </script>
 """
         fixes = fixes.replace("__VAULT_NAME__", vault_name_js)
-        return html.replace("</head>", nav_css + "</head>", 1).replace("</body>", fixes + "</body>", 1)
+        viewport = '<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">'
+        return html.replace("</head>", viewport + nav_css + "</head>", 1).replace("</body>", fixes + "</body>", 1)
 
     def get_stats(self, graph: nx.DiGraph) -> dict:
         if graph.number_of_nodes() == 0:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
+import queue
 
 import pytest
 
@@ -80,3 +81,74 @@ class TestServicesCache:
         assert fake_st.session_state["_startup_steps"] == [
             "Compatibilite runtime detectee — reconstruction des services…"
         ]
+
+    def test_get_services_renders_last_startup_steps_once_before_returning_ready_instance(self):
+        ready = SimpleNamespace(signal_ui_active=MagicMock())
+        services_cache._services_instance = ready
+        services_cache._init_thread = object()
+        services_cache._init_error = None
+        services_cache._init_done.clear()
+        services_cache._step_queue = queue.Queue()
+        services_cache._step_queue.put("🚀 Lancement des services en arrière-plan…")
+        services_cache._step_queue.put("✅ Tous les services sont opérationnels")
+
+        fake_col = MagicMock()
+        fake_col.__enter__ = MagicMock(return_value=fake_col)
+        fake_col.__exit__ = MagicMock(return_value=False)
+        fake_st = SimpleNamespace(
+            session_state={},
+            markdown=MagicMock(),
+            columns=MagicMock(return_value=(MagicMock(), fake_col, MagicMock())),
+            write=MagicMock(),
+            error=MagicMock(),
+            stop=MagicMock(side_effect=AssertionError("stop should not be called")),
+            rerun=MagicMock(side_effect=RuntimeError("rerun")),
+        )
+
+        with (
+            patch("src.ui.services_cache.st", fake_st),
+            patch("src.ui.services_cache.run_inline_script"),
+            patch("src.ui.services_cache._ensure_init_started"),
+            patch("src.ui.services_cache._is_services_instance_compatible", return_value=True),
+            patch("src.ui.services_cache.time.sleep"),
+        ):
+            with pytest.raises(RuntimeError, match="rerun"):
+                services_cache.get_services()
+
+        assert fake_st.session_state["_svc_ready"] is True
+        assert fake_st.session_state["_startup_steps"] == [
+            "🚀 Lancement des services en arrière-plan…",
+            "✅ Tous les services sont opérationnels",
+        ]
+        fake_st.write.assert_any_call("🚀 Lancement des services en arrière-plan…")
+        fake_st.write.assert_any_call("✅ Tous les services sont opérationnels")
+        ready.signal_ui_active.assert_not_called()
+
+    def test_get_services_returns_ready_instance_after_final_startup_render(self):
+        ready = SimpleNamespace(signal_ui_active=MagicMock())
+        services_cache._services_instance = ready
+        services_cache._init_thread = object()
+        services_cache._init_error = None
+        services_cache._init_done.clear()
+        services_cache._step_queue = queue.Queue()
+
+        fake_st = SimpleNamespace(
+            session_state={"_svc_ready": True, "_startup_steps": ["✅ Tous les services sont opérationnels"]},
+            markdown=MagicMock(),
+            columns=MagicMock(),
+            write=MagicMock(),
+            error=MagicMock(),
+            stop=MagicMock(side_effect=AssertionError("stop should not be called")),
+            rerun=MagicMock(),
+        )
+
+        with (
+            patch("src.ui.services_cache.st", fake_st),
+            patch("src.ui.services_cache.run_inline_script"),
+            patch("src.ui.services_cache._ensure_init_started"),
+            patch("src.ui.services_cache._is_services_instance_compatible", return_value=True),
+        ):
+            result = services_cache.get_services()
+
+        assert result is ready
+        ready.signal_ui_active.assert_called_once()

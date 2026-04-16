@@ -18,7 +18,7 @@ from src.ui.services_cache import get_services
 from src.ui.components.note_bridge_component import note_bridge as _note_bridge
 from src.ui.html_embed import render_html_document
 from src.ui.theme import inject_theme, render_theme_toggle
-from src.ui.side_menu import render_side_menu
+from src.ui.side_menu import render_mobile_main_menu, render_side_menu
 
 # Icône et config page
 _icon = str(Path(__file__).parent.parent / "static" / "favicon-32x32.png")
@@ -27,6 +27,7 @@ _brain_b64 = base64.b64encode(
 ).decode()
 st.set_page_config(page_title="Cerveau — ObsiRAG", page_icon=_icon, layout="wide", initial_sidebar_state="expanded")
 inject_theme()
+render_mobile_main_menu()
 
 # Ajout à l'historique navigation
 HISTO_KEY = "obsirag_historique"
@@ -153,7 +154,7 @@ if fps_tuple:
         st.cache_data.clear()
         st.rerun()
 
-    render_html_document(graph_html, height=670)
+    render_html_document(graph_html, height=670, transport="component")
 
     spotlight = brain_explorer.build_centrality_spotlight(filtered, stats.get("top_connected", []), limit=6)
     recent_notes = brain_explorer.build_recent_notes(filtered, limit=6)

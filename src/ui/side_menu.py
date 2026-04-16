@@ -17,6 +17,161 @@ HISTO_KEY = "obsirag_historique"
 MAX_HISTORY_ITEMS = 20
 
 
+def render_mobile_main_menu() -> None:
+    """Menu hamburger mobile avec navigation Streamlit native, invisible sur desktop."""
+    st.markdown(
+        """
+        <style>
+        /* ---- Desktop (défaut) : menu mobile totalement masqué ---- */
+        .st-key-obsirag-mobile-menu {
+            display: none !important;
+            visibility: hidden !important;
+            width: 0 !important;
+            height: 0 !important;
+            overflow: hidden !important;
+            pointer-events: none !important;
+            position: absolute !important;
+            opacity: 0 !important;
+        }
+
+        /* ---- Mobile ---- */
+        @media (max-width: 768px) {
+            .st-key-obsirag-mobile-menu {
+                display: block !important;
+                visibility: visible !important;
+                opacity: 1 !important;
+                width: min(4.5rem, calc(100vw - 1.5rem)) !important;
+                height: auto !important;
+                overflow: visible !important;
+                pointer-events: auto !important;
+                position: fixed;
+                top: 0.75rem;
+                right: 0.75rem;
+                z-index: 1001;
+                margin: 0 !important;
+            }
+            .st-key-obsirag-mobile-menu > div {
+                justify-content: flex-end;
+            }
+            .st-key-obsirag-mobile-menu button {
+                min-height: 2.8rem !important;
+                border-radius: 999px !important;
+                border: 1px solid rgba(0, 95, 204, 0.18);
+                background: rgba(255, 255, 255, 0.94);
+                color: #0f172a !important;
+                box-shadow: 0 12px 30px rgba(15, 23, 42, 0.16);
+                backdrop-filter: blur(12px);
+            }
+            .st-key-obsirag-mobile-menu [data-testid="stExpander"] {
+                background: transparent !important;
+                border: none !important;
+                box-shadow: none !important;
+            }
+            .st-key-obsirag-mobile-menu [data-testid="stExpander"] details {
+                overflow: visible !important;
+            }
+            .st-key-obsirag-mobile-menu [data-testid="stExpander"] summary {
+                min-height: 2.8rem !important;
+                border-radius: 999px !important;
+                border: 1px solid rgba(0, 95, 204, 0.18) !important;
+                background: rgba(255, 255, 255, 0.94) !important;
+                color: #0f172a !important;
+                box-shadow: 0 12px 30px rgba(15, 23, 42, 0.16) !important;
+                backdrop-filter: blur(12px) !important;
+            }
+            .st-key-obsirag-mobile-menu [data-testid="stExpanderDetails"] {
+                position: absolute !important;
+                top: 3.05rem;
+                right: 0;
+                z-index: 1002 !important;
+                background: #fff !important;
+                border: 1.5px solid #bbb !important;
+                border-radius: 8px !important;
+                box-shadow: 0 18px 40px rgba(15, 23, 42, 0.22) !important;
+                padding: 0.5rem !important;
+                min-width: 13rem !important;
+            }
+            .st-key-obsirag-mobile-menu [data-testid="stExpanderDetails"] > div,
+            .st-key-obsirag-mobile-menu [data-testid="stExpanderDetails"] > div > div,
+            .st-key-obsirag-mobile-menu [data-testid="stExpanderDetails"] > div > div > div {
+                background: #fff !important;
+                color: #111 !important;
+            }
+            .st-key-obsirag-mobile-menu [data-testid="stExpanderDetails"] *,
+            .st-key-obsirag-mobile-menu [data-testid="stExpanderDetails"] [data-testid="stMarkdownContainer"],
+            .st-key-obsirag-mobile-menu [data-testid="stExpanderDetails"] [data-testid="stMarkdownContainer"] *,
+            .st-key-obsirag-mobile-menu [data-testid="stExpanderDetails"] [data-testid="stCaptionContainer"],
+            .st-key-obsirag-mobile-menu [data-testid="stExpanderDetails"] [data-testid="stCaptionContainer"] *,
+            .st-key-obsirag-mobile-menu [data-testid="stExpanderDetails"] [data-testid="stPageLink"],
+            .st-key-obsirag-mobile-menu [data-testid="stExpanderDetails"] [data-testid="stPageLink"] *,
+            .st-key-obsirag-mobile-menu [data-testid="stExpanderDetails"] .stButton > button,
+            .st-key-obsirag-mobile-menu [data-testid="stExpanderDetails"] .stButton > button p,
+            .st-key-obsirag-mobile-menu [data-testid="stExpanderDetails"] .stButton > button span {
+                color: #111 !important;
+                fill: #111 !important;
+                -webkit-text-fill-color: #111 !important;
+                opacity: 1 !important;
+            }
+            .st-key-obsirag-mobile-menu [data-testid="stExpanderDetails"] [data-testid="stPageLink"] {
+                width: 100% !important;
+            }
+            .st-key-obsirag-mobile-menu [data-testid="stExpanderDetails"] [data-testid="stPageLink"] a {
+                width: 100% !important;
+                justify-content: flex-start !important;
+                min-height: 2.6rem !important;
+                padding-inline: 0.85rem !important;
+                margin-bottom: 2px !important;
+                background: #fff !important;
+                border: 1.5px solid #bbb !important;
+                border-radius: 6px !important;
+                box-shadow: none !important;
+                text-decoration: none !important;
+            }
+            .st-key-obsirag-mobile-menu [data-testid="stExpanderDetails"] [data-testid="stPageLink"] a:hover,
+            .st-key-obsirag-mobile-menu [data-testid="stExpanderDetails"] [data-testid="stPageLink"] a:focus-visible,
+            .st-key-obsirag-mobile-menu [data-testid="stExpanderDetails"] .stButton > button:hover,
+            .st-key-obsirag-mobile-menu [data-testid="stExpanderDetails"] .stButton > button:focus-visible {
+                background: #e6f0fa !important;
+                color: #005fcc !important;
+                border: 2px solid #005fcc !important;
+            }
+            .st-key-obsirag-mobile-menu [data-testid="stExpanderDetails"] [data-testid="stPageLink"] a:hover *,
+            .st-key-obsirag-mobile-menu [data-testid="stExpanderDetails"] [data-testid="stPageLink"] a:focus-visible *,
+            .st-key-obsirag-mobile-menu [data-testid="stExpanderDetails"] .stButton > button:hover p,
+            .st-key-obsirag-mobile-menu [data-testid="stExpanderDetails"] .stButton > button:focus-visible p,
+            .st-key-obsirag-mobile-menu [data-testid="stExpanderDetails"] .stButton > button:hover span,
+            .st-key-obsirag-mobile-menu [data-testid="stExpanderDetails"] .stButton > button:focus-visible span {
+                color: #005fcc !important;
+                -webkit-text-fill-color: #005fcc !important;
+            }
+            .st-key-obsirag-mobile-menu [data-testid="stExpanderDetails"] [data-testid="stCaptionContainer"],
+            .st-key-obsirag-mobile-menu [data-testid="stExpanderDetails"] .stCaption {
+                color: #555 !important;
+                -webkit-text-fill-color: #555 !important;
+            }
+            /* Espace en haut de page pour ne pas superposer le contenu */
+            .block-container,
+            div.block-container,
+            section.main div.block-container {
+                padding-top: 4.25rem !important;
+            }
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+    with st.container(key="obsirag-mobile-menu"):
+        with st.expander("☰", expanded=False, width="stretch"):
+            st.caption("Navigation")
+            for entry in PAGES:
+                st.page_link(
+                    entry["page"],
+                    label=entry["label"],
+                    icon=entry["icon"],
+                    use_container_width=True,
+                )
+
+
 def render_sidebar_toggle_button(label: str = "☰ Menu", variant: str = "floating") -> None:
     if variant == "inline":
         button_css = """

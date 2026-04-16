@@ -5,6 +5,21 @@
 set -euo pipefail
 
 PID_FILE=".obsirag.pid"
+LABEL="com.obsirag"
+PLIST_DST="$HOME/Library/LaunchAgents/${LABEL}.plist"
+
+_launchd_is_loaded() {
+  launchctl print "gui/$(id -u)/$LABEL" >/dev/null 2>&1
+}
+
+if [ -f "$PLIST_DST" ] && _launchd_is_loaded; then
+  echo "==> Arrêt du service launchd ObsiRAG (${LABEL})..."
+  launchctl unload "$PLIST_DST"
+  lsof -ti :8501 2>/dev/null | xargs kill -9 2>/dev/null || true
+  rm -f "$PID_FILE"
+  echo "    Arrêté."
+  exit 0
+fi
 
 if [ ! -f "$PID_FILE" ]; then
   echo "Aucun processus ObsiRAG trouvé (pas de fichier $PID_FILE)."

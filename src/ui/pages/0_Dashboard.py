@@ -4,7 +4,7 @@ Page Tableau de bord — Vue synthétique : statistiques, alertes, état systèm
 import streamlit as st
 from pathlib import Path
 from src.ui.theme import inject_theme, render_theme_toggle
-from src.ui.side_menu import render_side_menu
+from src.ui.side_menu import render_mobile_main_menu, render_side_menu
 from src.ui.services_cache import get_services
 from src.ui.runtime_state_store import load_processing_status
 from src.ui.telemetry_store import load_runtime_metrics_payload, load_latest_json
@@ -14,6 +14,7 @@ from src.config import settings
 _icon = str(Path(__file__).parent.parent / "static" / "favicon-32x32.png")
 st.set_page_config(page_title="Tableau de bord — ObsiRAG", page_icon=_icon, layout="wide", initial_sidebar_state="expanded")
 inject_theme()
+render_mobile_main_menu()
 
 # Bouton d'ouverture de la sidebar en haut à droite du contenu principal
 st.markdown("<div style='height:0.5rem'></div>", unsafe_allow_html=True)

@@ -205,6 +205,48 @@ Le goulot d'étranglement principal n'est pas le CPU mais la **bande passante m�
 | 48GB | `mistral-nemo:12b` | Excellente | 70–90 |
 | 128GB | `qwen2.5:72b` | Maximale | 30–50 |
 
+### Shortlist MLX pratique pour ObsiRAG
+
+Sur **M5 16GB**, le meilleur critère n'est pas seulement le temps total, mais le compromis entre qualité en français, densité des réponses, temps de chargement et stabilité du pipeline chat + auto-learner.
+
+| Modèle | Rôle conseillé | Ce qu'il apporte | Limite observée |
+| --- | --- | --- | --- |
+| `mlx-community/Qwen2.5-7B-Instruct-4bit` | **Baseline par défaut** | Meilleur compromis vitesse / richesse / français | Plus verbeux, donc temps total parfois plus long |
+| `google/gemma-4-e4b` | **Candidat à requalifier** | Famille déjà utilisée dans l'historique du projet, potentiellement intéressante pour des réponses courtes | Échec actuel dans le pipeline MLX chat: tokenizer sans `chat_template` exploitable |
+| `mlx-community/Meta-Llama-3.1-8B-Instruct-4bit` | **Option de comparaison** | Réponses plus compactes, style direct | Débit plus faible que Qwen et pas de gain qualitatif net observé |
+
+### Mini-benchmark Qwen vs Llama 3.1 8B (M5 16GB)
+
+Mesure courte faite dans le pipeline réel d'ObsiRAG.
+
+#### À froid — 1 requête courte
+
+| Modèle | TTFT | Débit | Temps total | Tokens générés |
+| --- | --- | --- | --- | --- |
+| `mlx-community/Qwen2.5-7B-Instruct-4bit` | 2,137 s | 27,91 tok/s | 29,21 s | 694 |
+| `mlx-community/Meta-Llama-3.1-8B-Instruct-4bit` | 2,234 s | 25,53 tok/s | 47,72 s | 329 |
+
+#### À chaud — 3 prompts réels après échauffement
+
+| Modèle | TTFT moyen | Débit moyen | Temps total moyen | Tokens moyens |
+| --- | --- | --- | --- | --- |
+| `mlx-community/Qwen2.5-7B-Instruct-4bit` | 2,277 s | 27,66 tok/s | 20,04 s | ~525 |
+| `mlx-community/Meta-Llama-3.1-8B-Instruct-4bit` | 2,425 s | 25,61 tok/s | 15,04 s | ~311 |
+
+Interprétation : Llama 3.1 8B ne génère pas plus vite ; il produit simplement des réponses plus courtes. Pour un usage ObsiRAG centré sur la synthèse et le RAG en français, Qwen 2.5 7B reste la référence locale la plus cohérente sur 16GB.
+
+Le script versionné pour reproduire ou étendre ce test est `scripts/benchmark_model_shortlist.py`.
+
+### Résultat Gemma 4 E4B sur le pipeline actuel
+
+Le benchmark court a été lancé avec `google/gemma-4-e4b` sur la même machine. Le modèle se charge, mais l'inférence échoue avant la première réponse dans le chemin de chat MLX actuel : le tokenizer ne fournit pas de `chat_template` utilisable par `apply_chat_template()`.
+
+| Modèle | Chargement | Warm-up | Résultat |
+| --- | --- | --- | --- |
+| `google/gemma-4-e4b` | ~108,5 s | échec | `ValueError: tokenizer.chat_template is not set` |
+
+Conclusion pratique : **Gemma 4 E4B n'est pas aujourd'hui un candidat plug-and-play pour ObsiRAG**, sauf adaptation du prompt builder ou remplacement par un checkpoint Gemma MLX explicitement chat-instruct compatible.
+
 ---
 
 ## Notes
@@ -243,6 +285,7 @@ En plus des performances LLM, plusieurs optimisations ciblent la reduction des r
 | `list_notes()` invoqué après `invalidate_list_notes_cache()` | — | **1 rebuild** | = 1 (non-régression) |
 
 **Interprétation :**
+
 - La construction du snapshot pour 500 notes prend moins de 5 ms en pratique (seuil fixé à 200 ms pour absorber la variabilité d'autres machines).
 - En cache hit, chaque appel à une vue dérivée (`count_notes`, `list_note_tags`, `get_backlinks`, etc.) coûte moins de 1 µs.
 - La propriété de non-régression critique est garantie par test : `list_notes()` est invoqué **exactement une fois** quel que soit le nombre de helpers enchaînés dans le même cycle TTL.
@@ -264,9 +307,9 @@ Ces métriques permettent de vérifier en exploitation locale que les chemins in
 
 - Script dédié : `scripts/export_chroma_perf_report.py`.
 - Exporte un rapport horodaté dans `stats/chroma_perf_reports/` avec:
-	- mesures micro-bench (`build_note_views_ms`, `cache_hit_us`, `nine_helpers_ms`),
-	- seuils appliqués selon le contexte local/CI,
-	- statut pass/fail par métrique.
+  - mesures micro-bench (`build_note_views_ms`, `cache_hit_us`, `nine_helpers_ms`),
+  - seuils appliqués selon le contexte local/CI,
+  - statut pass/fail par métrique.
 - Maintient les pointeurs `latest_local.json`, `latest_ci.json`, `latest.json` et un comparatif `latest_comparison.md` quand les deux environnements sont disponibles.
 - Intégré au flux `scripts/validate_local.sh` (non bloquant) pour garder une trace continue des tendances de performance.
 

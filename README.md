@@ -537,6 +537,40 @@ Les modèles de la communauté `mlx-community` sur HuggingFace sont déjà conve
 | Chargement du modèle | 30–60 s | ~2 s | **×20** |
 | Dépendance serveur | Ollama daemon requis | Aucune | ✅ |
 
+### Comparatif court de modèles MLX testés
+
+Mesures indicatives réalisées localement sur **Mac M5 16 Go** avec le pipeline réel d'ObsiRAG.
+
+#### À froid
+
+| Modèle | Prompt | TTFT | Débit | Temps total | Observation |
+| --- | --- | --- | --- | --- | --- |
+| `mlx-community/Qwen2.5-7B-Instruct-4bit` | 1 requête courte | 2,137 s | 27,91 tok/s | 29,21 s | Meilleur équilibre |
+| `mlx-community/Meta-Llama-3.1-8B-Instruct-4bit` | 1 requête courte | 2,234 s | 25,53 tok/s | 47,72 s | Plus lent au premier chargement |
+
+#### À chaud
+
+Mesure sur 3 prompts réels après un prompt d'échauffement distinct pour éviter le biais du cache de réponse.
+
+| Modèle | TTFT moyen | Débit moyen | Temps total moyen | Tokens moyens/réponse | Lecture |
+| --- | --- | --- | --- | --- | --- |
+| `mlx-community/Qwen2.5-7B-Instruct-4bit` | 2,277 s | 27,66 tok/s | 20,04 s | ~525 | Réponses plus riches et plus longues |
+| `mlx-community/Meta-Llama-3.1-8B-Instruct-4bit` | 2,425 s | 25,61 tok/s | 15,04 s | ~311 | Réponses plus courtes, pas plus rapides en débit |
+
+> Conclusion pratique sur cette machine : **Qwen 2.5 7B reste le meilleur défaut pour ObsiRAG**. Llama 3.1 8B n'a pas montré de gain qualitatif net en français et son avantage apparent à chaud vient surtout de réponses plus concises.
+
+Pour reproduire ce test ou comparer d'autres candidats MLX :
+
+```bash
+python scripts/benchmark_model_shortlist.py
+
+# Exemple avec une shortlist explicite
+python scripts/benchmark_model_shortlist.py \
+  --model mlx-community/Qwen2.5-7B-Instruct-4bit \
+  --model google/gemma-4-e4b \
+  --model mlx-community/Meta-Llama-3.1-8B-Instruct-4bit
+```
+
 ---
 
 ## Stack technique
@@ -602,6 +636,8 @@ Pour installer ObsiRAG comme service macOS (démarrage automatique au login) :
 ./install_service.sh
 ```
 
+Une fois le service `launchd` installé (`com.obsirag`), les commandes `./start.sh` et `./stop.sh` restent les bons points d'entrée : elles pilotent alors le service `launchd` au lieu de lancer un second processus Streamlit en parallèle. Cela évite les conflits de port sur `8501` et garde un seul PID actif côté système.
+
 ## Acces reseau
 
 Pour exposer l'application sur le reseau de la machine :
@@ -620,17 +656,10 @@ Si vous utilisez le service launchd, reappliquez ensuite l'installation pour reg
 
 Vous pourrez alors acceder a ObsiRAG via `http://IP_DE_LA_MACHINE:8501`.
 
-Important : l'adresse `100.65.216.90` appartient typiquement a Tailscale (plage `100.64.0.0/10`). Elle est joignable depuis les machines connectees a votre tailnet, mais ce n'est pas une IP publique routable sur Internet. Pour une exposition publique reelle, il faut ajouter un tunnel ou une publication dediee, par exemple :
-
-- redirection NAT/routeur + ouverture du pare-feu macOS,
-- Tailscale Funnel,
-- Cloudflare Tunnel,
-- un reverse proxy public en frontal.
-
 ---
 
 ## Statut
 
-Projet actif — développé de façon créative et itérative avec Claude Code.
+Projet actif — développé de façon créative et itérative avec Claude Code et GitHub Copilot
 
 Le dépôt est public. Contributions et idées bienvenues.
