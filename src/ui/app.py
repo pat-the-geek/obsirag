@@ -1,6 +1,7 @@
 """
 ObsiRAG — Page principale : Chat
 """
+import html
 import inspect
 import re
 import threading
@@ -31,6 +32,7 @@ from src.ui.chat_sessions import (
     ensure_chat_state,
     get_current_thread,
     list_thread_summaries,
+    resolve_active_thread_messages,
     switch_thread,
     update_current_thread,
 )
@@ -58,7 +60,14 @@ from src.ui.chat_view_models import (
 from src.ui.runtime_state_store import load_processed_notes_map, load_processing_status
 from src.ui.theme import inject_theme, render_theme_toggle
 from src.ui.side_menu import render_mobile_main_menu, render_side_menu
-from src.ai.web_search import enrich_sync, is_not_in_vault
+from src.ai.web_search import (
+    build_query_overview_sync,
+    enrich_sync,
+    is_not_in_vault,
+    save_chat_enrichment_insight,
+)
+from src.config import settings
+from src.ui.runtime_state_store import load_chat_threads_state, save_chat_threads_state
 
 # ---- Configuration de la page ----
 _icon = str(Path(__file__).parent / "static" / "favicon-32x32.png")
@@ -79,6 +88,9 @@ if not st.session_state[HISTO_KEY] or st.session_state[HISTO_KEY][-1] != "Chat":
 
 svc = get_services()
 
+if "chat_threads_state" not in st.session_state:
+    st.session_state.chat_threads_state = load_chat_threads_state(settings.chat_threads_state_file)
+
 # Pending query (depuis sidebar historique ou suggestions) — capturé dès le début
 _pending = st.session_state.pop("_pending_query", None)
 # Pending web search — déclenché par le bouton "Rechercher sur le web"
@@ -86,11 +98,32 @@ _pending_web = st.session_state.pop("_pending_web_query", None)
 st.session_state.setdefault("messages", [])
 
 
-def _restore_active_chat_thread() -> None:
+def _restore_active_chat_thread(*, force: bool = False) -> None:
     chat_state = ensure_chat_state(st.session_state.get("chat_threads_state"))
     current_thread = get_current_thread(chat_state)
     st.session_state.chat_threads_state = chat_state
-    st.session_state.messages = list(current_thread.get("messages", []))
+    thread_messages = list(current_thread.get("messages", []))
+    current_messages = list(st.session_state.get("messages", []))
+
+    # En simple rerun, conserver l'historique visible s'il est plus riche qu'un
+    # snapshot de thread potentiellement en retard. Les remplacements explicites
+    # passent par les callbacks de changement de fil ou de chargement.
+    restored_messages = resolve_active_thread_messages(
+        thread_messages=thread_messages,
+        current_messages=current_messages,
+        force=force,
+    )
+    st.session_state.messages = restored_messages
+    if restored_messages != thread_messages:
+        chat_state = update_current_thread(
+            chat_state,
+            messages=restored_messages,
+            draft=str(current_thread.get("draft", "")),
+            title=str(current_thread.get("title") or ""),
+            last_gen_stats=dict(current_thread.get("last_gen_stats", {})),
+        )
+        st.session_state.chat_threads_state = chat_state
+        save_chat_threads_state(settings.chat_threads_state_file, chat_state)
     st.session_state["chat_thread_draft"] = str(current_thread.get("draft", ""))
     if current_thread.get("last_gen_stats"):
         st.session_state.last_gen_stats = dict(current_thread.get("last_gen_stats", {}))
@@ -107,6 +140,7 @@ def _persist_active_chat_thread(title: str | None = None) -> None:
         last_gen_stats=st.session_state.get("last_gen_stats", {}),
     )
     st.session_state.chat_threads_state = chat_state
+    save_chat_threads_state(settings.chat_threads_state_file, chat_state)
 
 
 def _save_chat_draft() -> None:
@@ -117,7 +151,7 @@ def _create_chat_thread_cb() -> None:
     _persist_active_chat_thread()
     chat_state = create_new_thread(st.session_state.get("chat_threads_state"))
     st.session_state.chat_threads_state = chat_state
-    _restore_active_chat_thread()
+    _restore_active_chat_thread(force=True)
     st.session_state.pop("last_gen_stats", None)
 
 
@@ -125,7 +159,7 @@ def _switch_chat_thread_cb(thread_id: str) -> None:
     _persist_active_chat_thread()
     chat_state = switch_thread(st.session_state.get("chat_threads_state"), thread_id)
     st.session_state.chat_threads_state = chat_state
-    _restore_active_chat_thread()
+    _restore_active_chat_thread(force=True)
     st.session_state.pop("last_gen_stats", None)
 
 
@@ -133,7 +167,7 @@ def _delete_chat_thread_cb(thread_id: str) -> None:
     _persist_active_chat_thread()
     chat_state = delete_thread(st.session_state.get("chat_threads_state"), thread_id)
     st.session_state.chat_threads_state = chat_state
-    _restore_active_chat_thread()
+    _restore_active_chat_thread(force=True)
     st.session_state.pop("last_gen_stats", None)
 
 
@@ -257,7 +291,7 @@ def _load_saved_conversation_cb(path_str: str, mode: str = "replace") -> None:
             last_gen_stats={},
         )
         st.session_state.chat_threads_state = chat_state
-        _restore_active_chat_thread()
+        _restore_active_chat_thread(force=True)
     else:
         st.session_state.messages = messages
         _persist_active_chat_thread(title=label)
@@ -328,6 +362,221 @@ def _render_sources_block(sources: list[dict], expander_label: str, key_prefix: 
                         on_click=_open_note_cb,
                         args=(fp,),
                     )
+
+
+def _lookup_conversation_entity_contexts(user_text: str, assistant_text: str = "") -> list[dict]:
+    combined = "\n\n".join(part for part in (user_text, assistant_text) if part and part.strip())
+    if not combined.strip():
+        return []
+    try:
+        return svc.learner.lookup_wuddai_entity_contexts(combined, max_entities=3, max_notes=3)
+    except Exception as exc:
+        logger.debug(f"Entity context lookup échoué: {exc}")
+        return []
+
+
+def _lookup_query_overview(user_text: str) -> dict:
+    if not user_text or len(user_text.strip()) < 3:
+        return {}
+    try:
+        return build_query_overview_sync(user_text, svc.llm)
+    except Exception as exc:
+        logger.debug(f"DDG overview échoué: {exc}")
+        return {}
+
+
+def _render_query_overview(query_overview: dict, key_prefix: str, *, expanded: bool = False) -> None:
+    if not query_overview:
+        return
+    summary = str(query_overview.get("summary") or "").strip()
+    sources = query_overview.get("sources") or []
+    search_query = str(query_overview.get("search_query") or "").strip()
+    if not summary and not sources:
+        return
+
+    with st.expander("🌐 Vue d'ensemble DDG", expanded=expanded):
+        if summary:
+            st.markdown(summary)
+        if search_query:
+            st.caption(f"Requête DDG : {search_query}")
+        if sources:
+            st.markdown(build_web_sources_markdown(sources[:5]))
+
+
+def _compact_ddg_knowledge(ddg_knowledge: dict) -> dict:
+    if not ddg_knowledge:
+        return {}
+
+    compact: dict[str, object] = {}
+    for key in ("heading", "entity", "abstract_text", "answer", "answer_type", "definition"):
+        value = ddg_knowledge.get(key)
+        if isinstance(value, str) and value.strip():
+            compact[key] = value.strip()
+
+    infobox = []
+    for item in ddg_knowledge.get("infobox") or []:
+        label = str(item.get("label") or "").strip()
+        value = str(item.get("value") or "").strip()
+        if label and value:
+            infobox.append({"label": label, "value": value})
+        if len(infobox) >= 5:
+            break
+    if infobox:
+        compact["infobox"] = infobox
+
+    related_topics = []
+    for item in ddg_knowledge.get("related_topics") or []:
+        text = str(item.get("text") or "").strip()
+        url = str(item.get("url") or "").strip()
+        if text and url:
+            related_topics.append({"text": text, "url": url})
+        if len(related_topics) >= 3:
+            break
+    if related_topics:
+        compact["related_topics"] = related_topics
+
+    return compact
+
+
+def _render_ddg_fact_tiles(items: list[tuple[str, str]], key_prefix: str) -> None:
+    if not items:
+        return
+
+    columns = st.columns(2)
+    for index, (label, value) in enumerate(items):
+        if not label or not value:
+            continue
+        with columns[index % 2]:
+            st.markdown(
+                (
+                    "<div style='padding:0.8rem 0.9rem; margin:0 0 0.6rem 0; "
+                    "border:1px solid rgba(120,120,120,0.18); border-radius:12px; "
+                    "background:rgba(120,120,120,0.06)'>"
+                    f"<div style='font-size:0.78rem; opacity:0.75; margin-bottom:0.25rem'>{html.escape(label)}</div>"
+                    f"<div style='font-size:0.96rem; line-height:1.35'>{html.escape(value)}</div>"
+                    "</div>"
+                ),
+                unsafe_allow_html=True,
+            )
+
+
+def _render_ddg_knowledge_panel(ddg_knowledge: dict, entity_name: str, key_prefix: str) -> None:
+    compact = _compact_ddg_knowledge(ddg_knowledge)
+    if not compact:
+        return
+
+    heading = str(compact.get("heading") or compact.get("entity") or entity_name).strip()
+    abstract_text = str(compact.get("abstract_text") or "").strip()
+    answer = str(compact.get("answer") or "").strip()
+    answer_type = str(compact.get("answer_type") or "").strip()
+    definition = str(compact.get("definition") or "").strip()
+    infobox = compact.get("infobox") or []
+    related_topics = compact.get("related_topics") or []
+
+    with st.container(border=True):
+        st.caption("DuckDuckGo Knowledge")
+        st.markdown(f"**{heading}**")
+
+        if abstract_text:
+            st.markdown(abstract_text)
+
+        summary_facts: list[tuple[str, str]] = []
+        if answer:
+            summary_facts.append(("Reponse rapide", answer))
+        if answer_type:
+            summary_facts.append(("Type de reponse", answer_type))
+        if definition:
+            summary_facts.append(("Definition", definition))
+        _render_ddg_fact_tiles(summary_facts, f"{key_prefix}_summary")
+
+        if infobox:
+            st.markdown("**Faits cles**")
+            _render_ddg_fact_tiles(
+                [
+                    (str(item.get("label") or "").strip(), str(item.get("value") or "").strip())
+                    for item in infobox[:6]
+                ],
+                f"{key_prefix}_infobox",
+            )
+
+        if related_topics:
+            st.markdown("**Pour aller plus loin**")
+            for item in related_topics[:3]:
+                text = str(item.get("text") or "").strip()
+                url = str(item.get("url") or "").strip()
+                if text and url:
+                    st.markdown(f"- [{text}]({url})")
+
+
+def _render_entity_contexts(entity_contexts: list[dict], key_prefix: str, *, expanded: bool = False) -> None:
+    if not entity_contexts:
+        return
+
+    with st.expander("🧠 Entités détectées", expanded=expanded):
+        for index, context in enumerate(entity_contexts):
+            entity_name = context.get("value") or "Entité"
+            type_label = context.get("type_label") or context.get("type") or "Entité"
+            notes = context.get("notes") or []
+            ddg_knowledge = context.get("ddg_knowledge") or {}
+            image_url = context.get("image_url")
+
+            st.markdown(f"### {entity_name}")
+            info_col, image_col = st.columns([3, 1])
+            with info_col:
+                st.markdown(f"**Type :** {type_label}")
+                if context.get("mentions"):
+                    st.markdown(f"**Mentions WUDD.AI :** {int(context.get('mentions') or 0)}")
+                if context.get("tag"):
+                    st.markdown(f"**Tag Obsidian :** `{context['tag']}`")
+
+                if notes:
+                    st.markdown("**Notes liées**")
+                    for note_index, note in enumerate(notes):
+                        note_title = note.get("title") or note.get("file_path") or "Note"
+                        note_path = note.get("file_path") or ""
+                        note_col, button_col = st.columns([5, 1.4])
+                        with note_col:
+                            st.markdown(f"- {note_title}")
+                        with button_col:
+                            if note_path:
+                                st.button(
+                                    "📖 Ouvrir",
+                                    key=f"{key_prefix}_note_{index}_{note_index}",
+                                    use_container_width=True,
+                                    on_click=_open_note_cb,
+                                    args=(note_path,),
+                                )
+
+                if ddg_knowledge:
+                    _render_ddg_knowledge_panel(ddg_knowledge, entity_name, f"{key_prefix}_ddg_{index}")
+
+            with image_col:
+                if image_url:
+                    st.image(image_url, caption=entity_name, use_container_width=True)
+
+            if index < len(entity_contexts) - 1:
+                st.divider()
+
+
+def _persist_chat_enrichment(
+    user_text: str,
+    assistant_text: str,
+    *,
+    entity_contexts: list[dict] | None = None,
+    query_overview: dict | None = None,
+    path: Path | None = None,
+) -> Path | None:
+    try:
+        return save_chat_enrichment_insight(
+            user_text,
+            assistant_text,
+            entity_contexts=entity_contexts or [],
+            query_overview=query_overview or {},
+            path=path,
+        )
+    except Exception as exc:
+        logger.debug(f"Chat enrichment persist échoué: {exc}")
+        return path
 
 
 def _render_web_failure(web_status, web_results: list[dict], web_quality: bool, message_key: str) -> str:
@@ -787,6 +1036,10 @@ for mi, msg in enumerate(st.session_state.messages):
         continue
     with st.chat_message("assistant"):
         _render_chat_response(msg["content"], placeholder=None)
+        if msg.get("query_overview"):
+            _render_query_overview(msg["query_overview"], f"hist_overview_{mi}")
+        if msg.get("entity_contexts"):
+            _render_entity_contexts(msg["entity_contexts"], f"hist_entities_{mi}")
         if msg.get("timeline"):
             with st.expander("🧭 Timeline activité", expanded=False):
                 st.markdown(msg["timeline"])
@@ -808,6 +1061,8 @@ for mi, msg in enumerate(st.session_state.messages):
                 f"📚 {len(unique_hist)} source(s)",
                 f"hist_src_{mi}",
             )
+        if msg.get("enrichment_path"):
+            st.caption(f"💾 Enrichissement sauvegardé : {Path(msg['enrichment_path']).name}")
 
 # ---- Génération des suggestions dynamiques ----
 
@@ -1003,6 +1258,15 @@ if _pending_web:
             )
             web_status.markdown(web_full)
             _q_badge = "✅ Bonne qualité" if web_quality else "⚠️ Résultat partiel"
+            web_entity_contexts = _lookup_conversation_entity_contexts(_pending_web, web_answer)
+            if web_entity_contexts:
+                _render_entity_contexts(web_entity_contexts, "pending_web_entities")
+                web_path = _persist_chat_enrichment(
+                    _pending_web,
+                    web_answer,
+                    entity_contexts=web_entity_contexts,
+                    path=web_path,
+                )
             if web_path:
                 st.caption(f"{_q_badge} · 💾 Insight sauvegardé : `{web_path.name}`")
             else:
@@ -1013,6 +1277,9 @@ if _pending_web:
                 "sources": [],
                 "stats": {},
                 "timeline": "",
+                "entity_contexts": web_entity_contexts,
+                "query_overview": {},
+                "enrichment_path": str(web_path) if web_path else "",
             })
             _persist_active_chat_thread()
         else:
@@ -1023,6 +1290,9 @@ if _pending_web:
                 "sources": [],
                 "stats": {},
                 "timeline": "",
+                "entity_contexts": [],
+                "query_overview": {},
+                "enrichment_path": "",
             })
             _persist_active_chat_thread()
 
@@ -1051,6 +1321,9 @@ if user_input:
         token_count = 0
         first_token_time: float | None = None
         sources: list = []
+        entity_contexts: list[dict] = []
+        query_overview: dict = {}
+        enrichment_path: Path | None = None
         gen_stats: dict = {}
         ttft_val = 0.0
         total = 0.0
@@ -1223,6 +1496,20 @@ if user_input:
                 "open_src",
             )
 
+        if full_response and not full_response.startswith("❌ Erreur"):
+            entity_contexts = _lookup_conversation_entity_contexts(user_input, full_response)
+            query_overview = _lookup_query_overview(user_input)
+            _render_query_overview(query_overview, f"live_overview_{len(st.session_state.messages)}", expanded=True)
+            _render_entity_contexts(entity_contexts, f"live_entities_{len(st.session_state.messages)}", expanded=True)
+            enrichment_path = _persist_chat_enrichment(
+                user_input,
+                full_response,
+                entity_contexts=entity_contexts,
+                query_overview=query_overview,
+            )
+            if enrichment_path:
+                st.caption(f"💾 Enrichissement sauvegardé : {enrichment_path.name}")
+
         # Bouton "Rechercher sur le web" — disponible après chaque réponse (hors résultat web)
         _is_web_result = full_response.startswith("🌐 **Résultat")
 
@@ -1251,6 +1538,9 @@ if user_input:
         "sources": sources[:8],
         "stats": gen_stats,
         "timeline": timeline_text,
+        "entity_contexts": entity_contexts,
+        "query_overview": query_overview,
+        "enrichment_path": str(enrichment_path) if enrichment_path else "",
     })
     _persist_active_chat_thread()
     if gen_stats:
@@ -1277,6 +1567,15 @@ if user_input:
                 )
                 web_status.markdown(web_full)
                 _q_badge = "✅ Bonne qualité" if web_quality else "⚠️ Résultat partiel"
+                web_entity_contexts = _lookup_conversation_entity_contexts(user_input, web_answer)
+                if web_entity_contexts:
+                    _render_entity_contexts(web_entity_contexts, "fallback_web_entities")
+                    web_path = _persist_chat_enrichment(
+                        user_input,
+                        web_answer,
+                        entity_contexts=web_entity_contexts,
+                        path=web_path,
+                    )
                 if web_path:
                     st.caption(f"{_q_badge} · 💾 Insight sauvegardé : `{web_path.name}`")
                 else:
@@ -1287,6 +1586,9 @@ if user_input:
                     "sources": [],
                     "stats": {},
                     "timeline": "",
+                    "entity_contexts": web_entity_contexts,
+                    "query_overview": {},
+                    "enrichment_path": str(web_path) if web_path else "",
                 })
                 _persist_active_chat_thread()
             else:
@@ -1297,6 +1599,9 @@ if user_input:
                     "sources": [],
                     "stats": {},
                     "timeline": "",
+                    "entity_contexts": [],
+                    "query_overview": {},
+                    "enrichment_path": "",
                 })
                 _persist_active_chat_thread()
     else:

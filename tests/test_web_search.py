@@ -16,6 +16,11 @@ class TestWebSearchHelpers:
         assert web_search.is_not_in_vault("Cette information n'est pas dans ton coffre.") is True
         assert web_search.is_not_in_vault("Cette information n'est pas dans ton coffre.\n\nMais voici une synthèse") is False
 
+    def test_is_not_in_vault_accepts_common_negative_variants(self):
+        assert web_search.is_not_in_vault("Cette information n'est pas consignée dans ton coffre.") is True
+        assert web_search.is_not_in_vault("Je n'ai pas trouvé d'information dans ton coffre.") is True
+        assert web_search.is_not_in_vault("Aucune information pertinente n'est disponible dans ton coffre.") is True
+
     def test_normalize_user_query_for_search_removes_chat_prefix(self):
         assert web_search._normalize_user_query_for_search("Parle moi de Ada Lovelace ?") == "Ada Lovelace"
 
@@ -24,6 +29,12 @@ class TestWebSearchHelpers:
         assert "mission" in terms
         assert "artemis" in terms
         assert "ii" not in terms
+
+    def test_keywordize_query_removes_question_framing_and_keeps_subject_terms(self):
+        query = web_search._keywordize_query(
+            "j'aimerais savoir quelles sont les nouveautés pour l'iphone de Apple en 2026"
+        )
+        assert query == "iphone Apple nouveautés 2026"
 
     def test_build_snippets_concatenates_sources(self):
         snippets = web_search._build_snippets([
@@ -74,19 +85,31 @@ class TestWebSearchQueryBuilding:
         assert query == "Dune science fiction overview"
         llm.chat.assert_not_called()
 
-    def test_build_search_query_falls_back_to_normalized_question_on_meta_output(self):
+    def test_build_search_query_falls_back_to_keywords_on_meta_output(self):
         llm = MagicMock()
         llm.chat.return_value = "comment chercher"
         with patch("src.ai.web_search._build_disambiguation_query", return_value=None):
             query = web_search._build_search_query("Parle moi de Ada Lovelace", llm)
         assert query == "Ada Lovelace"
 
-    def test_build_search_query_returns_normalized_question_on_exception(self):
+    def test_build_search_query_returns_keywords_on_exception(self):
         llm = MagicMock()
         llm.chat.side_effect = RuntimeError("boom")
         with patch("src.ai.web_search._build_disambiguation_query", return_value=None):
-            query = web_search._build_search_query("Parle moi de Grace Hopper", llm)
-        assert query == "Grace Hopper"
+            query = web_search._build_search_query(
+                "j'aimerais savoir quelles sont les nouveautés pour l'iphone de Apple en 2026",
+                llm,
+            )
+        assert query == "iphone Apple nouveautés 2026"
+
+    def test_build_search_query_rejects_placeholder_llm_output(self):
+        llm = MagicMock()
+        llm.chat.return_value = "unused"
+
+        with patch("src.ai.web_search._build_disambiguation_query", return_value=None):
+            query = web_search._build_search_query("Qui est Ada Lovelace ?", llm)
+
+        assert query == "Ada Lovelace"
 
     def test_build_search_query_keeps_short_valid_focus_query(self):
         llm = MagicMock()
@@ -107,10 +130,13 @@ class TestWebSearchQueryBuilding:
 @pytest.mark.unit
 class TestWebSearchDuckDuckGo:
     def test_ddg_search_tries_fallback_candidate_query_when_first_is_empty(self):
-        fake_module = types.ModuleType("duckduckgo_search")
+        fake_module = types.ModuleType("ddgs")
         seen_queries = []
 
         class _FakeDDGS:
+            def __init__(self, *args, **kwargs):
+                pass
+
             def __enter__(self):
                 return self
 
@@ -125,16 +151,19 @@ class TestWebSearchDuckDuckGo:
 
         fake_module.DDGS = _FakeDDGS
 
-        with patch.dict(sys.modules, {"duckduckgo_search": fake_module}):
+        with patch.dict(sys.modules, {"ddgs": fake_module}):
             results = web_search._ddg_search("Dune", max_results=5)
 
         assert results[0]["href"] == "https://wikipedia.org"
         assert seen_queries == ["Dune", "Dune -知乎", "Dune wikipedia"]
 
     def test_ddg_search_prefers_more_relevant_later_candidate_results(self):
-        fake_module = types.ModuleType("duckduckgo_search")
+        fake_module = types.ModuleType("ddgs")
 
         class _FakeDDGS:
+            def __init__(self, *args, **kwargs):
+                pass
+
             def __enter__(self):
                 return self
 
@@ -156,17 +185,56 @@ class TestWebSearchDuckDuckGo:
 
         fake_module.DDGS = _FakeDDGS
 
-        with patch.dict(sys.modules, {"duckduckgo_search": fake_module}):
+        with patch.dict(sys.modules, {"ddgs": fake_module}):
             results = web_search._ddg_search("lune", max_results=5)
 
         assert results == [
             {"title": "Lune — Wikipédia", "href": "https://fr.wikipedia.org/wiki/Lune", "body": "La Lune est le satellite naturel de la Terre."},
         ]
 
-    def test_ddg_search_filters_non_latin_and_returns_results(self):
-        fake_module = types.ModuleType("duckduckgo_search")
+    def test_ddg_search_prefers_exact_phrase_candidate_for_person_name(self):
+        fake_module = types.ModuleType("ddgs")
+        seen_queries = []
 
         class _FakeDDGS:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def text(self, query, region=None, safesearch=None, max_results=None):
+                seen_queries.append(query)
+                if query == "Ada Lovelace":
+                    return [
+                        {"title": "ADA - Australian Dental Association", "href": "https://ada.org.au/", "body": "Dental resources"},
+                    ]
+                if query == '"Ada Lovelace"':
+                    return [
+                        {"title": "Ada Lovelace - Wikipedia", "href": "https://en.wikipedia.org/wiki/Ada_Lovelace", "body": "English mathematician and writer"},
+                    ]
+                return []
+
+        fake_module.DDGS = _FakeDDGS
+
+        with patch.dict(sys.modules, {"ddgs": fake_module}):
+            results = web_search._ddg_search("Ada Lovelace", max_results=5)
+
+        assert results == [
+            {"title": "Ada Lovelace - Wikipedia", "href": "https://en.wikipedia.org/wiki/Ada_Lovelace", "body": "English mathematician and writer"},
+        ]
+        assert seen_queries[:2] == ["Ada Lovelace", '"Ada Lovelace"']
+
+    def test_ddg_search_filters_non_latin_and_returns_results(self):
+        fake_module = types.ModuleType("ddgs")
+
+        class _FakeDDGS:
+            def __init__(self, *args, **kwargs):
+                pass
+
             def __enter__(self):
                 return self
 
@@ -181,16 +249,19 @@ class TestWebSearchDuckDuckGo:
 
         fake_module.DDGS = _FakeDDGS
 
-        with patch.dict(sys.modules, {"duckduckgo_search": fake_module}):
+        with patch.dict(sys.modules, {"ddgs": fake_module}):
             results = web_search._ddg_search("Ada Lovelace", max_results=5)
 
         assert len(results) == 1
         assert results[0]["href"] == "https://a"
 
     def test_ddg_search_returns_empty_on_exception(self):
-        fake_module = types.ModuleType("duckduckgo_search")
+        fake_module = types.ModuleType("ddgs")
 
         class _FakeDDGS:
+            def __init__(self, *args, **kwargs):
+                pass
+
             def __enter__(self):
                 raise RuntimeError("network")
 
@@ -199,10 +270,54 @@ class TestWebSearchDuckDuckGo:
 
         fake_module.DDGS = _FakeDDGS
 
-        with patch.dict(sys.modules, {"duckduckgo_search": fake_module}):
+        with patch.dict(sys.modules, {"ddgs": fake_module}):
             results = web_search._ddg_search("Ada Lovelace", max_results=5)
 
         assert results == []
+
+    def test_ddg_instant_answer_search_returns_entity_card_results(self):
+        payload = {
+            "Heading": "Ada Lovelace",
+            "AbstractText": "English mathematician and writer.",
+            "AbstractURL": "https://en.wikipedia.org/wiki/Ada_Lovelace",
+            "AbstractSource": "Wikipedia",
+            "RelatedTopics": [],
+        }
+
+        response = MagicMock()
+        response.read.return_value = __import__("json").dumps(payload).encode("utf-8")
+        response.__enter__.return_value = response
+        response.__exit__.return_value = False
+
+        with patch("urllib.request.urlopen", return_value=response):
+            results = web_search._ddg_instant_answer_search("Ada Lovelace", max_results=3)
+
+        assert results == [
+            {
+                "title": "Ada Lovelace - Wikipedia",
+                "href": "https://en.wikipedia.org/wiki/Ada_Lovelace",
+                "body": "English mathematician and writer.",
+            }
+        ]
+
+    def test_ddg_instant_answer_search_skips_non_entity_query(self):
+        with patch("urllib.request.urlopen") as urlopen:
+            results = web_search._ddg_instant_answer_search("iphone Apple nouveautés 2026", max_results=3)
+
+        assert results == []
+        urlopen.assert_not_called()
+
+    def test_score_search_results_penalizes_partial_name_match(self):
+        irrelevant = [
+            {"title": "ADA - Australian Dental Association", "href": "https://ada.org.au/", "body": "Dental resources"},
+        ]
+        relevant = [
+            {"title": "Ada Lovelace - Wikipedia", "href": "https://en.wikipedia.org/wiki/Ada_Lovelace", "body": "English mathematician and writer"},
+        ]
+
+        assert web_search._score_search_results("Ada Lovelace", "Ada Lovelace", relevant) > web_search._score_search_results(
+            "Ada Lovelace", "Ada Lovelace wikipedia", irrelevant
+        )
 
 
 @pytest.mark.unit
@@ -287,12 +402,63 @@ class TestWebSearchPublicApi:
         assert "web_insight" in content
         assert "Ada Lovelace" in content
 
+    def test_build_query_overview_sync_returns_summary_and_sources(self):
+        llm = MagicMock()
+        with (
+            patch("src.ai.web_search._build_search_query", return_value="Ada Lovelace biography overview"),
+            patch(
+                "src.ai.web_search._ddg_instant_answer_search",
+                return_value=[{"title": "Ada Lovelace - Wikipedia", "href": "https://en.wikipedia.org/wiki/Ada_Lovelace", "body": "English mathematician."}],
+            ),
+            patch(
+                "src.ai.web_search._ddg_search",
+                return_value=[{"title": "Britannica", "href": "https://www.britannica.com/biography/Ada-Lovelace", "body": "British mathematician."}],
+            ),
+            patch("src.ai.web_search._synthesize_ai_overview", return_value="Vue d'ensemble utile"),
+        ):
+            overview = web_search.build_query_overview_sync("Qui est Ada Lovelace ?", llm)
+
+        assert overview["search_query"] == "Ada Lovelace biography overview"
+        assert overview["summary"] == "Vue d'ensemble utile"
+        assert len(overview["sources"]) == 2
+
+    def test_save_chat_enrichment_insight_creates_markdown_file(self, tmp_settings):
+        with patch("src.ai.web_search.settings", tmp_settings):
+            path = web_search.save_chat_enrichment_insight(
+                "Qui est Ada Lovelace ?",
+                "Ada Lovelace est une pionnière.",
+                query_overview={
+                    "search_query": "Ada Lovelace biography overview",
+                    "summary": "Vue d'ensemble utile",
+                    "sources": [{"title": "Wikipedia", "href": "https://wikipedia.org"}],
+                },
+                entity_contexts=[
+                    {
+                        "value": "Ada Lovelace",
+                        "type_label": "Personne",
+                        "mentions": 12,
+                        "tag": "personne/ada-lovelace",
+                        "image_url": "https://img/ada.png",
+                        "notes": [{"title": "Ada", "file_path": "People/Ada.md"}],
+                        "ddg_knowledge": {"abstract_text": "Mathématicienne anglaise."},
+                    }
+                ],
+            )
+
+        assert path is not None and path.exists()
+        content = path.read_text(encoding="utf-8")
+        assert "chat_enrichment" in content
+        assert "# Vue d'ensemble DDG" in content
+        assert "# Entités détectées" in content
+        assert "personne/ada-lovelace" in content
+
     def test_enrich_sync_happy_path_returns_answer_and_path(self, tmp_settings):
         llm = MagicMock()
         with (
             patch("src.ai.web_search.settings", tmp_settings),
             patch("src.ai.web_search._build_search_query", return_value="ada lovelace"),
             patch("src.ai.web_search._ddg_search", return_value=[{"title": "Wiki", "href": "https://wikipedia.org", "body": "Ada Lovelace body"}]),
+            patch("src.ai.web_search._ddg_instant_answer_search", return_value=[]),
             patch("src.ai.web_search._synthesize", return_value="Réponse web utile"),
             patch("src.ai.web_search._check_quality", return_value=True),
         ):
@@ -307,6 +473,7 @@ class TestWebSearchPublicApi:
         llm = MagicMock()
         with (
             patch("src.ai.web_search._build_search_query", return_value="ada lovelace"),
+            patch("src.ai.web_search._ddg_instant_answer_search", return_value=[]),
             patch("src.ai.web_search._ddg_search", return_value=[]),
         ):
             answer, path, results, quality = web_search.enrich_sync("Qui est Ada Lovelace ?", llm)
@@ -321,6 +488,7 @@ class TestWebSearchPublicApi:
         with (
             patch("src.ai.web_search._build_search_query", return_value="ada lovelace"),
             patch("src.ai.web_search._ddg_search", return_value=[{"title": "Wiki", "href": "https://wikipedia.org", "body": "Ada Lovelace body"}]),
+            patch("src.ai.web_search._ddg_instant_answer_search", return_value=[]),
             patch("src.ai.web_search._synthesize", return_value=None),
         ):
             answer, path, results, quality = web_search.enrich_sync("Qui est Ada Lovelace ?", llm)
@@ -335,6 +503,7 @@ class TestWebSearchPublicApi:
         with (
             patch("src.ai.web_search._build_search_query", return_value="ada lovelace"),
             patch("src.ai.web_search._ddg_search", return_value=[{"title": "Wiki", "href": "https://wikipedia.org", "body": "Ada Lovelace body"}]),
+            patch("src.ai.web_search._ddg_instant_answer_search", return_value=[]),
             patch("src.ai.web_search._synthesize", return_value="Réponse web utile"),
             patch("src.ai.web_search._check_quality", return_value=False),
         ):
@@ -344,6 +513,32 @@ class TestWebSearchPublicApi:
         assert path is None
         assert len(results) == 1
         assert quality is False
+
+    def test_enrich_sync_merges_instant_answer_and_ddg_results(self, tmp_settings):
+        llm = MagicMock()
+        with (
+            patch("src.ai.web_search.settings", tmp_settings),
+            patch("src.ai.web_search._build_search_query", return_value="Ada Lovelace"),
+            patch(
+                "src.ai.web_search._ddg_instant_answer_search",
+                return_value=[{"title": "Ada Lovelace - Wikipedia", "href": "https://en.wikipedia.org/wiki/Ada_Lovelace", "body": "English mathematician."}],
+            ),
+            patch(
+                "src.ai.web_search._ddg_search",
+                return_value=[{"title": "Britannica", "href": "https://www.britannica.com/biography/Ada-Lovelace", "body": "British mathematician."}],
+            ),
+            patch("src.ai.web_search._synthesize", return_value="Réponse web utile"),
+            patch("src.ai.web_search._check_quality", return_value=True),
+        ):
+            answer, path, results, quality = web_search.enrich_sync("Qui est Ada Lovelace ?", llm)
+
+        assert answer == "Réponse web utile"
+        assert path is not None and path.exists()
+        assert [item["href"] for item in results] == [
+            "https://en.wikipedia.org/wiki/Ada_Lovelace",
+            "https://www.britannica.com/biography/Ada-Lovelace",
+        ]
+        assert quality is True
 
     def test_enrich_async_calls_callback(self):
         callback = MagicMock()

@@ -162,6 +162,10 @@ class Settings(BaseSettings):
         return self.data_dir / "autolearn" / "processing_status.json"
 
     @property
+    def chat_threads_state_file(self) -> Path:
+        return self.data_dir / "ui" / "chat_threads_state.json"
+
+    @property
     def graph_dir(self) -> Path:
         return self.data_dir / "graph"
 

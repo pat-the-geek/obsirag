@@ -1,12 +1,26 @@
 from __future__ import annotations
 
+import json
 import re
+import urllib.parse
+import urllib.request
 import unicodedata
+from pathlib import Path
 from typing import Any
 
 from loguru import logger
 
 from src.learning.entity_cache import GeocodeCache, WuddaiCache
+
+
+_DDG_TIMEOUT_SECONDS = 6
+_DDG_USER_AGENT = "Mozilla/5.0 (ObsiRAG/1.0; +https://github.com/pat-the-geek/obsirag)"
+_ENTITY_MATCH_STOPWORDS = {
+    "qui", "que", "quoi", "est", "suis", "sont", "dans", "avec", "sans", "pour",
+    "sur", "une", "des", "les", "par", "this", "that", "what", "when", "where",
+    "who", "why", "how", "from", "into", "your", "vous", "nous", "leur", "elle",
+    "lui", "son", "ses", "cet", "cette", "these", "those",
+}
 
 
 class AutoLearnEntityServices:
@@ -80,6 +94,44 @@ class AutoLearnEntityServices:
         )
         return tags[:20], entity_images
 
+    def lookup_wuddai_entity_contexts(
+        self,
+        text: str,
+        *,
+        max_entities: int = 3,
+        max_notes: int = 3,
+    ) -> list[dict]:
+        if not text or not text.strip():
+            return []
+
+        entities = self._owner._load_wuddai_entities()
+        if not entities:
+            return []
+
+        matches = self._match_wuddai_entities(text, entities, max_entities=max_entities)
+        if not matches:
+            return []
+
+        notes = self._list_notes()
+        contexts: list[dict] = []
+        for match in matches:
+            tag = self._entity_tag(match)
+            related_notes = self._find_notes_for_tag(notes, tag, max_notes=max_notes) if tag else []
+            ddg_knowledge = self._fetch_ddg_entity_knowledge(match["value"])
+            contexts.append(
+                {
+                    "type": match["type"],
+                    "type_label": self._entity_type_label(match["type"]),
+                    "value": match["value"],
+                    "mentions": match.get("mentions", 0),
+                    "image_url": match.get("image_url"),
+                    "tag": tag,
+                    "notes": related_notes,
+                    "ddg_knowledge": ddg_knowledge,
+                }
+            )
+        return contexts
+
     @staticmethod
     def entities_to_tags_spacy(text: str) -> list[str]:
         try:
@@ -148,3 +200,216 @@ class AutoLearnEntityServices:
             return [(ent.text.strip(), ent.label_) for ent in doc.ents if len(ent.text.strip()) >= 3]
         except Exception:
             return []
+
+    def _match_wuddai_entities(
+        self,
+        text: str,
+        entities: list[dict],
+        *,
+        max_entities: int,
+    ) -> list[dict]:
+        index = {
+            entity.get("value_normalized", ""): entity
+            for entity in entities
+            if entity.get("value_normalized")
+        }
+        if not index:
+            return []
+
+        candidate_scores: dict[str, tuple[int, dict]] = {}
+        normalized_text = self._owner._normalize_entity_name(text)
+        normalized_tokens = [
+            token for token in normalized_text.split()
+            if len(token) >= 3 and token not in _ENTITY_MATCH_STOPWORDS
+        ]
+        candidate_strings: set[str] = set()
+
+        for raw_value, _label in self._extract_spacy_candidates(text):
+            normalized = self._owner._normalize_entity_name(raw_value)
+            if normalized:
+                candidate_strings.add(normalized)
+
+        for size in range(1, min(4, len(normalized_tokens)) + 1):
+            for start in range(0, len(normalized_tokens) - size + 1):
+                candidate_strings.add(" ".join(normalized_tokens[start:start + size]))
+
+        padded_text = f" {normalized_text} "
+        for key, entity in index.items():
+            if f" {key} " in padded_text:
+                candidate_scores[key] = (300 + int(entity.get("mentions", 0)), entity)
+
+        for candidate in candidate_strings:
+            if len(candidate) < 3:
+                continue
+            match = index.get(candidate)
+            if match:
+                score = 250 + int(match.get("mentions", 0))
+                current = candidate_scores.get(candidate)
+                if current is None or score > current[0]:
+                    candidate_scores[candidate] = (score, match)
+                continue
+
+            if len(candidate) < 4 and " " not in candidate:
+                continue
+
+            for key, entity in index.items():
+                if (candidate in key or key in candidate) and abs(len(candidate) - len(key)) <= 3:
+                    score = 180 + min(len(candidate), len(key)) + int(entity.get("mentions", 0))
+                    current = candidate_scores.get(key)
+                    if current is None or score > current[0]:
+                        candidate_scores[key] = (score, entity)
+
+        ordered = sorted(
+            candidate_scores.values(),
+            key=lambda item: (-item[0], -int(item[1].get("mentions", 0)), item[1].get("value", "")),
+        )
+        return [entity for _score, entity in ordered[:max_entities]]
+
+    def _entity_tag(self, entity: dict) -> str | None:
+        entity_type = entity.get("type")
+        official_value = entity.get("value")
+        prefix = self._owner._wuddai_type_to_prefix().get(entity_type)
+        if not prefix or not official_value:
+            return None
+        slug = re.sub(r"[^\w\s-]", "", self._owner._normalize_entity_name(official_value))
+        slug = re.sub(r"[\s_]+", "-", slug)
+        return f"{prefix}/{slug}" if slug else None
+
+    def _list_notes(self) -> list[dict]:
+        chroma = getattr(self._owner, "_chroma", None)
+        if chroma is None:
+            return []
+        list_notes_sorted = getattr(chroma, "list_notes_sorted_by_title", None)
+        if callable(list_notes_sorted):
+            notes = list_notes_sorted()
+            if isinstance(notes, list):
+                return notes
+        list_notes = getattr(chroma, "list_notes", None)
+        if callable(list_notes):
+            notes = list_notes()
+            if isinstance(notes, list):
+                return notes
+        return []
+
+    @staticmethod
+    def _find_notes_for_tag(notes: list[dict], tag: str, *, max_notes: int) -> list[dict]:
+        if not tag:
+            return []
+        target = tag.lower()
+        matches: list[dict] = []
+        for note in notes:
+            note_tags = {item.lower() for item in note.get("tags", []) if item}
+            if target not in note_tags:
+                continue
+            matches.append(
+                {
+                    "title": note.get("title") or Path(note.get("file_path", "")).stem or "(sans titre)",
+                    "file_path": note.get("file_path", ""),
+                    "date_modified": note.get("date_modified", ""),
+                }
+            )
+            if len(matches) >= max_notes:
+                break
+        return matches
+
+    @staticmethod
+    def _entity_type_label(entity_type: str) -> str:
+        return {
+            "PERSON": "Personne",
+            "ORG": "Organisation",
+            "GPE": "Lieu",
+            "LOC": "Lieu",
+            "PRODUCT": "Produit",
+            "EVENT": "Evenement",
+            "NORP": "Groupe",
+            "FAC": "Lieu",
+        }.get(entity_type, entity_type.title())
+
+    def _fetch_ddg_entity_knowledge(self, entity_name: str) -> dict:
+        try:
+            params = urllib.parse.urlencode(
+                {
+                    "q": entity_name,
+                    "format": "json",
+                    "no_html": "1",
+                    "no_redirect": "1",
+                    "skip_disambig": "0",
+                }
+            )
+            request = urllib.request.Request(
+                f"https://api.duckduckgo.com/?{params}",
+                headers={"User-Agent": _DDG_USER_AGENT},
+            )
+            with urllib.request.urlopen(request, timeout=_DDG_TIMEOUT_SECONDS) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+            return self._summarize_ddg_entity_knowledge(payload)
+        except Exception as exc:
+            logger.debug(f"DDG knowledge lookup échoué pour {entity_name!r}: {exc}")
+            return {}
+
+    @classmethod
+    def _summarize_ddg_entity_knowledge(cls, payload: dict) -> dict:
+        if not payload:
+            return {}
+
+        summary = {
+            "heading": (payload.get("Heading") or "").strip(),
+            "entity": (payload.get("Entity") or "").strip(),
+            "abstract_text": (payload.get("AbstractText") or "").strip(),
+            "abstract_url": (payload.get("AbstractURL") or "").strip(),
+            "abstract_source": (payload.get("AbstractSource") or "").strip(),
+            "image": (payload.get("Image") or "").strip(),
+            "answer": (payload.get("Answer") or "").strip(),
+            "answer_type": (payload.get("AnswerType") or "").strip(),
+            "definition": (payload.get("Definition") or "").strip(),
+            "definition_url": (payload.get("DefinitionURL") or "").strip(),
+            "definition_source": (payload.get("DefinitionSource") or "").strip(),
+            "infobox": cls._extract_infobox(payload.get("Infobox") or {}),
+            "related_topics": cls._extract_related_topics(payload.get("RelatedTopics") or []),
+        }
+
+        compact = {key: value for key, value in summary.items() if value}
+        if not compact:
+            return {}
+        return compact
+
+    @staticmethod
+    def _extract_infobox(infobox: dict, *, max_entries: int = 8) -> list[dict]:
+        entries: list[dict] = []
+        for item in infobox.get("content") or []:
+            label = str(item.get("label") or "").strip()
+            value = str(item.get("value") or "").strip()
+            wiki_order = item.get("wiki_order")
+            if not label or not value:
+                continue
+            entries.append(
+                {
+                    "label": label,
+                    "value": value,
+                    "wiki_order": wiki_order,
+                }
+            )
+            if len(entries) >= max_entries:
+                break
+        return entries
+
+    @staticmethod
+    def _extract_related_topics(items: list[dict], *, max_entries: int = 5) -> list[dict]:
+        flattened: list[dict] = []
+
+        def _walk(nodes: list[dict]) -> None:
+            for node in nodes:
+                text = str(node.get("Text") or "").strip()
+                href = str(node.get("FirstURL") or "").strip()
+                if text and href:
+                    flattened.append({"text": text, "url": href})
+                    if len(flattened) >= max_entries:
+                        return
+                topics = node.get("Topics")
+                if isinstance(topics, list):
+                    _walk(topics)
+                    if len(flattened) >= max_entries:
+                        return
+
+        _walk(items)
+        return flattened[:max_entries]

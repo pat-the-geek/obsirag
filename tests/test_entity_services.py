@@ -95,3 +95,89 @@ class TestEntityServices:
         assert coords == (45.764, 4.8357)
         saved = json.loads(cache_file.read_text(encoding="utf-8"))
         assert saved["lyon"] == [45.764, 4.8357]
+
+    def test_summarize_ddg_entity_knowledge_extracts_core_fields(self, tmp_settings):
+        owner = _make_owner(tmp_settings)
+        service = AutoLearnEntityServices(owner)
+
+        summary = service._summarize_ddg_entity_knowledge(
+            {
+                "Heading": "Ada Lovelace",
+                "AbstractText": "English mathematician.",
+                "AbstractURL": "https://en.wikipedia.org/wiki/Ada_Lovelace",
+                "Infobox": {
+                    "content": [
+                        {"label": "Born", "value": "1815"},
+                        {"label": "Known for", "value": "Analytical Engine"},
+                    ]
+                },
+                "RelatedTopics": [
+                    {"Text": "Charles Babbage - English polymath", "FirstURL": "https://duckduckgo.com/Charles_Babbage"}
+                ],
+            }
+        )
+
+        assert summary["heading"] == "Ada Lovelace"
+        assert summary["abstract_text"] == "English mathematician."
+        assert summary["infobox"][0]["label"] == "Born"
+        assert summary["related_topics"][0]["url"] == "https://duckduckgo.com/Charles_Babbage"
+
+    def test_lookup_wuddai_entity_contexts_returns_notes_and_ddg_knowledge(self, tmp_settings):
+        owner = _make_owner(tmp_settings)
+        owner._load_wuddai_entities.return_value = [
+            {
+                "value": "Ada Lovelace",
+                "value_normalized": "ada lovelace",
+                "type": "PERSON",
+                "mentions": 12,
+                "image_url": "https://img/ada.png",
+            }
+        ]
+        owner._chroma = MagicMock()
+        owner._chroma.list_notes_sorted_by_title.return_value = [
+            {
+                "title": "Ada Notes",
+                "file_path": "People/Ada.md",
+                "date_modified": "2026-04-16",
+                "tags": ["personne/ada-lovelace"],
+            }
+        ]
+        service = AutoLearnEntityServices(owner)
+
+        with patch.object(service, "_extract_spacy_candidates", return_value=[("Ada Lovelace", "PERSON")]):
+            with patch.object(service, "_fetch_ddg_entity_knowledge", return_value={"abstract_text": "English mathematician."}):
+                contexts = service.lookup_wuddai_entity_contexts("Qui est Ada Lovelace ?")
+
+        assert len(contexts) == 1
+        assert contexts[0]["value"] == "Ada Lovelace"
+        assert contexts[0]["tag"] == "personne/ada-lovelace"
+        assert contexts[0]["notes"][0]["file_path"] == "People/Ada.md"
+        assert contexts[0]["ddg_knowledge"]["abstract_text"] == "English mathematician."
+
+    def test_lookup_wuddai_entity_contexts_ignores_short_stopword_false_positives(self, tmp_settings):
+        owner = _make_owner(tmp_settings)
+        owner._load_wuddai_entities.return_value = [
+            {
+                "value": "Ada Lovelace",
+                "value_normalized": "ada lovelace",
+                "type": "PERSON",
+                "mentions": 12,
+                "image_url": "https://img/ada.png",
+            },
+            {
+                "value": "Best Buy",
+                "value_normalized": "best buy",
+                "type": "ORG",
+                "mentions": 26,
+                "image_url": "https://img/bestbuy.png",
+            },
+        ]
+        owner._chroma = MagicMock()
+        owner._chroma.list_notes_sorted_by_title.return_value = []
+        service = AutoLearnEntityServices(owner)
+
+        with patch.object(service, "_extract_spacy_candidates", return_value=[("Ada Lovelace", "PERSON")]):
+            with patch.object(service, "_fetch_ddg_entity_knowledge", return_value={}):
+                contexts = service.lookup_wuddai_entity_contexts("Qui est Ada Lovelace ?")
+
+        assert [context["value"] for context in contexts] == ["Ada Lovelace"]

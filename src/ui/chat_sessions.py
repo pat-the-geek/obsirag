@@ -60,6 +60,28 @@ def get_current_thread(state: dict) -> dict:
     return fallback
 
 
+def resolve_active_thread_messages(
+    *,
+    thread_messages: list[dict] | None,
+    current_messages: list[dict] | None,
+    force: bool = False,
+) -> list[dict]:
+    persisted_messages = list(thread_messages or [])
+    visible_messages = list(current_messages or [])
+
+    if force:
+        return persisted_messages
+    if not visible_messages:
+        return persisted_messages
+    if not persisted_messages:
+        return visible_messages
+    if len(persisted_messages) > len(visible_messages):
+        return persisted_messages
+    if persisted_messages == visible_messages:
+        return persisted_messages
+    return visible_messages
+
+
 def update_current_thread(
     state: dict | None,
     *,

@@ -8,6 +8,7 @@ from src.ui.chat_sessions import (
     ensure_chat_state,
     get_current_thread,
     list_thread_summaries,
+    resolve_active_thread_messages,
     switch_thread,
     update_current_thread,
 )
@@ -63,3 +64,38 @@ class TestChatSessions:
         current = get_current_thread(updated)
 
         assert current["last_gen_stats"] == {"tokens": 42, "tps": 12.5}
+
+    def test_resolve_active_thread_messages_keeps_visible_history_when_persisted_copy_is_stale(self):
+        persisted = [
+            {"role": "user", "content": "Question 1"},
+            {"role": "assistant", "content": "Ancienne réponse"},
+        ]
+        visible = [
+            {"role": "user", "content": "Question 1"},
+            {"role": "assistant", "content": "Réponse affichée complète"},
+        ]
+
+        chosen = resolve_active_thread_messages(
+            thread_messages=persisted,
+            current_messages=visible,
+        )
+
+        assert chosen == visible
+
+    def test_resolve_active_thread_messages_prefers_persisted_history_when_it_is_richer(self):
+        persisted = [
+            {"role": "user", "content": "Question 1"},
+            {"role": "assistant", "content": "Réponse 1"},
+            {"role": "user", "content": "Question 2"},
+        ]
+        visible = [
+            {"role": "user", "content": "Question 1"},
+            {"role": "assistant", "content": "Réponse 1"},
+        ]
+
+        chosen = resolve_active_thread_messages(
+            thread_messages=persisted,
+            current_messages=visible,
+        )
+
+        assert chosen == persisted

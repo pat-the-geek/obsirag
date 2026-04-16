@@ -19,9 +19,6 @@ mlx-lm>=0.31.0
 # Surveillance du système de fichiers
 watchdog>=4.0.0
 
-# Recherche web (enrichissement quand info absente du coffre)
-duckduckgo-search>=6.0.0
-
 # Planificateur de tâches de fond
 APScheduler>=3.10.4
 

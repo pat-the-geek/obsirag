@@ -776,6 +776,19 @@ class AutoLearner:
     def _extract_validated_entities(self, text: str) -> tuple[list[str], list[dict]]:
         return self._entity_services.extract_validated_entities(text)
 
+    def lookup_wuddai_entity_contexts(
+        self,
+        text: str,
+        *,
+        max_entities: int = 3,
+        max_notes: int = 3,
+    ) -> list[dict]:
+        return self._entity_services.lookup_wuddai_entity_contexts(
+            text,
+            max_entities=max_entities,
+            max_notes=max_notes,
+        )
+
     @staticmethod
     def _entities_to_tags_spacy(text: str) -> list[str]:
         return AutoLearnEntityServices.entities_to_tags_spacy(text)
