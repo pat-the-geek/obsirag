@@ -197,6 +197,16 @@ Un processus léger tourne en arrière-plan et :
 
 Le système est conçu pour fonctionner **sans pénaliser l'utilisation normale de la machine** : les appels LLM sont espacés (pause configurable entre chaque note et chaque question), le nombre de notes traitées par cycle est limité, et tout tourne dans un thread d'arrière-plan isolé. La machine reste pleinement disponible pendant le traitement.
 
+> Par défaut, le backend API n'autorise plus le chargement MLX en tâche de fond. Pour réactiver l'auto-learner complet, définir `AUTOLEARN_ALLOW_BACKGROUND_LLM=true` dans `.env`.
+
+Pour isoler l'auto-learner du process API, lancer plutôt le worker dédié :
+
+```bash
+./scripts/run_autolearn_worker.sh
+```
+
+Avec ce mode, un crash MLX éventuel du worker n'arrête plus l'API FastAPI.
+
 **Gestion du cycle de vie du modèle LLM :** l'auto-learner charge le modèle MLX au début de chaque cycle et le décharge à la fin si l'interface web est inactive — libérant ainsi la mémoire GPU/Metal entre les cycles. Si l'interface est ouverte, le modèle reste chargé pour répondre immédiatement aux requêtes chat.
 
 #### Traitements automatiques
@@ -596,6 +606,7 @@ python scripts/benchmark_model_shortlist.py \
 
 | Paramètre `.env` | Valeur par défaut | Rôle |
 |---|---|---|
+| `AUTOLEARN_ALLOW_BACKGROUND_LLM` | **false** | Autorise explicitement le chargement MLX par l'auto-learner en tâche de fond. À activer seulement si ce runtime est stable sur votre machine. |
 | `AUTOLEARN_INTERVAL_MINUTES` | **15 min** | Fréquence du cycle — l'auto-learner se réveille toutes les 15 minutes |
 | `AUTOLEARN_LOOKBACK_HOURS` | **24 h** | Fenêtre de détection — seules les notes modifiées dans les dernières 24h sont candidates |
 | `AUTOLEARN_MIN_REPROCESS_DAYS` | **7 jours** | Délai de grâce — une note déjà traitée ne sera pas retraitée avant 7 jours |

@@ -40,10 +40,9 @@ class ServiceManager:
         from src.database.chroma_store import ChromaStore
         self.chroma = ChromaStore()
 
-        _step("🤖 Chargement du modèle MLX (peut prendre 30-60 s)…")
+        _step("🤖 Initialisation du client MLX (chargement differe)…")
         from src.ai.mlx_client import MlxClient
         self.llm = MlxClient()
-        self.llm.load()
 
         _step("🔗 Initialisation du pipeline RAG…")
         from src.ai.rag import RAGPipeline
@@ -92,8 +91,13 @@ class ServiceManager:
         logger.info("Vault watcher démarré")
 
         if settings.autolearn_enabled:
-            self.learner.start()
-            logger.info("Auto-learner démarré")
+            if settings.autolearn_allow_background_llm:
+                self.learner.start()
+                logger.info("Auto-learner démarré")
+            else:
+                logger.warning(
+                    "Auto-learner désactivé pour ce runtime: activer AUTOLEARN_ALLOW_BACKGROUND_LLM=true pour autoriser le chargement MLX en tâche de fond"
+                )
 
         thread = threading.Thread(
             target=self._initial_index,

@@ -73,7 +73,7 @@ class AutoLearnSynapseDiscovery:
                 except Exception as exc:
                     logger.warning(f"Synapse {file_path_a} ↔ {file_path_b} : {exc}")
 
-    def create_synapse_artifact(self, note_a: dict, note_b_info: dict) -> None:
+    def create_synapse_artifact(self, note_a: dict, note_b_info: dict) -> Path:
         title_a = note_a.get("title", note_a["file_path"])
         title_b = note_b_info["title"]
         score = note_b_info["score"]
@@ -129,3 +129,4 @@ class AutoLearnSynapseDiscovery:
         ]
         out_path.write_text("\n".join(lines), encoding="utf-8")
         logger.info(f"Synapse créée : {title_a} ↔ {title_b} ({score:.0%})")
+        return out_path

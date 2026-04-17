@@ -16,6 +16,8 @@ set -euo pipefail
 
 LABEL="com.obsirag"
 PLIST_DST="$HOME/Library/LaunchAgents/${LABEL}.plist"
+AUTOLEARN_LABEL="com.obsirag.autolearn"
+AUTOLEARN_PLIST_DST="$HOME/Library/LaunchAgents/${AUTOLEARN_LABEL}.plist"
 PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
 LOG_DIR="$HOME/Library/Logs/ObsiRAG"
 
@@ -27,7 +29,9 @@ VENV_SITE_PACKAGES="$PROJECT_DIR/.venv/lib/python3.12/site-packages"
 if [[ "${1:-}" == "uninstall" ]]; then
   echo "==> Désinstallation du service ObsiRAG..."
   launchctl unload "$PLIST_DST" 2>/dev/null || true
+  launchctl unload "$AUTOLEARN_PLIST_DST" 2>/dev/null || true
   rm -f "$PLIST_DST"
+  rm -f "$AUTOLEARN_PLIST_DST"
   echo "    Service supprimé."
   exit 0
 fi
@@ -76,6 +80,8 @@ LOG_LEVEL="$(_env_val LOG_LEVEL)"
 LOG_LEVEL="${LOG_LEVEL:-INFO}"
 AUTOLEARN_ENABLED="$(_env_val AUTOLEARN_ENABLED)"
 AUTOLEARN_ENABLED="${AUTOLEARN_ENABLED:-true}"
+AUTOLEARN_ALLOW_BACKGROUND_LLM="$(_env_val AUTOLEARN_ALLOW_BACKGROUND_LLM)"
+AUTOLEARN_ALLOW_BACKGROUND_LLM="${AUTOLEARN_ALLOW_BACKGROUND_LLM:-false}"
 AUTOLEARN_INTERVAL_MINUTES="$(_env_val AUTOLEARN_INTERVAL_MINUTES)"
 AUTOLEARN_INTERVAL_MINUTES="${AUTOLEARN_INTERVAL_MINUTES:-60}"
 STREAMLIT_SERVER_ADDRESS="$(_env_val STREAMLIT_SERVER_ADDRESS)"
@@ -166,9 +172,89 @@ cat > "$PLIST_DST" <<PLIST
 </plist>
 PLIST
 
+cat > "$AUTOLEARN_PLIST_DST" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>${AUTOLEARN_LABEL}</string>
+
+    <key>ProgramArguments</key>
+    <array>
+    <string>${PYTHON_BIN}</string>
+    <string>-m</string>
+    <string>src.learning.worker</string>
+    </array>
+
+  <key>WorkingDirectory</key>
+  <string>${PROJECT_DIR}</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PYTHONPATH</key>
+        <string>${PROJECT_DIR}:${VENV_SITE_PACKAGES}</string>
+        <key>VIRTUAL_ENV</key>
+        <string>${PROJECT_DIR}/.venv</string>
+        <key>PATH</key>
+        <string>${PROJECT_DIR}/.venv/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+        <key>HOME</key>
+        <string>${HOME}</string>
+        <key>VAULT_PATH</key>
+        <string>${VAULT_PATH}</string>
+        <key>APP_DATA_DIR</key>
+        <string>${APP_DATA_DIR}</string>
+        <key>LOG_DIR</key>
+        <string>${PROJECT_DIR}/logs</string>
+        <key>LOG_LEVEL</key>
+        <string>${LOG_LEVEL}</string>
+        <key>MLX_CHAT_MODEL</key>
+        <string>${MLX_CHAT_MODEL}</string>
+        <key>OLLAMA_EMBED_MODEL</key>
+        <string>${OLLAMA_EMBED_MODEL}</string>
+        <key>EMBEDDING_MODEL</key>
+        <string>${EMBEDDING_MODEL}</string>
+        <key>OBSIDIAN_VAULT_NAME</key>
+        <string>${OBSIDIAN_VAULT_NAME}</string>
+        <key>AUTOLEARN_ENABLED</key>
+        <string>${AUTOLEARN_ENABLED}</string>
+        <key>AUTOLEARN_ALLOW_BACKGROUND_LLM</key>
+        <string>true</string>
+        <key>AUTOLEARN_INTERVAL_MINUTES</key>
+        <string>${AUTOLEARN_INTERVAL_MINUTES}</string>
+        <key>TRANSFORMERS_CACHE</key>
+        <string>${HOME}/.cache/huggingface/transformers</string>
+        <key>HF_HOME</key>
+        <string>${HOME}/.cache/huggingface</string>
+        <key>TZ</key>
+        <string>Europe/Zurich</string>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>${LOG_DIR}/autolearn.stdout.log</string>
+    <key>StandardErrorPath</key>
+    <string>${LOG_DIR}/autolearn.stderr.log</string>
+</dict>
+</plist>
+PLIST
+
 # ---- Charger le service -------------------------------------
 launchctl unload "$PLIST_DST" 2>/dev/null || true
+launchctl unload "$AUTOLEARN_PLIST_DST" 2>/dev/null || true
 launchctl load "$PLIST_DST"
+if [ "$AUTOLEARN_ENABLED" = "true" ]; then
+  launchctl load "$AUTOLEARN_PLIST_DST"
+fi
 
 echo ""
 echo "✓ Service ObsiRAG installé."
@@ -187,8 +273,10 @@ echo "  → Une fois le FDA accordé, accessible sur : http://localhost:8501"
 echo ""
 echo "  Commandes utiles :"
 echo "    Logs          : tail -f $LOG_DIR/stdout.log"
+echo "    Logs worker   : tail -f $LOG_DIR/autolearn.stdout.log"
 echo "    Logs erreurs  : tail -f $LOG_DIR/stderr.log"
 echo "    Redémarrer    : launchctl kickstart -k gui/\$(id -u)/$LABEL"
+echo "    Redémarrer worker : launchctl kickstart -k gui/\$(id -u)/$AUTOLEARN_LABEL"
 echo "    Arrêter       : launchctl unload $PLIST_DST"
 echo "    Désinstaller  : ./install_service.sh uninstall"
 

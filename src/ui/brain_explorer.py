@@ -127,7 +127,10 @@ def _parse_note_date(value: str) -> datetime | None:
         return None
     for candidate in (value, value.replace("Z", "+00:00")):
         try:
-            return datetime.fromisoformat(candidate)
+            parsed = datetime.fromisoformat(candidate)
+            if parsed.tzinfo is not None:
+                return parsed.astimezone().replace(tzinfo=None)
+            return parsed
         except ValueError:
             continue
     return None

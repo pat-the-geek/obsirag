@@ -429,6 +429,13 @@ class AutoLearner:
             self._finalize_bulk_initial()
 
     def start(self) -> None:
+        if not settings.autolearn_allow_background_llm:
+            logger.warning(
+                "Auto-learner non démarré: AUTOLEARN_ALLOW_BACKGROUND_LLM=false bloque le chargement MLX en arrière-plan"
+            )
+            self._bulk_initial_done.set()
+            return
+
         interval = settings.autolearn_interval_minutes
 
         if self._is_first_insight_run():
@@ -944,8 +951,8 @@ class AutoLearner:
     def _discover_synapses(self, all_notes: list[dict]) -> None:
         self._synapse_discovery.discover_synapses(all_notes)
 
-    def _create_synapse_artifact(self, note_a: dict, note_b_info: dict) -> None:
-        self._synapse_discovery.create_synapse_artifact(note_a, note_b_info)
+    def _create_synapse_artifact(self, note_a: dict, note_b_info: dict):
+        return self._synapse_discovery.create_synapse_artifact(note_a, note_b_info)
 
     # ---- Synthèse hebdomadaire ----
 

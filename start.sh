@@ -8,8 +8,11 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 PID_FILE=".obsirag.pid"
+AUTOLEARN_PID_FILE=".obsirag-autolearn.pid"
 LABEL="com.obsirag"
+AUTOLEARN_LABEL="com.obsirag.autolearn"
 PLIST_DST="$HOME/Library/LaunchAgents/${LABEL}.plist"
+AUTOLEARN_PLIST_DST="$HOME/Library/LaunchAgents/${AUTOLEARN_LABEL}.plist"
 
 if [ ! -d ".venv" ]; then
   echo "ERREUR : venv introuvable. Exécute d'abord ./setup.sh"
@@ -29,6 +32,10 @@ STREAMLIT_SERVER_ADDRESS="${STREAMLIT_SERVER_ADDRESS:-127.0.0.1}"
 
 _launchd_is_loaded() {
   launchctl print "gui/$(id -u)/$LABEL" >/dev/null 2>&1
+}
+
+_autolearn_launchd_is_loaded() {
+  launchctl print "gui/$(id -u)/$AUTOLEARN_LABEL" >/dev/null 2>&1
 }
 
 _wait_for_port() {
@@ -57,7 +64,18 @@ if [ -f "$PLIST_DST" ]; then
   fi
 
   APP_PID="$(lsof -ti :8501 | head -n 1)"
+
+  if [ "${AUTOLEARN_ENABLED:-true}" = "true" ] && [ -f "$AUTOLEARN_PLIST_DST" ]; then
+    echo "==> Service launchd auto-learner détecté (${AUTOLEARN_LABEL})"
+    if _autolearn_launchd_is_loaded; then
+      launchctl kickstart -k "gui/$(id -u)/$AUTOLEARN_LABEL"
+    else
+      launchctl load "$AUTOLEARN_PLIST_DST"
+    fi
+  fi
+
   rm -f "$PID_FILE"
+  rm -f "$AUTOLEARN_PID_FILE"
   echo "==> ObsiRAG démarré via launchd (PID $APP_PID) — http://localhost:8501"
   echo "    Logs  : tail -f $HOME/Library/Logs/ObsiRAG/stdout.log"
   echo "    Arrêt : ./stop.sh"
@@ -74,15 +92,33 @@ if [ -f "$PID_FILE" ]; then
   fi
 fi
 
+if [ -f "$AUTOLEARN_PID_FILE" ]; then
+  OLD_AUTOLEARN_PID=$(cat "$AUTOLEARN_PID_FILE")
+  if kill -0 "$OLD_AUTOLEARN_PID" 2>/dev/null; then
+    echo "Auto-learner tourne déjà (PID $OLD_AUTOLEARN_PID). Lance ./stop.sh pour l'arrêter."
+    exit 1
+  else
+    rm -f "$AUTOLEARN_PID_FILE"
+  fi
+fi
+
 mkdir -p logs
 
 ./run.sh >> logs/obsirag.log 2>> logs/obsirag_error.log &
 
 APP_PID=$!
 echo "$APP_PID" > "$PID_FILE"
+
+if [ "${AUTOLEARN_ENABLED:-true}" = "true" ]; then
+  ./scripts/run_autolearn_worker.sh >> logs/obsirag-autolearn.log 2>> logs/obsirag-autolearn_error.log &
+  AUTOLEARN_PID=$!
+  echo "$AUTOLEARN_PID" > "$AUTOLEARN_PID_FILE"
+fi
+
 if ! _wait_for_port; then
   if ! kill -0 "$APP_PID" 2>/dev/null; then
     rm -f "$PID_FILE"
+    rm -f "$AUTOLEARN_PID_FILE"
     echo "ERREUR : échec du démarrage d'ObsiRAG. Consulte logs/obsirag_error.log"
     exit 1
   fi
@@ -94,4 +130,7 @@ else
   echo "==> ObsiRAG démarré (PID $APP_PID) — http://localhost:8501"
 fi
 echo "    Logs  : tail -f logs/obsirag.log"
+if [ -f "$AUTOLEARN_PID_FILE" ]; then
+  echo "    Logs worker : tail -f logs/obsirag-autolearn.log"
+fi
 echo "    Arrêt : ./stop.sh"

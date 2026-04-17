@@ -38,8 +38,12 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     log_dir: str = "/app/logs"
 
+    # API Expo / mobile
+    api_access_token: Optional[str] = None
+
     # Auto-apprentissage
     autolearn_enabled: bool = True
+    autolearn_allow_background_llm: bool = False
     autolearn_interval_minutes: int = 60
     autolearn_max_notes_per_run: int = 5
     autolearn_lookback_hours: int = 24
@@ -162,8 +166,16 @@ class Settings(BaseSettings):
         return self.data_dir / "autolearn" / "processing_status.json"
 
     @property
+    def autolearn_runtime_file(self) -> Path:
+        return self.data_dir / "autolearn" / "runtime.json"
+
+    @property
     def chat_threads_state_file(self) -> Path:
         return self.data_dir / "ui" / "chat_threads_state.json"
+
+    @property
+    def api_conversations_file(self) -> Path:
+        return self.data_dir / "api" / "conversations.json"
 
     @property
     def graph_dir(self) -> Path:

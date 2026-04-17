@@ -51,6 +51,9 @@ class TestSettings:
     def test_chat_threads_state_file(self, tmp_settings):
         assert tmp_settings.chat_threads_state_file.name == "chat_threads_state.json"
 
+    def test_api_conversations_file(self, tmp_settings):
+        assert tmp_settings.api_conversations_file.name == "conversations.json"
+
     def test_processing_times_file(self, tmp_settings):
         assert tmp_settings.processing_times_file.name == "processing_times.json"
 
