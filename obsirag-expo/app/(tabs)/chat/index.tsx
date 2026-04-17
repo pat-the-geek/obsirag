@@ -11,6 +11,7 @@ import { useAppStore } from '../../../store/app-store';
 export default function ConversationsScreen() {
   const router = useRouter();
   const [search, setSearch] = useState('');
+  const activeConversationId = useAppStore((state) => state.activeConversationId);
   const setActiveConversationId = useAppStore((state) => state.setActiveConversationId);
   const clearDraft = useAppStore((state) => state.clearDraft);
   const { data, isLoading, isRefetching, refetch } = useConversations();
@@ -40,13 +41,33 @@ export default function ConversationsScreen() {
   };
 
   const onDelete = (conversationId: string) => {
+    const executeDelete = async () => {
+      try {
+        await deleteConversation.mutateAsync(conversationId);
+        clearDraft(conversationId);
+        if (activeConversationId === conversationId) {
+          setActiveConversationId(undefined);
+        }
+      } catch (error) {
+        Alert.alert('Suppression impossible', error instanceof Error ? error.message : 'Erreur inconnue');
+      }
+    };
+
+    if (typeof globalThis.confirm === 'function') {
+      const confirmed = globalThis.confirm('Cette suppression affectera le stockage backend de ce fil.');
+      if (confirmed) {
+        void executeDelete();
+      }
+      return;
+    }
+
     Alert.alert('Supprimer la conversation', 'Cette suppression affectera le stockage backend de ce fil.', [
       { text: 'Annuler', style: 'cancel' },
       {
         text: 'Supprimer',
         style: 'destructive',
         onPress: () => {
-          void deleteConversation.mutateAsync(conversationId);
+          void executeDelete();
         },
       },
     ]);
@@ -72,6 +93,7 @@ export default function ConversationsScreen() {
             item={item}
             onPress={() => openConversation(item.id)}
             onDelete={() => onDelete(item.id)}
+            deleteDisabled={deleteConversation.isPending && deleteConversation.variables === item.id}
           />
         ))}
       </SectionCard>

@@ -369,7 +369,7 @@ def _lookup_conversation_entity_contexts(user_text: str, assistant_text: str = "
     if not combined.strip():
         return []
     try:
-        return svc.learner.lookup_wuddai_entity_contexts(combined, max_entities=3, max_notes=3)
+        return svc.learner.lookup_wuddai_entity_contexts(combined, max_entities=10, max_notes=3)
     except Exception as exc:
         logger.debug(f"Entity context lookup échoué: {exc}")
         return []

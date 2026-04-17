@@ -5,28 +5,56 @@ type MessageComposerProps = {
   onChangeText: (value: string) => void;
   onSubmit: () => void;
   disabled?: boolean;
+  secondaryActionLabel?: string;
+  onSecondaryAction?: () => void;
+  secondaryActionDisabled?: boolean;
 };
 
-export function MessageComposer({ value, onChangeText, onSubmit, disabled }: MessageComposerProps) {
+export function MessageComposer({
+  value,
+  onChangeText,
+  onSubmit,
+  disabled,
+  secondaryActionLabel,
+  onSecondaryAction,
+  secondaryActionDisabled,
+}: MessageComposerProps) {
+  const canSubmit = !disabled && value.trim().length > 0;
+
   return (
     <View style={styles.container}>
-      <View style={styles.topRow}>
-        <View style={styles.addButton}>
-          <Text style={styles.addButtonLabel}>+</Text>
-        </View>
-        <Text style={styles.hint}>Repondre...</Text>
-      </View>
       <TextInput
         value={value}
         onChangeText={onChangeText}
         multiline
+        returnKeyType="send"
+        onKeyPress={(event) => {
+          const nativeEvent = event.nativeEvent as { key?: string; shiftKey?: boolean };
+          if (nativeEvent.key !== 'Enter' || nativeEvent.shiftKey || !canSubmit) {
+            return;
+          }
+
+          (event as unknown as { preventDefault?: () => void }).preventDefault?.();
+          onSubmit();
+        }}
         placeholder="Posez une question sur votre coffre..."
         placeholderTextColor="#8a7760"
         style={styles.input}
       />
       <View style={styles.bottomRow}>
-        <Text style={styles.modelLabel}>ObsiRAG live</Text>
-        <Pressable disabled={disabled || !value.trim()} onPress={onSubmit} style={[styles.button, disabled && styles.buttonDisabled]}>
+        {secondaryActionLabel && onSecondaryAction ? (
+          <Pressable
+            testID="message-composer-secondary-action"
+            disabled={secondaryActionDisabled}
+            onPress={onSecondaryAction}
+            style={[styles.secondaryButton, secondaryActionDisabled && styles.buttonDisabled]}
+          >
+            <Text style={styles.secondaryButtonLabel}>{secondaryActionLabel}</Text>
+          </Pressable>
+        ) : (
+          <View style={styles.spacer} />
+        )}
+        <Pressable disabled={!canSubmit} onPress={onSubmit} style={[styles.button, !canSubmit && styles.buttonDisabled]}>
           <Text style={styles.buttonLabel}>Envoyer</Text>
         </Pressable>
       </View>
@@ -40,34 +68,11 @@ const styles = StyleSheet.create({
     padding: 14,
     backgroundColor: '#2b2b2b',
     borderWidth: 1,
-    borderColor: '#3a3a3a',
+    borderColor: '#2b2b2b',
     gap: 10,
-  },
-  topRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-  },
-  addButton: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: '#575757',
-  },
-  addButtonLabel: {
-    color: '#d7d7d7',
-    fontSize: 16,
-    lineHeight: 18,
-  },
-  hint: {
-    color: '#9f9f9f',
-    fontSize: 14,
   },
   input: {
-    minHeight: 72,
+    minHeight: 56,
     color: '#f2f2f2',
     fontSize: 16,
     lineHeight: 24,
@@ -79,9 +84,21 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 12,
   },
-  modelLabel: {
-    color: '#a7a7a7',
-    fontSize: 12,
+  spacer: {
+    flex: 1,
+  },
+  secondaryButton: {
+    alignSelf: 'flex-end',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 999,
+    backgroundColor: '#353535',
+    borderWidth: 1,
+    borderColor: '#4a4a4a',
+  },
+  secondaryButtonLabel: {
+    color: '#f0f0f0',
+    fontWeight: '700',
   },
   button: {
     alignSelf: 'flex-end',

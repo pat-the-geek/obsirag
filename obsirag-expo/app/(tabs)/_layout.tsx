@@ -1,15 +1,19 @@
 import { Feather } from '@expo/vector-icons';
-import { Redirect, Tabs } from 'expo-router';
+import { Redirect, Tabs, useRouter, useSegments } from 'expo-router';
 import { ActivityIndicator } from 'react-native';
 
 import { Screen } from '../../components/ui/screen';
 import { useServerConfig, useSessionStatus } from '../../features/auth/use-server-config';
-import { useStoreHydrated } from '../../store/app-store';
+import { useAppStore, useStoreHydrated } from '../../store/app-store';
 
 export default function TabsLayout() {
   const hasHydrated = useStoreHydrated();
+  const router = useRouter();
+  const segments = useSegments();
   const { backendUrl, useMockServer } = useServerConfig();
   const session = useSessionStatus();
+  const setActiveConversationId = useAppStore((state) => state.setActiveConversationId);
+  const isInsideChatThread = segments.includes('chat') && segments.length > 2;
 
   if (!hasHydrated) {
     return (
@@ -31,6 +35,10 @@ export default function TabsLayout() {
     );
   }
 
+  if (!useMockServer && session.isError) {
+    return <Redirect href="/(auth)/server-config" />;
+  }
+
   if (!useMockServer && !session.data?.authenticated) {
     return <Redirect href="/(auth)/login" />;
   }
@@ -48,7 +56,20 @@ export default function TabsLayout() {
       }}
     >
       <Tabs.Screen name="index" options={{ title: 'Dashboard', tabBarIcon: ({ color, size }) => <Feather name="home" size={size} color={color} /> }} />
-      <Tabs.Screen name="chat" options={{ title: 'Chat', popToTopOnBlur: true, tabBarIcon: ({ color, size }) => <Feather name="message-circle" size={size} color={color} /> }} />
+      <Tabs.Screen
+        name="chat"
+        listeners={{
+          tabPress: (event) => {
+            if (!isInsideChatThread) {
+              return;
+            }
+            event.preventDefault();
+            setActiveConversationId(undefined);
+            router.replace('/(tabs)/chat');
+          },
+        }}
+        options={{ title: 'Chat', popToTopOnBlur: true, tabBarIcon: ({ color, size }) => <Feather name="message-circle" size={size} color={color} /> }}
+      />
       <Tabs.Screen name="insights" options={{ title: 'Insights', tabBarIcon: ({ color, size }) => <Feather name="layers" size={size} color={color} /> }} />
       <Tabs.Screen name="graph" options={{ title: 'Graphe', tabBarIcon: ({ color, size }) => <Feather name="share-2" size={size} color={color} /> }} />
       <Tabs.Screen name="settings" options={{ title: 'Settings', tabBarIcon: ({ color, size }) => <Feather name="settings" size={size} color={color} /> }} />

@@ -7,8 +7,11 @@ Couche d'accès ChromaDB.
 """
 from __future__ import annotations
 
+import os
+import subprocess
 import shutil
 import sqlite3
+import sys
 import threading
 import time
 from datetime import datetime
@@ -56,6 +59,8 @@ def _build_embedding_function() -> EmbeddingFunction:
 
 # Durée de validité du cache list_notes() (secondes)
 _LIST_NOTES_TTL = 30
+_NATIVE_API_PROBE_TTL = 300
+_NATIVE_API_PROBE_CACHE: dict[tuple[str, str], tuple[bool, float, str | None]] = {}
 
 
 class ChromaStore:
@@ -89,8 +94,53 @@ class ChromaStore:
         self._note_views_ts: float = 0.0
         self._count_cache: int | None = None
         self._count_ts: float = 0.0
+        self._native_api_available = self._probe_native_api_availability()
 
         logger.info(f"Collection '{settings.chroma_collection}' prête")
+
+    def _probe_native_api_availability(self) -> bool:
+        cache_key = (str(self._persist_dir), settings.chroma_collection)
+        now = time.monotonic()
+        cached = _NATIVE_API_PROBE_CACHE.get(cache_key)
+        if cached is not None and (now - cached[1]) < _NATIVE_API_PROBE_TTL:
+            return cached[0]
+
+        project_root = Path(__file__).resolve().parents[2]
+        probe = "\n".join(
+            [
+                "import chromadb",
+                "from src.config import settings",
+                "from src.database.chroma_store import _build_embedding_function",
+                f"client = chromadb.PersistentClient(path={self._persist_dir!r})",
+                "collection = client.get_or_create_collection(",
+                f"    name={settings.chroma_collection!r},",
+                "    embedding_function=_build_embedding_function(),",
+                "    metadata={'hnsw:space': 'cosine'},",
+                ")",
+                "collection.count()",
+                "print('ok')",
+            ]
+        )
+        completed = subprocess.run(
+            [sys.executable, "-c", probe],
+            cwd=str(project_root),
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=120,
+            env={**os.environ, "PYTHONPATH": str(project_root)},
+        )
+        available = completed.returncode == 0
+        detail = (completed.stderr or "").strip() or (completed.stdout or "").strip() or None
+        _NATIVE_API_PROBE_CACHE[cache_key] = (available, now, detail)
+        if not available:
+            logger.warning(
+                "API native Chroma indisponible pour le store persistant; bascule vers les chemins sûrs SQLite/fallback"
+            )
+        return available
+
+    def native_api_available(self) -> bool:
+        return bool(getattr(self, "_native_api_available", True))
 
     def _init_with_recovery(self, persist_dir: str, embed_fn: EmbeddingFunction):
         """Ouvre ChromaDB. En cas de corruption HNSW, efface et repart à zéro."""
@@ -133,6 +183,8 @@ class ChromaStore:
         )
 
     def _run_collection_op(self, operation: str, **kwargs):
+        if not self.native_api_available():
+            raise RuntimeError("Chroma native collection API unavailable for this persisted store")
         lock = getattr(self, "_lock", None)
 
         def _invoke():
@@ -166,6 +218,8 @@ class ChromaStore:
         }
 
     def _get_chunks_by_metadata(self, metadata_key: str, value: str, limit: int = 2) -> list[dict]:
+        if not self.native_api_available():
+            return []
         try:
             raw = ChromaStore._collection_get(
                 self,
@@ -179,12 +233,36 @@ class ChromaStore:
         return [
             ChromaStore._metadata_to_chunk(doc, meta, fallback_value=value)
             for doc, meta in zip(raw.get("documents") or [], raw.get("metadatas") or [])
-        ]
+            if not ChromaStore._is_retrieval_artifact_path((meta or {}).get("file_path", ""))
+        ][:limit]
 
     @staticmethod
     def _is_obsirag_generated_path(file_path: str) -> bool:
         normalized = file_path.replace("\\", "/")
         return "/obsirag/" in normalized or normalized.startswith("obsirag/")
+
+    @staticmethod
+    def _is_retrieval_artifact_path(file_path: str) -> bool:
+        normalized = str(file_path or "").replace("\\", "/").lower()
+        if not normalized:
+            return False
+        if "/obsirag/" not in normalized and not normalized.startswith("obsirag/"):
+            return False
+        name = Path(normalized).name
+        return (
+            name.startswith("chat_")
+            or name.startswith("web_")
+            or "/obsirag/conversations/" in normalized
+            or normalized.startswith("obsirag/conversations/")
+        )
+
+    @staticmethod
+    def _filter_retrieval_chunks(chunks: list[dict], *, top_k: int | None = None) -> list[dict]:
+        filtered = [
+            chunk for chunk in chunks
+            if not ChromaStore._is_retrieval_artifact_path((chunk.get("metadata") or {}).get("file_path", ""))
+        ]
+        return filtered[:top_k] if top_k is not None and top_k > 0 else filtered
 
     # ---- Écriture ----
 
@@ -234,12 +312,14 @@ class ChromaStore:
         top_k: int = settings.search_top_k,
         where: dict | None = None,
     ) -> list[dict]:
+        if not self.native_api_available():
+            return []
         kwargs: dict[str, Any] = {
             "query_texts": [query],
             # Evite count() sur le client rust Chroma: observé instable en runtime
             # sur certains runs benchmark. Chroma limite naturellement aux résultats
             # disponibles si n_results > taille réelle de la collection.
-            "n_results": max(1, top_k),
+            "n_results": max(1, top_k * 4),
             "include": ["documents", "metadatas", "distances"],
         }
         if where:
@@ -252,7 +332,7 @@ class ChromaStore:
         logger.debug(
             f"embed:search {elapsed:.3f}s backend={backend} top_k={top_k}"
         )
-        return self._format_results(results)
+        return ChromaStore._filter_retrieval_chunks(self._format_results(results), top_k=top_k)
 
     def search_by_date_range(
         self,
@@ -519,6 +599,8 @@ class ChromaStore:
 
     def search_by_keyword(self, keyword: str, top_k: int = 10) -> list[dict]:
         """Recherche exacte par mot-clé dans le contenu des chunks (case-insensitive via double requête)."""
+        if not self.native_api_available():
+            return []
         results = []
         for term in [keyword, keyword.lower(), keyword.title()]:
             try:
@@ -526,13 +608,15 @@ class ChromaStore:
                     self,
                     where_document={"$contains": term},
                     include=["documents", "metadatas"],
-                    limit=top_k * 2,
+                    limit=top_k * 4,
                 )
                 ids = raw.get("ids", [])
                 docs = raw.get("documents", [])
                 metas = raw.get("metadatas", [])
                 seen_ids: set[str] = {r["chunk_id"] for r in results}
                 for chunk_id, doc, meta in zip(ids, docs, metas):
+                    if ChromaStore._is_retrieval_artifact_path((meta or {}).get("file_path", "")):
+                        continue
                     if chunk_id not in seen_ids:
                         seen_ids.add(chunk_id)
                         results.append({
@@ -543,11 +627,13 @@ class ChromaStore:
                         })
             except Exception:
                 pass
-        return results[:top_k]
+        return ChromaStore._filter_retrieval_chunks(results, top_k=top_k)
 
     def search_by_note_title(self, title: str, top_k: int = 10) -> list[dict]:
         """Récupère les chunks d'une note dont le titre (métadonnée note_title)
         contient la chaîne donnée (insensible à la casse, correspondance partielle)."""
+        if not self.native_api_available():
+            return []
         results = []
         seen_ids: set[str] = set()
         for variant in {title, title.lower(), title.title(), title.upper()}:
@@ -556,13 +642,15 @@ class ChromaStore:
                     self,
                     where={"note_title": {"$eq": variant}},
                     include=["documents", "metadatas"],
-                    limit=top_k * 2,
+                    limit=top_k * 4,
                 )
                 for chunk_id, doc, meta in zip(
                     raw.get("ids", []),
                     raw.get("documents", []),
                     raw.get("metadatas", []),
                 ):
+                    if ChromaStore._is_retrieval_artifact_path((meta or {}).get("file_path", "")):
+                        continue
                     if chunk_id not in seen_ids:
                         seen_ids.add(chunk_id)
                         results.append({
@@ -576,7 +664,7 @@ class ChromaStore:
         # Fallback : recherche partielle par contenu du titre via keyword
         if not results:
             results = self.search_by_keyword(title, top_k=top_k)
-        return results[:top_k]
+        return ChromaStore._filter_retrieval_chunks(results, top_k=top_k)
 
 
     def count(self) -> int:
@@ -604,12 +692,15 @@ class ChromaStore:
                 con.close()
         except Exception as exc:
             logger.debug(f"count SQLite direct failed ({exc}), fallback ChromaDB API")
-            try:
-                result = self._run_collection_op("count")
-            except Exception as fallback_exc:
-                logger.warning(
-                    f"count Chroma indisponible ({fallback_exc}) — retour valeur de secours"
-                )
+            if self.native_api_available():
+                try:
+                    result = self._run_collection_op("count")
+                except Exception as fallback_exc:
+                    logger.warning(
+                        f"count Chroma indisponible ({fallback_exc}) — retour valeur de secours"
+                    )
+                    result = self._count_cache if self._count_cache is not None else 0
+            else:
                 result = self._count_cache if self._count_cache is not None else 0
 
         self._count_cache = result
@@ -659,6 +750,10 @@ class ChromaStore:
         except Exception as exc:
             logger.warning(f"list_notes SQLite direct failed ({exc}), fallback ChromaDB API")
             rows = []
+            if not self.native_api_available():
+                self._list_notes_cache = []
+                self._list_notes_ts = now
+                return self._list_notes_cache
             # Fallback : pagination via API ChromaDB
             batch_size = 500
             offset = 0
@@ -718,6 +813,8 @@ class ChromaStore:
 
         Chaque résultat : {"file_path", "title", "score", "excerpt"}.
         """
+        if not self.native_api_available():
+            return []
         # Récupère les chunks de la note source
         try:
             raw = ChromaStore._collection_get(

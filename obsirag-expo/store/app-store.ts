@@ -10,6 +10,11 @@ type AppStoreState = {
   activeConversationId: string | undefined;
   themeMode: 'system' | 'light' | 'dark';
   drafts: Record<string, string>;
+  sourcePanels: Record<string, boolean>;
+  mermaidViewer: {
+    code: string;
+    tone: 'light' | 'dark';
+  } | null;
   setBackendUrl: (value: string) => void;
   setAccessToken: (value: string) => void;
   setUseMockServer: (value: boolean) => void;
@@ -17,6 +22,9 @@ type AppStoreState = {
   setThemeMode: (value: 'system' | 'light' | 'dark') => void;
   setDraft: (conversationId: string, value: string) => void;
   clearDraft: (conversationId: string) => void;
+  setSourcePanelOpen: (conversationId: string, value: boolean) => void;
+  openMermaidViewer: (value: { code: string; tone: 'light' | 'dark' }) => void;
+  clearMermaidViewer: () => void;
   setHasHydrated: (value: boolean) => void;
 };
 
@@ -30,6 +38,8 @@ export const useAppStore = create<AppStoreState>()(
       activeConversationId: undefined,
       themeMode: 'system',
       drafts: {},
+      sourcePanels: {},
+      mermaidViewer: null,
       setBackendUrl: (value) => set({ backendUrl: value }),
       setAccessToken: (value) => set({ accessToken: value }),
       setUseMockServer: (value) => set({ useMockServer: value }),
@@ -49,6 +59,15 @@ export const useAppStore = create<AppStoreState>()(
           delete drafts[conversationId];
           return { drafts };
         }),
+      setSourcePanelOpen: (conversationId, value) =>
+        set((state) => ({
+          sourcePanels: {
+            ...state.sourcePanels,
+            [conversationId]: value,
+          },
+        })),
+      openMermaidViewer: (value) => set({ mermaidViewer: value }),
+      clearMermaidViewer: () => set({ mermaidViewer: null }),
     }),
     {
       name: 'obsirag-expo-store',
@@ -63,6 +82,7 @@ export const useAppStore = create<AppStoreState>()(
         ...(state.activeConversationId ? { activeConversationId: state.activeConversationId } : {}),
         themeMode: state.themeMode,
         drafts: state.drafts,
+        sourcePanels: state.sourcePanels,
       }),
     },
   ),

@@ -1,18 +1,26 @@
-import { useMemo, useState } from 'react';
-import { ActivityIndicator, Alert, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useMemo } from 'react';
+import { ActivityIndicator, Alert, KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { aggregateConversationEntityContexts, ConversationEntitySidebar } from '../../../components/chat/conversation-entity-sidebar';
 import { MessageBubble } from '../../../components/chat/message-bubble';
 import { MessageComposer } from '../../../components/chat/message-composer';
-import { SourceList } from '../../../components/chat/source-list';
-import { WebSearchPrompt } from '../../../components/chat/web-search-prompt';
 import { Screen } from '../../../components/ui/screen';
-import { useConversation, useExplicitWebSearch, useSaveConversation, useStreamMessage } from '../../../features/chat/use-chat';
+import { useConversation, useDeleteConversationMessage, useExplicitWebSearch, useSaveConversation, useStreamMessage } from '../../../features/chat/use-chat';
+import { EntityContext, ChatMessage, SourceRef } from '../../../types/domain';
 import { useAppStore } from '../../../store/app-store';
+
+const DEFAULT_CHAT_SUGGESTIONS = [
+  'Resume la note principale sur Artemis II',
+  'Quelles connexions utiles vois-tu entre mes notes recentes ?',
+  'Cette information est-elle dans mon coffre ou faut-il aller sur le web ?',
+  'Propose trois questions pertinentes a partir de mon coffre',
+];
 
 export default function ConversationDetailScreen() {
   const insets = useSafeAreaInsets();
+  const { height, width } = useWindowDimensions();
   const router = useRouter();
   const params = useLocalSearchParams<{ conversationId: string }>();
   const conversationId = useMemo(
@@ -22,28 +30,79 @@ export default function ConversationDetailScreen() {
   const draft = useAppStore((state) => (conversationId ? state.drafts[conversationId] ?? '' : ''));
   const setDraft = useAppStore((state) => state.setDraft);
   const { data, isLoading, isRefetching, refetch } = useConversation(conversationId);
+  const messages = data?.messages ?? [];
   const streamMessage = useStreamMessage(conversationId ?? '');
-  const saveConversation = useSaveConversation();
   const explicitWebSearch = useExplicitWebSearch(conversationId ?? '');
-  const [webSearchDraft, setWebSearchDraft] = useState('');
+  const deleteConversationMessage = useDeleteConversationMessage(conversationId ?? '');
+  const saveConversation = useSaveConversation();
+  const streamingAssistantMessage = useMemo(
+    () => [...messages].reverse().find((item) => item.id === 'streaming-assistant' && item.role === 'assistant'),
+    [messages],
+  );
+  const activeProgressSteps = streamMessage.isPending
+    ? (streamingAssistantMessage?.timeline?.length ? streamingAssistantMessage.timeline : ['Initialisation du traitement'])
+    : [];
+  const activeProgressLabel = activeProgressSteps[activeProgressSteps.length - 1] ?? null;
+  const latestAssistantMessage = useMemo(
+    () => [...messages].reverse().find((item) => item.role === 'assistant'),
+    [messages],
+  );
+  const latestUserMessage = useMemo(
+    () => [...messages].reverse().find((item) => item.role === 'user'),
+    [messages],
+  );
+  const quickActions = useMemo(
+    () => DEFAULT_CHAT_SUGGESTIONS.filter((item) => item !== latestUserMessage?.content).slice(0, 4),
+    [latestUserMessage?.content],
+  );
+  const aggregatedEntityContexts = useMemo(() => aggregateConversationEntityContexts(messages), [messages]);
+  const showEntityAside = Platform.OS === 'web' && width >= 1180 && aggregatedEntityContexts.length > 0;
+  const showEntityCompact = !showEntityAside && aggregatedEntityContexts.length > 0;
+  const asideEntityMaxHeight = Math.max(360, height - Math.max(24, insets.top + 18) - 18);
 
-  function triggerExplicitWebSearch(query: string) {
-    explicitWebSearch.mutate(query, {
-      onSuccess: () => setWebSearchDraft(''),
-      onError: (error) => Alert.alert('Recherche web impossible', error instanceof Error ? error.message : 'Erreur inconnue'),
-    });
-  }
+  const confirmDeleteMessage = (messageId: string) => {
+    const executeDelete = () =>
+      deleteConversationMessage.mutate(messageId, {
+        onError: (error) =>
+          Alert.alert('Suppression impossible', error instanceof Error ? error.message : 'Erreur inconnue'),
+      });
+
+    if (typeof globalThis.confirm === 'function') {
+      const confirmed = globalThis.confirm('Cette question et sa réponse seront retirées définitivement de la conversation.');
+      if (confirmed) {
+        executeDelete();
+      }
+      return;
+    }
+
+    Alert.alert(
+      'Supprimer la réponse',
+      'Cette question et sa réponse seront retirées définitivement de la conversation.',
+      [
+        {
+          text: 'Annuler',
+          style: 'cancel',
+        },
+        {
+          text: 'Supprimer',
+          style: 'destructive',
+          onPress: executeDelete,
+        },
+      ],
+      { cancelable: true },
+    );
+  };
 
   if (!conversationId || isLoading || !data) {
     return (
-      <Screen backgroundColor="#1f1f1f">
+      <Screen backgroundColor="#f4f1ea">
         <ActivityIndicator />
       </Screen>
     );
   }
 
   return (
-    <Screen scroll={false} refreshing={isRefetching} onRefresh={refetch} backgroundColor="#1f1f1f" contentStyle={styles.screenContent}>
+    <Screen scroll refreshing={isRefetching} onRefresh={refetch} backgroundColor="#f4f1ea" contentStyle={styles.screenContent}>
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} keyboardVerticalOffset={Math.max(12, insets.bottom)} style={styles.keyboardShell}>
       <View style={[styles.shell, { paddingBottom: Math.max(14, insets.bottom + 8) }]}>
         <View style={styles.header}>
@@ -51,93 +110,107 @@ export default function ConversationDetailScreen() {
             <Text style={styles.headerTitle}>{data.title}</Text>
             <Text style={styles.headerSubtitle}>Conversation centree, reponses developpees et actions contextuelles en bas d'ecran.</Text>
           </View>
-          <View style={styles.actionsRow}>
-            <Pressable
-              style={styles.secondaryButton}
-              onPress={() => {
-                if (!conversationId) {
-                  return;
-                }
-                saveConversation.mutate(conversationId, {
-                  onSuccess: (result) => Alert.alert('Conversation sauvegardee', result.path),
-                  onError: (error) => Alert.alert('Sauvegarde impossible', error instanceof Error ? error.message : 'Erreur inconnue'),
-                });
-              }}
-            >
-              <Text style={styles.secondaryButtonText}>Sauvegarder</Text>
-            </Pressable>
-            <Pressable
-              style={styles.secondaryButton}
-              onPress={() => {
-                const fallbackQuery = draft.trim() || [...data.messages].reverse().find((item) => item.role === 'user')?.content?.trim() || '';
-                if (!fallbackQuery) {
-                  Alert.alert('Recherche web', 'Aucune requete disponible pour lancer la recherche web explicite.');
-                  return;
-                }
-                triggerExplicitWebSearch(fallbackQuery);
-              }}
-            >
-              <Text style={styles.secondaryButtonText}>Recherche web</Text>
-            </Pressable>
-          </View>
         </View>
 
-        <ScrollView style={styles.thread} contentContainerStyle={[styles.threadContent, { paddingBottom: 28 + insets.bottom }]} keyboardShouldPersistTaps="handled">
-          {data.messages.map((message, index) => {
-            const previousUserQuery = [...data.messages.slice(0, index)].reverse().find((item) => item.role === 'user')?.content;
-
-            return (
-              <MessageBubble
-                key={message.id}
-                message={message}
+        <View style={[styles.contentLayout, showEntityAside ? styles.contentLayoutWide : null]}>
+          <View style={styles.mainColumn}>
+            {showEntityCompact ? (
+              <ConversationEntitySidebar
+                entities={aggregatedEntityContexts}
+                compact
                 onOpenNote={(notePath) => router.push(`/(tabs)/note/${encodeURIComponent(notePath)}`)}
-                onOpenPrimarySource={(notePath) => router.push(`/(tabs)/note/${encodeURIComponent(notePath)}`)}
-                onSuggestWebSearch={(query) => setWebSearchDraft(query)}
-                onUseQueryInChat={(query) => {
-                  setDraft(conversationId, query);
-                  setWebSearchDraft('');
-                }}
-                onReusePrompt={(query) => setDraft(conversationId, query)}
-                {...(previousUserQuery ? { replyPrompt: previousUserQuery } : {})}
-                {...(previousUserQuery ? { webSearchSuggestion: previousUserQuery } : {})}
+                onOpenTag={(tag) => router.push(`/(tabs)/graph?tag=${encodeURIComponent(tag)}`)}
               />
-            );
-          })}
-        </ScrollView>
+            ) : null}
 
-        <View style={styles.dock}>
-          {webSearchDraft ? (
-            <WebSearchPrompt
-              value={webSearchDraft}
-              onChangeText={setWebSearchDraft}
-              onSubmit={() => triggerExplicitWebSearch(webSearchDraft.trim())}
-              onUseInChat={() => {
-                setDraft(conversationId, webSearchDraft.trim());
-                setWebSearchDraft('');
-              }}
-              disabled={explicitWebSearch.isPending}
+            <View style={[styles.thread, { paddingBottom: 28 + insets.bottom }]}>
+              {messages.length === 0 ? (
+                <View style={styles.emptyStateCard}>
+                  <Text style={styles.emptyStateTitle}>Exemples de questions</Text>
+                  <Text style={styles.emptyStateBody}>Le chat Streamlit propose des points d'entree rapides. La version Expo reprend ici des suggestions pour lancer un premier tour utile.</Text>
+                  <View style={styles.emptyStateActions}>
+                    {quickActions.map((item) => (
+                      <Pressable key={item} style={styles.emptyStateActionButton} onPress={() => setDraft(conversationId, item)}>
+                        <Text style={styles.emptyStateActionText}>{item}</Text>
+                      </Pressable>
+                    ))}
+                  </View>
+                </View>
+              ) : null}
+              {messages.map((message, index) => {
+                const previousUserQuery = [...messages.slice(0, index)].reverse().find((item) => item.role === 'user')?.content;
+
+                return (
+                  <MessageBubble
+                    key={message.id}
+                    message={message}
+                    highlightEntities={aggregatedEntityContexts}
+                    webSearchSuggestion={buildWebSearchSuggestion(previousUserQuery, messages.slice(0, index), aggregatedEntityContexts)}
+                    onSuggestWebSearch={(query) => explicitWebSearch.mutate(query)}
+                    onOpenNote={(notePath) => router.push(`/(tabs)/note/${encodeURIComponent(notePath)}`)}
+                    onOpenTag={(tag) => router.push(`/(tabs)/graph?tag=${encodeURIComponent(tag)}`)}
+                    onOpenPrimarySource={(notePath) => router.push(`/(tabs)/note/${encodeURIComponent(notePath)}`)}
+                    onDeleteMessage={confirmDeleteMessage}
+                    onReusePrompt={(query) => setDraft(conversationId, query)}
+                    {...(previousUserQuery ? { replyPrompt: previousUserQuery } : {})}
+                  />
+                );
+              })}
+            </View>
+
+            <View style={[styles.dock, Platform.OS === 'web' ? styles.dockWeb : null]}>
+              {streamMessage.isPending ? (
+                <View style={styles.progressCard}>
+                  <Text style={styles.progressTitle}>Progression du traitement</Text>
+                  {activeProgressLabel ? <Text style={styles.progressCurrent}>{activeProgressLabel}</Text> : null}
+                  <View style={styles.progressList}>
+                    {activeProgressSteps.map((step, index) => {
+                      const isLast = index === activeProgressSteps.length - 1;
+                      return (
+                        <View key={`${step}-${index}`} style={styles.progressItem}>
+                          <View style={[styles.progressDot, isLast ? styles.progressDotActive : null]} />
+                          <Text style={[styles.progressText, isLast ? styles.progressTextActive : null]}>{step}</Text>
+                        </View>
+                      );
+                    })}
+                  </View>
+                </View>
+              ) : null}
+              {explicitWebSearch.isPending ? <Text style={styles.statusText}>Recherche web en cours...</Text> : null}
+              {streamMessage.error ? (
+                <Text style={styles.errorText}>
+                  Erreur: {streamMessage.error instanceof Error ? streamMessage.error.message : 'generation indisponible'}
+                </Text>
+              ) : null}
+
+              <MessageComposer
+                value={draft}
+                onChangeText={(value) => setDraft(conversationId, value)}
+                onSubmit={() => streamMessage.mutate(draft.trim())}
+                secondaryActionLabel="Sauvegarder"
+                onSecondaryAction={() => {
+                  if (!conversationId) {
+                    return;
+                  }
+                  saveConversation.mutate(conversationId, {
+                    onSuccess: (result) => Alert.alert('Conversation sauvegardee', result.path),
+                    onError: (error) => Alert.alert('Sauvegarde impossible', error instanceof Error ? error.message : 'Erreur inconnue'),
+                  });
+                }}
+                secondaryActionDisabled={saveConversation.isPending}
+                disabled={streamMessage.isPending || !draft.trim()}
+              />
+            </View>
+          </View>
+
+          {showEntityAside ? (
+            <ConversationEntitySidebar
+              entities={aggregatedEntityContexts}
+              maxHeight={asideEntityMaxHeight}
+              onOpenNote={(notePath) => router.push(`/(tabs)/note/${encodeURIComponent(notePath)}`)}
+              onOpenTag={(tag) => router.push(`/(tabs)/graph?tag=${encodeURIComponent(tag)}`)}
             />
           ) : null}
-
-          <SourceList
-            sources={data.messages[data.messages.length - 1]?.sources ?? []}
-            onSelectSource={(source) => router.push(`/(tabs)/note/${encodeURIComponent(source.filePath)}`)}
-          />
-
-          {streamMessage.isPending ? <Text style={styles.statusText}>Generation en cours...</Text> : null}
-          {explicitWebSearch.isPending ? <Text style={styles.statusText}>Recherche web en cours...</Text> : null}
-          {streamMessage.error ? (
-            <Text style={styles.errorText}>
-              Erreur: {streamMessage.error instanceof Error ? streamMessage.error.message : 'generation indisponible'}
-            </Text>
-          ) : null}
-
-          <MessageComposer
-            value={draft}
-            onChangeText={(value) => setDraft(conversationId, value)}
-            onSubmit={() => streamMessage.mutate(draft.trim())}
-            disabled={streamMessage.isPending || !draft.trim()}
-          />
         </View>
       </View>
       </KeyboardAvoidingView>
@@ -147,7 +220,7 @@ export default function ConversationDetailScreen() {
 
 const styles = StyleSheet.create({
   keyboardShell: {
-    flex: 1,
+    width: '100%',
   },
   screenContent: {
     paddingHorizontal: 0,
@@ -155,13 +228,24 @@ const styles = StyleSheet.create({
     gap: 0,
   },
   shell: {
-    flex: 1,
     width: '100%',
-    maxWidth: 880,
+    maxWidth: 1260,
     alignSelf: 'center',
     paddingHorizontal: 18,
     paddingTop: 18,
     paddingBottom: 14,
+    gap: 14,
+  },
+  contentLayout: {
+    gap: 14,
+  },
+  contentLayoutWide: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+  },
+  mainColumn: {
+    flex: 1,
+    minWidth: 0,
     gap: 14,
   },
   header: {
@@ -171,51 +255,334 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   headerTitle: {
-    color: '#f3f3f3',
+    color: '#1f160c',
     fontSize: 22,
     fontWeight: '700',
   },
   headerSubtitle: {
-    color: '#9d9d9d',
+    color: '#6f5d49',
     lineHeight: 20,
   },
-  actionsRow: {
-    flexDirection: 'row',
-    justifyContent: 'flex-end',
-    flexWrap: 'wrap',
-    gap: 8,
-  },
-  secondaryButton: {
-    borderRadius: 999,
-    backgroundColor: '#2a2a2a',
-    borderWidth: 1,
-    borderColor: '#373737',
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-  },
-  secondaryButtonText: {
-    color: '#ededed',
-    fontWeight: '700',
-  },
   thread: {
-    flex: 1,
-  },
-  threadContent: {
     paddingTop: 12,
-    paddingBottom: 18,
     gap: 18,
   },
+  emptyStateCard: {
+    borderRadius: 18,
+    backgroundColor: '#252525',
+    borderWidth: 1,
+    borderColor: '#343434',
+    padding: 16,
+    gap: 10,
+  },
+  emptyStateTitle: {
+    color: '#f3f3f3',
+    fontSize: 18,
+    fontWeight: '700',
+  },
+  emptyStateBody: {
+    color: '#b5b5b5',
+    lineHeight: 20,
+  },
+  emptyStateActions: {
+    gap: 8,
+  },
+  emptyStateActionButton: {
+    borderRadius: 14,
+    backgroundColor: '#1d1d1d',
+    borderWidth: 1,
+    borderColor: '#343434',
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+  },
+  emptyStateActionText: {
+    color: '#f0f0f0',
+    lineHeight: 20,
+  },
   dock: {
+    flexShrink: 0,
     gap: 10,
     paddingTop: 8,
-    backgroundColor: '#1f1f1f',
+    backgroundColor: '#f4f1ea',
   },
-  statusText: {
-    color: '#9f9f9f',
+  dockWeb: {
+    position: 'sticky' as 'absolute',
+    bottom: 0,
+    zIndex: 10,
+    paddingBottom: 12,
+    borderTopWidth: 1,
+    borderTopColor: '#d8cfc0',
+    shadowColor: '#47331a',
+    shadowOpacity: 0.08,
+    shadowRadius: 16,
+    shadowOffset: { width: 0, height: -6 },
+  },
+  progressCard: {
+    borderRadius: 16,
+    backgroundColor: '#242424',
+    borderWidth: 1,
+    borderColor: '#353535',
+    padding: 12,
+    gap: 8,
+  },
+  progressTitle: {
+    color: '#f3f3f3',
     fontSize: 13,
+    fontWeight: '700',
+  },
+  progressCurrent: {
+    color: '#d9c19a',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  progressList: {
+    gap: 6,
+  },
+  progressItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  progressDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#5f5f5f',
+  },
+  progressDotActive: {
+    backgroundColor: '#d9c19a',
+  },
+  progressText: {
+    color: '#aaaaaa',
+    fontSize: 13,
+  },
+  progressTextActive: {
+    color: '#f1f1f1',
+    fontWeight: '600',
   },
   errorText: {
     color: '#f0b36a',
     fontSize: 13,
   },
+  statusText: {
+    color: '#6f5d49',
+    fontSize: 13,
+  },
 });
+
+const WEB_SEARCH_STOPWORDS = new Set([
+  'quel', 'quelle', 'quels', 'quelles', 'est', 'sont', 'le', 'la', 'les', 'de', 'du', 'des', 'un', 'une', 'au', 'aux',
+  'dans', 'sur', 'pour', 'avec', 'sans', 'et', 'ou', 'où', 'que', 'quoi', 'qui', 'comment', 'pourquoi', 'combien',
+  'son', 'sa', 'ses', 'leur', 'leurs', 'il', 'elle', 'ils', 'elles', 'lui', 'en', 'a', 't', 'tu', 'je', 'j', 'nous', 'vous',
+  'me', 'moi', 'te', 'toi', 'ce', 'cet', 'cette', 'ces', 'cela', 'ca', 'ça', 'd', 'l', 'y', 'on', 'se', 'si', 'plus', 'moins',
+  'parle', 'parler', 'dis', 'dire', 'explique', 'expliquer', 'presente', 'présente', 'presenter', 'présenter',
+]);
+
+const WEB_SEARCH_ASPECT_MAP: Record<string, string> = {
+  salaire: 'salary',
+  salaires: 'salary',
+  revenu: 'revenue',
+  revenus: 'revenue',
+  fortune: 'net worth',
+  richesse: 'net worth',
+  age: 'age',
+  âge: 'age',
+  taille: 'height',
+  poids: 'weight',
+  action: 'stock',
+  actions: 'stock',
+  bourse: 'stock',
+  cours: 'stock',
+  entreprise: 'company',
+  societe: 'company',
+  société: 'company',
+  femme: 'wife',
+  epouse: 'wife',
+  épouse: 'wife',
+  mari: 'husband',
+  conjoint: 'spouse',
+  enfants: 'children',
+  enfant: 'child',
+  nationalite: 'nationality',
+  nationalité: 'nationality',
+};
+
+const WEB_SEARCH_DYNAMIC_TERMS = new Set(['salary', 'revenue', 'net worth', 'stock', 'price', 'age']);
+const WEB_SEARCH_GENERIC_INTRO_RE = /^(?:que\s+sais[- ]?tu\s+de|parle(?:[- ]?moi)?\s+de|dis(?:[- ]?moi)?\s+.+?\s+de|explique(?:[- ]?moi)?|presente(?:[- ]?moi)?|présente(?:[- ]?moi)?)/i;
+
+const WEB_SEARCH_DEFAULT_ENRICHMENT_TERMS: Record<string, string[]> = {
+  person: ['biography', 'career', 'latest'],
+  organization: ['company', 'overview', 'latest'],
+  location: ['overview', 'history'],
+  date: ['timeline', 'context'],
+  time: ['timeline', 'context'],
+  concept: ['overview', 'definition'],
+};
+
+function buildWebSearchSuggestion(userQuery: string | undefined, previousMessages: ChatMessage[], fallbackEntities: EntityContext[]) {
+  if (!userQuery?.trim()) {
+    return undefined;
+  }
+
+  const recentEntities = collectRecentEntities(previousMessages, fallbackEntities);
+  const normalizedQuestion = userQuery.trim().replace(/\s+/g, ' ');
+  const preferredSubject = selectPreferredSubject(recentEntities);
+  const subjectTerms = preferredSubject ? [preferredSubject.value] : [];
+
+  const aspectTerms = extractWebAspectTerms(normalizedQuestion, preferredSubject);
+  const enrichmentTerms = !aspectTerms.length ? defaultEnrichmentTerms(normalizedQuestion, preferredSubject) : [];
+  const parts = [...subjectTerms, ...aspectTerms, ...enrichmentTerms];
+  const dedupedParts = [...new Set(parts.map((part) => part.trim()).filter(Boolean))];
+
+  if (!dedupedParts.length) {
+    return normalizedQuestion;
+  }
+
+  if (!/\b(19|20)\d{2}\b/.test(normalizedQuestion) && dedupedParts.some((part) => WEB_SEARCH_DYNAMIC_TERMS.has(part))) {
+    dedupedParts.push(String(new Date().getFullYear()));
+  }
+
+  return dedupedParts.join(' ');
+}
+
+function collectRecentEntities(previousMessages: ChatMessage[], fallbackEntities: EntityContext[]) {
+  const collected: EntityContext[] = [];
+  const seen = new Set<string>();
+
+  for (let index = previousMessages.length - 1; index >= 0; index -= 1) {
+    for (const entity of previousMessages[index]?.entityContexts ?? []) {
+      const key = entity.value.trim().toLocaleLowerCase('fr');
+      if (!key || seen.has(key)) {
+        continue;
+      }
+      seen.add(key);
+      collected.push(entity);
+    }
+
+    const primarySource = previousMessages[index]?.primarySource;
+    const sourceTitle = primarySource?.noteTitle?.trim();
+    const sourceKey = sourceTitle?.toLocaleLowerCase('fr');
+    if (sourceTitle && sourceKey && !seen.has(sourceKey)) {
+      seen.add(sourceKey);
+      collected.push({
+        value: sourceTitle,
+        type: inferEntityTypeFromSource(primarySource),
+        typeLabel: 'Sujet',
+        notes: primarySource?.filePath ? [{ title: sourceTitle, filePath: primarySource.filePath }] : [],
+      });
+    }
+  }
+
+  for (const entity of fallbackEntities) {
+    const key = entity.value.trim().toLocaleLowerCase('fr');
+    if (!key || seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    collected.push(entity);
+  }
+
+  return collected;
+}
+
+function extractWebAspectTerms(question: string, subject?: EntityContext) {
+  const tokens = question.match(/[A-Za-zÀ-ÿ0-9-]+/g) ?? [];
+  const terms: string[] = [];
+  const subjectTokens = new Set((subject?.value.match(/[A-Za-zÀ-ÿ0-9-]+/g) ?? []).map((token) => token.toLocaleLowerCase('fr')));
+
+  for (const rawToken of tokens) {
+    const token = rawToken.trim();
+    const low = token.toLocaleLowerCase('fr');
+    if (!low || WEB_SEARCH_STOPWORDS.has(low)) {
+      continue;
+    }
+    if (subjectTokens.has(low)) {
+      continue;
+    }
+    if (token.length < 3 && !/^\d{4}$/.test(token)) {
+      continue;
+    }
+    terms.push(WEB_SEARCH_ASPECT_MAP[low] ?? token);
+  }
+
+  return terms;
+}
+
+function selectPreferredSubject(entities: EntityContext[]) {
+  const sorted = [...entities].sort((left, right) => {
+    const typeDelta = entityTypeWeight(right.type) - entityTypeWeight(left.type);
+    if (typeDelta !== 0) {
+      return typeDelta;
+    }
+    const mentionDelta = (right.mentions ?? 0) - (left.mentions ?? 0);
+    if (mentionDelta !== 0) {
+      return mentionDelta;
+    }
+    return left.value.localeCompare(right.value, 'fr', { sensitivity: 'base' });
+  });
+
+  return sorted[0];
+}
+
+function entityTypeWeight(type: string) {
+  const normalized = type.trim().toLocaleLowerCase('fr');
+  if (normalized.includes('person')) {
+    return 5;
+  }
+  if (normalized.includes('org')) {
+    return 4;
+  }
+  if (normalized.includes('loc') || normalized.includes('place') || normalized.includes('geo')) {
+    return 3;
+  }
+  if (normalized.includes('date') || normalized.includes('time')) {
+    return 2;
+  }
+  return 1;
+}
+
+function inferEntityTypeFromSource(primarySource?: SourceRef | null) {
+  const title = primarySource?.noteTitle?.trim() ?? '';
+  if (/^[A-Z][a-z]+(?:\s+[A-Z][a-z]+)+$/.test(title)) {
+    return 'person';
+  }
+  return 'concept';
+}
+
+function defaultEnrichmentTerms(question: string, subject?: EntityContext) {
+  const normalizedQuestion = question.trim();
+  const lowered = normalizedQuestion.toLocaleLowerCase('fr');
+  const genericQuestion = WEB_SEARCH_GENERIC_INTRO_RE.test(normalizedQuestion) || /^qui\b|^quoi\b|^que\b|^quel\b|^quelle\b/i.test(normalizedQuestion);
+  if (!genericQuestion || !subject) {
+    return [];
+  }
+
+  const typeKey = normalizeEntityTypeKey(subject.type);
+  const defaults = WEB_SEARCH_DEFAULT_ENRICHMENT_TERMS[typeKey] ?? WEB_SEARCH_DEFAULT_ENRICHMENT_TERMS.concept;
+
+  if (lowered.includes('actualit') || lowered.includes('recent') || lowered.includes('récent') || lowered.includes('202')) {
+    return [...defaults.filter((term) => term !== 'latest'), 'latest'];
+  }
+
+  return defaults;
+}
+
+function normalizeEntityTypeKey(type: string) {
+  const normalized = type.trim().toLocaleLowerCase('fr');
+  if (normalized.includes('person')) {
+    return 'person';
+  }
+  if (normalized.includes('org')) {
+    return 'organization';
+  }
+  if (normalized.includes('loc') || normalized.includes('place') || normalized.includes('geo')) {
+    return 'location';
+  }
+  if (normalized.includes('date')) {
+    return 'date';
+  }
+  if (normalized.includes('time')) {
+    return 'time';
+  }
+  return 'concept';
+}

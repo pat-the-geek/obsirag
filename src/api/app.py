@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import queue
 import sqlite3
+import subprocess
+import sys
 import time
 from datetime import UTC, datetime
 from pathlib import Path
@@ -24,7 +27,9 @@ from src.api.schemas import (
     ConversationDetailModel,
     ConversationSummaryModel,
     CreateConversationRequest,
+    DdgKnowledgeModel,
     DetectSynapsesResponseModel,
+    EntityContextModel,
     GraphDataModel,
     GraphEdgeModel,
     GraphFilterOptionsModel,
@@ -70,6 +75,18 @@ app.add_middleware(
 )
 
 conversation_store = ApiConversationStore()
+
+STREAM_PREPARATION_STEPS: list[tuple[str, str]] = [
+    ("analysis", "Analyse de la requete"),
+    ("context", "Preparation du contexte"),
+    ("generation", "Generation de la reponse"),
+]
+
+STREAM_ENRICHMENT_STEPS: list[tuple[str, str]] = [
+    ("entities", "Extraction des entites NER"),
+    ("web", "Recherche DDG"),
+    ("finalize", "Finalisation de la reponse"),
+]
 
 
 def _load_processing_status() -> dict[str, Any]:
@@ -147,11 +164,16 @@ def require_api_auth(authorization: str | None = Header(default=None)) -> None:
 
 @app.get("/api/v1/health", response_model=HealthResponse)
 def health() -> HealthResponse:
+    vector_available = True
+    try:
+        vector_available = get_service_manager().chroma.native_api_available()
+    except Exception:
+        vector_available = False
     return HealthResponse(
         status="ok",
         version="0.1.0",
         llmAvailable=True,
-        vectorStoreAvailable=True,
+        vectorStoreAvailable=vector_available,
     )
 
 
@@ -242,6 +264,18 @@ def delete_conversation(conversation_id: str, _: None = Depends(require_api_auth
     return {"deleted": True}
 
 
+@app.delete("/api/v1/conversations/{conversation_id}/messages/{message_id}", response_model=ConversationDetailModel)
+def delete_conversation_message(
+    conversation_id: str,
+    message_id: str,
+    _: None = Depends(require_api_auth),
+) -> ConversationDetailModel:
+    updated = conversation_store.delete_message(conversation_id, message_id)
+    if updated is None:
+        raise HTTPException(status_code=404, detail="Message not found")
+    return updated
+
+
 @app.post("/api/v1/conversations/{conversation_id}/save", response_model=SaveConversationResponse)
 def save_conversation(conversation_id: str, _: None = Depends(require_api_auth)) -> SaveConversationResponse:
     try:
@@ -252,20 +286,34 @@ def save_conversation(conversation_id: str, _: None = Depends(require_api_auth))
 
 
 @app.post("/api/v1/conversations/{conversation_id}/messages", response_model=ChatMessageModel)
-def create_message(
+async def create_message(
     conversation_id: str,
     payload: MessageCreateRequest,
     _: None = Depends(require_api_auth),
 ) -> ChatMessageModel:
     svc = get_service_manager()
-    svc.signal_ui_active()
-
     user_message, history = _prepare_user_message(conversation_id, payload.prompt)
     conversation_store.append_messages(conversation_id, [user_message])
 
     started_at = time.perf_counter()
-    answer, sources = svc.rag.query(payload.prompt, chat_history=history)
-    assistant_message = _build_assistant_message(answer=answer, sources=sources, started_at=started_at, timeline=[])
+    try:
+        result = _run_chat_generation_worker(prompt=payload.prompt, history=history)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    answer = str(result.get("answer") or "")
+    sources = list(result.get("sources") or [])
+    sentinel = is_not_in_vault(answer)
+    entity_contexts = _lookup_conversation_entity_contexts(payload.prompt, answer, svc)
+    query_overview = _lookup_query_overview(payload.prompt, svc) if sentinel else {}
+    assistant_message = _build_assistant_message(
+        answer=answer,
+        sources=sources,
+        started_at=started_at,
+        timeline=[],
+        query_overview=query_overview,
+        entity_contexts=entity_contexts,
+    )
     conversation_store.append_messages(
         conversation_id,
         [assistant_message],
@@ -275,77 +323,99 @@ def create_message(
 
 
 @app.post("/api/v1/conversations/{conversation_id}/messages/stream")
-def stream_message(
+async def stream_message(
     conversation_id: str,
     payload: MessageCreateRequest,
     _: None = Depends(require_api_auth),
 ) -> StreamingResponse:
     svc = get_service_manager()
-    svc.signal_ui_active()
-
     user_message, history = _prepare_user_message(conversation_id, payload.prompt)
     conversation_store.append_messages(conversation_id, [user_message])
-    progress_queue: queue.SimpleQueue[dict[str, Any]] = queue.SimpleQueue()
     started_at = time.perf_counter()
+    worker_task = asyncio.create_task(asyncio.to_thread(_run_chat_generation_worker, prompt=payload.prompt, history=history))
 
-    def _on_progress(update: dict[str, Any]) -> None:
-        progress_queue.put(update)
-
-    stream, sources = svc.rag.query_stream(payload.prompt, chat_history=history, progress_callback=_on_progress)
-
-    def _event_stream():
+    async def _event_stream():
         timeline: list[str] = []
-        chunks: list[str] = []
         yield _sse_event("message_start", {"conversationId": conversation_id, "messageId": user_message.id})
-        try:
-            while True:
-                while True:
-                    try:
-                        update = progress_queue.get_nowait()
-                    except queue.Empty:
-                        break
-                    message = str(update.get("message") or "").strip()
-                    if message:
-                        timeline.append(message)
-                    yield _sse_event("retrieval_status", update)
+        result: dict[str, Any] | None = None
+        emitted_preparation_steps: set[str] = set()
 
-                try:
-                    token = next(stream)
-                except StopIteration:
-                    break
+        for phase, status_message in STREAM_PREPARATION_STEPS:
+            _append_timeline_step(timeline, status_message)
+            emitted_preparation_steps.add(status_message)
+            yield _sse_event("retrieval_status", {"phase": phase, "message": status_message})
+            try:
+                result = await asyncio.wait_for(asyncio.shield(worker_task), timeout=0.55)
+                break
+            except asyncio.TimeoutError:
+                continue
+            except RuntimeError as exc:
+                yield _sse_event("message_error", {"detail": str(exc)})
+                return
 
-                chunks.append(token)
-                yield _sse_event("token", {"token": token})
+        if result is None:
+            try:
+                result = await worker_task
+            except RuntimeError as exc:
+                yield _sse_event("message_error", {"detail": str(exc)})
+                return
 
-            while True:
-                try:
-                    update = progress_queue.get_nowait()
-                except queue.Empty:
-                    break
-                message = str(update.get("message") or "").strip()
-                if message:
-                    timeline.append(message)
-                yield _sse_event("retrieval_status", update)
+        for phase, status_message in STREAM_PREPARATION_STEPS:
+            if status_message in emitted_preparation_steps:
+                continue
+            _append_timeline_step(timeline, status_message)
+            yield _sse_event("retrieval_status", {"phase": phase, "message": status_message})
 
-            source_models = [_source_from_chunk(chunk) for chunk in sources]
-            yield _sse_event("sources_ready", {"sources": [item.model_dump(mode="json") for item in source_models]})
+        answer = str(result.get("answer") or "")
+        sources = list(result.get("sources") or [])
+        sentinel = is_not_in_vault(answer)
 
-            assistant_message = _build_assistant_message(
-                answer="".join(chunks),
-                sources=sources,
-                started_at=started_at,
-                timeline=timeline,
-            )
-            conversation_store.append_messages(
-                conversation_id,
-                [assistant_message],
-                last_generation_stats=assistant_message.stats,
-            )
-            yield _sse_event("message_complete", assistant_message.model_dump(mode="json"))
-        except Exception as exc:
-            yield _sse_event("message_error", {"detail": str(exc)})
+        _append_timeline_step(timeline, "Réponse générée par le worker API")
+        yield _sse_event("retrieval_status", {"phase": "generation", "message": "Réponse générée par le worker API"})
+
+        entity_contexts: list[dict[str, Any]] = []
+        query_overview: dict[str, Any] = {}
+        enrichment_steps = [
+            ("entities", "Extraction des entites NER"),
+            *([("web", "Recherche DDG")] if sentinel else []),
+            ("finalize", "Finalisation de la reponse"),
+        ]
+        for phase, status_message in enrichment_steps:
+            _append_timeline_step(timeline, status_message)
+            yield _sse_event("retrieval_status", {"phase": phase, "message": status_message})
+            if phase == "entities":
+                entity_contexts = _lookup_conversation_entity_contexts(payload.prompt, answer, svc)
+            elif phase == "web":
+                query_overview = _lookup_query_overview(payload.prompt, svc)
+
+        for token in _iter_answer_tokens(answer):
+            yield _sse_event("token", {"token": token})
+
+        source_models = [_source_from_chunk(chunk) for chunk in sources]
+        yield _sse_event("sources_ready", {"sources": [item.model_dump(mode="json") for item in source_models]})
+
+        assistant_message = _build_assistant_message(
+            answer=answer,
+            sources=sources,
+            started_at=started_at,
+            timeline=timeline,
+            query_overview=query_overview,
+            entity_contexts=entity_contexts,
+        )
+        conversation_store.append_messages(
+            conversation_id,
+            [assistant_message],
+            last_generation_stats=assistant_message.stats,
+        )
+        yield _sse_event("message_complete", assistant_message.model_dump(mode="json"))
 
     return StreamingResponse(_event_stream(), media_type="text/event-stream")
+
+
+def _append_timeline_step(timeline: list[str], value: str) -> None:
+    if timeline and timeline[-1] == value:
+        return
+    timeline.append(value)
 
 
 @app.get("/api/v1/notes", response_model=list[RelatedNoteModel])
@@ -576,9 +646,12 @@ def explicit_web_search(
         summary=str(overview.get("summary") or ""),
         sources=[_web_source_model(item) for item in (overview.get("sources") or []) if item.get("href")],
     )
+    content = _format_query_overview_markdown(overview)
+    entity_contexts = _lookup_conversation_entity_contexts(payload.query, content, svc)
     return WebSearchResponseModel(
-        content=_format_query_overview_markdown(overview),
+        content=content,
         queryOverview=query_overview,
+        entityContexts=_entity_context_models(entity_contexts),
         provenance="web",
     )
 
@@ -629,6 +702,8 @@ def _build_assistant_message(
     sources: list[dict],
     started_at: float,
     timeline: list[str],
+    query_overview: dict[str, Any] | None = None,
+    entity_contexts: list[dict[str, Any]] | None = None,
 ) -> ChatMessageModel:
     elapsed = max(time.perf_counter() - started_at, 0.001)
     source_models = [_source_from_chunk(chunk) for chunk in sources]
@@ -642,6 +717,8 @@ def _build_assistant_message(
         sources=source_models,
         primarySource=primary_source,
         timeline=timeline,
+        queryOverview=_query_overview_model(query_overview),
+        entityContexts=_entity_context_models(entity_contexts),
         provenance="vault",
         sentinel=is_not_in_vault(answer),
         stats={
@@ -651,6 +728,94 @@ def _build_assistant_message(
             "tps": round(token_count / elapsed, 3),
         },
     )
+
+
+def _lookup_conversation_entity_contexts(user_text: str, assistant_text: str, svc) -> list[dict[str, Any]]:
+    combined = "\n\n".join(part for part in (user_text, assistant_text) if part and str(part).strip())
+    if not combined.strip():
+        return []
+    try:
+        result = svc.learner.lookup_wuddai_entity_contexts(combined, max_entities=10, max_notes=3)
+        return result if isinstance(result, list) else []
+    except Exception:
+        return []
+
+
+def _lookup_query_overview(user_text: str, svc) -> dict[str, Any]:
+    if not user_text or len(user_text.strip()) < 3:
+        return {}
+    try:
+        result = build_query_overview_sync(user_text, svc.llm)
+        return result if isinstance(result, dict) else {}
+    except Exception:
+        return {}
+
+
+def _query_overview_model(value: dict[str, Any] | None) -> QueryOverviewModel | None:
+    overview = value or {}
+    summary = str(overview.get("summary") or "").strip()
+    sources = [_web_source_model(item) for item in (overview.get("sources") or []) if item.get("href")]
+    search_query = str(overview.get("search_query") or overview.get("query") or "").strip()
+    query = str(overview.get("query") or search_query).strip()
+    if not summary and not sources:
+        return None
+    return QueryOverviewModel(
+        query=query,
+        searchQuery=search_query or query,
+        summary=summary,
+        sources=sources,
+    )
+
+
+def _entity_context_models(values: list[dict[str, Any]] | None) -> list[EntityContextModel]:
+    return [_entity_context_model(item) for item in (values or []) if item.get("value")]
+
+
+def _entity_context_model(value: dict[str, Any]) -> EntityContextModel:
+    return EntityContextModel(
+        type=str(value.get("type") or "unknown"),
+        typeLabel=str(value.get("type_label") or value.get("type") or "Entité"),
+        value=str(value.get("value") or "Entité"),
+        mentions=int(value.get("mentions") or 0) or None,
+        imageUrl=str(value.get("image_url") or "") or None,
+        tag=str(value.get("tag") or "") or None,
+        notes=[_related_note_from_note(item) for item in (value.get("notes") or []) if item.get("file_path")],
+        ddgKnowledge=_ddg_knowledge_model(value.get("ddg_knowledge") or {}),
+    )
+
+
+def _ddg_knowledge_model(value: dict[str, Any]) -> DdgKnowledgeModel | None:
+    if not value:
+        return None
+    related_topics = [
+        {
+            "text": str(item.get("text") or "").strip(),
+            "url": str(item.get("url") or "").strip(),
+        }
+        for item in (value.get("related_topics") or [])
+        if item.get("text") and item.get("url")
+    ]
+    infobox = [
+        {
+            "label": str(item.get("label") or "").strip(),
+            "value": str(item.get("value") or "").strip(),
+        }
+        for item in (value.get("infobox") or [])
+        if item.get("label") and item.get("value")
+    ]
+    compact = DdgKnowledgeModel(
+        heading=str(value.get("heading") or "").strip() or None,
+        entity=str(value.get("entity") or "").strip() or None,
+        abstractText=str(value.get("abstract_text") or "").strip() or None,
+        answer=str(value.get("answer") or "").strip() or None,
+        answerType=str(value.get("answer_type") or "").strip() or None,
+        definition=str(value.get("definition") or "").strip() or None,
+        infobox=infobox[:6],
+        relatedTopics=related_topics[:4],
+    )
+    if not compact.model_dump(exclude_none=True, exclude_defaults=True):
+        return None
+    return compact
 
 
 def _extract_bearer_token(authorization: str | None) -> str:
@@ -671,6 +836,90 @@ def _token_preview(value: str | None) -> str | None:
 
 def _sse_event(name: str, payload: dict[str, Any]) -> str:
     return f"event: {name}\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
+
+
+def _iter_answer_tokens(answer: str) -> list[str]:
+    words = answer.split()
+    if not words:
+        return [answer] if answer else []
+    return [f"{word} " for word in words[:-1]] + [words[-1]]
+
+
+def _decode_worker_payload(stdout: str) -> dict[str, Any]:
+    payload = (stdout or "").strip()
+    if not payload:
+        raise RuntimeError("Le worker de génération n'a renvoyé aucune réponse exploitable.")
+
+    decoder = json.JSONDecoder()
+    start_offsets = [index for index, char in enumerate(payload) if char == "{"]
+    parsed_candidates: list[dict[str, Any]] = []
+    for start in start_offsets:
+        candidate = payload[start:].lstrip()
+        try:
+            parsed, _end = decoder.raw_decode(candidate)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, dict):
+            parsed_candidates.append(parsed)
+
+    for parsed in parsed_candidates:
+        if "answer" in parsed or "detail" in parsed:
+            return parsed
+
+    if parsed_candidates:
+        return parsed_candidates[-1]
+
+    raise RuntimeError("Le worker de génération a renvoyé une réponse invalide.")
+
+
+def _run_chat_generation_worker(*, prompt: str, history: list[dict[str, str]]) -> dict[str, Any]:
+    payload = json.dumps({"prompt": prompt, "history": history}, ensure_ascii=False)
+    project_root = str(Path(__file__).resolve().parents[2])
+    primary_detail: str | None = None
+    workers = [
+        ("src.api.chat_worker", "Le worker MLX a planté pendant la génération du message."),
+        ("src.api.chat_fallback_worker", "Le fallback lexical a échoué pendant la génération du message."),
+    ]
+
+    for index, (module_name, crash_detail) in enumerate(workers):
+        try:
+            completed = subprocess.run(
+                [sys.executable, "-m", module_name],
+                input=payload,
+                text=True,
+                capture_output=True,
+                cwd=project_root,
+                timeout=300,
+                check=False,
+            )
+        except subprocess.TimeoutExpired as exc:
+            if index == 0:
+                primary_detail = "Le worker de génération a dépassé le délai autorisé."
+                continue
+            raise RuntimeError(primary_detail or "Le worker de génération a dépassé le délai autorisé.") from exc
+
+        if completed.returncode == 0:
+            stdout = (completed.stdout or "").strip()
+            try:
+                return _decode_worker_payload(stdout)
+            except RuntimeError as exc:
+                if index == 0:
+                    primary_detail = str(exc)
+                    continue
+                raise RuntimeError(primary_detail or str(exc)) from exc
+
+        stderr = (completed.stderr or "").strip()
+        if completed.returncode < 0 or completed.returncode in {138, 139}:
+            detail = crash_detail
+        else:
+            detail = stderr.splitlines()[-1] if stderr else crash_detail
+
+        if index == 0:
+            primary_detail = detail
+            continue
+        raise RuntimeError(primary_detail or detail)
+
+    raise RuntimeError(primary_detail or "Le worker de génération a échoué pendant la génération du message.")
 
 
 

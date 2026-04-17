@@ -34,7 +34,7 @@ class TestServiceManager:
         assert tmp_settings.insights_dir.exists()
         assert tmp_settings.synthesis_dir.exists()
 
-    def test_init_wires_components_and_loads_llm(self, tmp_settings, mock_chroma, mock_llm):
+    def test_init_wires_components_with_deferred_llm_loading(self, tmp_settings, mock_chroma, mock_llm):
         rag_instance = MagicMock()
         indexer_instance = MagicMock()
         graph_instance = MagicMock()
@@ -57,7 +57,7 @@ class TestServiceManager:
             manager = ServiceManager(on_step=steps.append)
 
         configure_logging.assert_called_once_with(tmp_settings.log_level, tmp_settings.log_dir)
-        mock_llm.load.assert_called_once()
+        mock_llm.load.assert_not_called()
         start_bg.assert_called_once()
         assert manager.chroma is mock_chroma
         assert manager.rag is rag_instance
@@ -68,29 +68,17 @@ class TestServiceManager:
         assert len(steps) >= 7
         assert steps[-1] == "✅ Tous les services sont opérationnels"
 
-    def test_signal_ui_active_updates_timestamp_and_autoloads_if_needed(self):
+    def test_signal_ui_active_updates_timestamp_without_autoloading(self):
         manager = ServiceManager.__new__(ServiceManager)
         manager.llm = MagicMock()
         manager.llm.is_loaded.return_value = False
         manager._last_ui_activity = 0.0
 
-        created_threads: list[_FakeThread] = []
-
-        def _thread_factory(*, target=None, daemon=None, name=None):
-            thread = _FakeThread(target=target, daemon=daemon, name=name)
-            created_threads.append(thread)
-            return thread
-
-        with (
-            patch("src.services.threading.Thread", side_effect=_thread_factory),
-            patch("src.services.time.monotonic", return_value=123.4),
-        ):
+        with patch("src.services.time.monotonic", return_value=123.4):
             ServiceManager.signal_ui_active(manager)
 
         assert manager._last_ui_activity == 123.4
-        assert len(created_threads) == 1
-        assert created_threads[0].target == manager.llm.load
-        assert created_threads[0].started is True
+        manager.llm.load.assert_not_called()
 
     def test_is_ui_active_depends_on_idle_timeout(self):
         manager = ServiceManager.__new__(ServiceManager)
@@ -129,6 +117,7 @@ class TestServiceManager:
             patch.object(ServiceManager, "_start_model_watchdog") as start_watchdog,
         ):
             tmp_settings.autolearn_enabled = True
+            tmp_settings.autolearn_allow_background_llm = True
             ServiceManager._start_background_services(manager)
 
         manager.watcher.start.assert_called_once()

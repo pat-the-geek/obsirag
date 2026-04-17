@@ -53,6 +53,7 @@ export type DdgKnowledge = {
   answer?: string;
   answerType?: string;
   definition?: string;
+  infobox?: Array<{ label: string; value: string }>;
   relatedTopics?: Array<{ text: string; url: string }>;
 };
 
@@ -236,5 +237,6 @@ export type SessionState = {
 export type WebSearchResponse = {
   content: string;
   queryOverview: QueryOverview;
+  entityContexts: EntityContext[];
   provenance: 'web';
 };

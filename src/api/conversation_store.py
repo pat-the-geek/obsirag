@@ -49,6 +49,31 @@ class ApiConversationStore:
             self._save_all(kept)
         return deleted
 
+    def delete_message(self, conversation_id: str, message_id: str) -> ConversationDetailModel | None:
+        conversation = self.get(conversation_id)
+        if conversation is None:
+            return None
+
+        target_index = next((index for index, message in enumerate(conversation.messages) if message.id == message_id), None)
+        if target_index is None:
+            return None
+
+        deleted_ids = {message_id}
+        target_message = conversation.messages[target_index]
+        if target_message.role == "assistant" and target_index > 0:
+            previous_message = conversation.messages[target_index - 1]
+            if previous_message.role == "user":
+                deleted_ids.add(previous_message.id)
+
+        kept_messages = [message for message in conversation.messages if message.id not in deleted_ids]
+
+        conversation.messages = kept_messages
+        conversation.updatedAt = datetime.now(UTC).isoformat()
+        conversation.lastGenerationStats = self._latest_generation_stats(conversation.messages)
+        if conversation.title == "Nouveau fil":
+            conversation.title = self._derive_title(conversation.messages)
+        return self.upsert(conversation)
+
     def upsert(self, conversation: ConversationDetailModel) -> ConversationDetailModel:
         items = self.list()
         updated = False
@@ -133,6 +158,13 @@ class ApiConversationStore:
                 content = " ".join(message.content.split())
                 return content[:60] + ("…" if len(content) > 60 else "")
         return "Nouveau fil"
+
+    @staticmethod
+    def _latest_generation_stats(messages: list[ChatMessageModel]):
+        for message in reversed(messages):
+            if message.role == "assistant" and message.stats is not None:
+                return message.stats
+        return None
 
     @staticmethod
     def _normalize_conversation(conversation: ConversationDetailModel) -> ConversationDetailModel:

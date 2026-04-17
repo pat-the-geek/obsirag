@@ -1,12 +1,13 @@
 import { useDeferredValue, useMemo, useState } from 'react';
 import { ActivityIndicator, Alert, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useQueryClient } from '@tanstack/react-query';
 
 import { KnowledgeGraph } from '../../components/graph/knowledge-graph';
 import { Screen } from '../../components/ui/screen';
 import { SectionCard } from '../../components/ui/section-card';
+import { TagPill } from '../../components/ui/tag-pill';
 import { useServerConfig } from '../../features/auth/use-server-config';
 import { useGraph, useGraphSubgraph } from '../../features/graph/use-graph';
 
@@ -17,12 +18,17 @@ const MAX_GRAPH_ZOOM = 10;
 export default function GraphScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
+  const params = useLocalSearchParams<{ tag?: string }>();
   const queryClient = useQueryClient();
   const { api, useMockServer, setUseMockServer } = useServerConfig();
+  const initialTag = useMemo(() => {
+    const rawValue = Array.isArray(params.tag) ? params.tag[0] : params.tag;
+    return rawValue?.trim() || undefined;
+  }, [params.tag]);
   const [focusedNodeId, setFocusedNodeId] = useState<string | undefined>(undefined);
   const [zoom, setZoom] = useState(1);
   const [selectedGroup, setSelectedGroup] = useState<string | undefined>(undefined);
-  const [selectedTag, setSelectedTag] = useState<string | undefined>(undefined);
+  const [selectedTag, setSelectedTag] = useState<string | undefined>(initialTag);
   const [selectedType, setSelectedType] = useState<string | undefined>(undefined);
   const [openFilter, setOpenFilter] = useState<'group' | 'tag' | 'type' | 'date' | null>(null);
   const [searchText, setSearchText] = useState('');
@@ -169,6 +175,12 @@ export default function GraphScreen() {
                 </Pressable>
               </View>
             ) : null}
+            {selectedTag ? (
+              <View style={styles.activeTagRow}>
+                <TagPill label={selectedTag} onPress={() => setSelectedTag(undefined)} />
+                <Text style={styles.helperText}>Filtre actif. Touchez le tag pour le retirer.</Text>
+              </View>
+            ) : null}
             <Text>{graphData.metrics.nodeCount} noeuds · {graphData.metrics.edgeCount} aretes · densite {graphData.metrics.density}</Text>
             <Text style={styles.helperText}>{graphData.metrics.filteredNoteCount ?? graphData.metrics.nodeCount} / {graphData.metrics.totalNoteCount ?? graphData.metrics.nodeCount} notes affichees</Text>
             <TextInput
@@ -232,7 +244,16 @@ export default function GraphScreen() {
                 </View>
                 <View style={styles.breakdownColumn}>
                   <Text style={styles.breakdownTitle}>Tags dominants</Text>
-                  {graphData.tagSummary.length ? graphData.tagSummary.map((item) => <Text key={`tag-${item.label}`} style={styles.breakdownText}>#{item.label} · {item.count}</Text>) : <Text style={styles.summaryEmpty}>Aucun tag.</Text>}
+                  {graphData.tagSummary.length ? (
+                    <View style={styles.tagSummaryList}>
+                      {graphData.tagSummary.map((item) => (
+                        <View key={`tag-${item.label}`} style={styles.tagSummaryItem}>
+                          <TagPill label={item.label} onPress={() => setSelectedTag(item.label)} />
+                          <Text style={styles.breakdownText}>{item.count}</Text>
+                        </View>
+                      ))}
+                    </View>
+                  ) : <Text style={styles.summaryEmpty}>Aucun tag.</Text>}
                 </View>
                 <View style={styles.breakdownColumn}>
                   <Text style={styles.breakdownTitle}>Types visibles</Text>
@@ -434,6 +455,12 @@ const styles = StyleSheet.create({
     color: '#f9f6f0',
     fontWeight: '700',
   },
+  activeTagRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    gap: 10,
+  },
   nodeCard: {
     borderRadius: 14,
     borderWidth: 1,
@@ -554,6 +581,15 @@ const styles = StyleSheet.create({
   },
   breakdownColumn: {
     gap: 6,
+  },
+  tagSummaryList: {
+    gap: 8,
+  },
+  tagSummaryItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 8,
   },
   breakdownTitle: {
     color: '#3d2e20',

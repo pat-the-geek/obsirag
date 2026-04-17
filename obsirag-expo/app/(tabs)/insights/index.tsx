@@ -42,7 +42,12 @@ export default function InsightsScreen() {
         </View>
         {isLoading ? <ActivityIndicator /> : null}
         {filtered.map((item) => (
-          <InsightListItem key={item.id} item={item} onPress={() => router.push(`/(tabs)/insights/${encodeURIComponent(item.id)}`)} />
+          <InsightListItem
+            key={item.id}
+            item={item}
+            onPress={() => router.push(`/(tabs)/insights/${encodeURIComponent(item.id)}`)}
+            onOpenTag={(tag) => router.push(`/(tabs)/graph?tag=${encodeURIComponent(tag)}`)}
+          />
         ))}
       </SectionCard>
     </Screen>

@@ -1,128 +1,112 @@
-import { Linking, Pressable, Share, StyleSheet, Text, View } from 'react-native';
+import { useState } from 'react';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 
-import { ChatMessage } from '../../types/domain';
-import { MarkdownNote } from '../notes/markdown-note';
-import { StatusPill } from '../ui/status-pill';
+import { ChatMessage, EntityContext } from '../../types/domain';
+import { MarkdownNote, renderEntityHighlightedText } from '../notes/markdown-note';
+import { SourceList } from './source-list';
 
 type MessageBubbleProps = {
   message: ChatMessage;
+  highlightEntities?: EntityHighlightDefinition[];
   onOpenNote?: (notePath: string) => void;
+  onOpenTag?: (tag: string) => void;
   onSuggestWebSearch?: (query: string) => void;
   webSearchSuggestion?: string;
   onUseQueryInChat?: (query: string) => void;
   replyPrompt?: string;
   onReusePrompt?: (query: string) => void;
   onOpenPrimarySource?: (notePath: string) => void;
+  onDeleteMessage?: (messageId: string) => void;
 };
+
+type EntityHighlightDefinition = Pick<EntityContext, 'value' | 'type'>;
 
 export function MessageBubble({
   message,
+  highlightEntities,
   onOpenNote,
+  onOpenTag,
   onSuggestWebSearch,
   webSearchSuggestion,
   onUseQueryInChat,
   replyPrompt,
   onReusePrompt,
   onOpenPrimarySource,
+  onDeleteMessage,
 }: MessageBubbleProps) {
   const isUser = message.role === 'user';
-  const canTriggerWebSearch = Boolean(!isUser && message.sentinel && onSuggestWebSearch && webSearchSuggestion?.trim());
-  const hasWebSources = Boolean(message.queryOverview?.sources.length);
-  const reusableQuery = message.queryOverview?.searchQuery || message.queryOverview?.query || '';
-  const canReusePrompt = Boolean(!isUser && replyPrompt?.trim() && onReusePrompt);
-  const canOpenPrimarySource = Boolean(!isUser && message.primarySource?.filePath && onOpenPrimarySource);
+  const [sourcesOpen, setSourcesOpen] = useState(false);
+  const hasRenderableQueryOverview = isRenderableQueryOverview(message);
+  const shouldHideAssistantMainBubble = Boolean(!isUser && hasRenderableQueryOverview && (message.sentinel || message.provenance === 'web'));
+  const showWebSearchAction = Boolean(!isUser && isNotInVaultMessage(message) && webSearchSuggestion && onSuggestWebSearch);
+  const showDeleteAction = Boolean(!isUser && message.id !== 'streaming-assistant' && onDeleteMessage);
+  const ddgMarkdown = buildDdgMarkdown(message);
 
   return (
     <View style={[styles.stack, isUser ? styles.userStack : styles.assistantStack]}>
-      <View style={[styles.base, isUser ? styles.userBubble : styles.assistantBubble]}>
-        <View style={styles.row}>
-          <Text style={[styles.role, isUser ? styles.userRole : styles.assistantRole]}>{isUser ? 'Vous' : 'ObsiRAG'}</Text>
-          {message.provenance ? <StatusPill label={message.provenance} tone="neutral" /> : null}
+      {!shouldHideAssistantMainBubble ? (
+        <View style={[styles.base, isUser ? styles.userBubble : styles.assistantBubble]}>
+          {isUser ? (
+            <Text style={styles.userContent}>{renderEntityHighlightedText(message.content, 'dark', highlightEntities, undefined, `user-${message.id}`)}</Text>
+          ) : (
+            <MarkdownNote
+              markdown={message.content}
+              variant="article"
+              tone="light"
+              entityHighlights={highlightEntities}
+              {...(onOpenNote ? { onOpenNote } : {})}
+              {...(onOpenTag ? { onOpenTag } : {})}
+            />
+          )}
+          {!isUser && message.sources?.length ? (
+            <SourceList
+              sources={message.sources}
+              isOpen={sourcesOpen}
+              onToggleOpen={() => setSourcesOpen((current) => !current)}
+              onSelectSource={(source) => onOpenNote?.(source.filePath)}
+            />
+          ) : null}
         </View>
-        {isUser ? (
-          <Text style={styles.userContent}>{message.content}</Text>
-        ) : (
-          <MarkdownNote markdown={message.content} variant="article" tone="dark" {...(onOpenNote ? { onOpenNote } : {})} />
-        )}
-        {message.queryOverview ? (
+      ) : null}
+      {!isUser && hasRenderableQueryOverview ? (
+        <View testID="message-query-overview-response" style={[styles.base, styles.followUpBubble]}>
+          <View style={styles.followUpHeader}>
+            <Text style={styles.assistantRole}>ObsiRAG</Text>
+            <Text style={styles.followUpLabel}>Vue d'ensemble DDG</Text>
+          </View>
           <View style={styles.queryOverviewBox}>
-            <Text style={styles.queryOverviewTitle}>Recherche web</Text>
-            <Text style={styles.queryOverviewText}>{message.queryOverview.summary}</Text>
-            <Text style={styles.queryLabel}>Requete: {message.queryOverview.searchQuery}</Text>
-            {hasWebSources ? (
-              <View style={styles.webSourceList}>
-                {message.queryOverview?.sources.map((source, index) => (
-                  <Pressable key={`${message.id}-web-source-${index}`} onPress={() => { void Linking.openURL(source.href); }} style={styles.webSourceCard}>
-                    <Text style={styles.webSourceTitle}>{source.title}</Text>
-                    {(source.domain || source.publishedAt) ? (
-                      <Text style={styles.webSourceMeta}>
-                        {[source.domain, source.publishedAt].filter(Boolean).join(' · ')}
-                      </Text>
-                    ) : null}
-                    {source.body ? <Text style={styles.webSourceBody}>{source.body}</Text> : null}
-                    <Text style={styles.webSourceHref}>{source.href}</Text>
-                  </Pressable>
-                ))}
-              </View>
-            ) : null}
-            {onUseQueryInChat && reusableQuery ? (
-              <Pressable style={styles.useQueryButton} onPress={() => onUseQueryInChat(reusableQuery)}>
-                <Text style={styles.useQueryButtonText}>Utiliser cette requete dans le chat</Text>
-              </Pressable>
-            ) : null}
+            <MarkdownNote
+              markdown={ddgMarkdown}
+              tone="light"
+              entityHighlights={highlightEntities}
+              {...(onOpenNote ? { onOpenNote } : {})}
+              {...(onOpenTag ? { onOpenTag } : {})}
+            />
           </View>
-        ) : null}
-        {message.timeline?.length ? (
-          <View style={styles.timelineList}>
-            {message.timeline.map((item, index) => (
-              <Text key={`${message.id}-timeline-${index}`} style={styles.timelineItem}>
-                {item}
-              </Text>
-            ))}
-          </View>
-        ) : null}
-        {message.primarySource ? (
-          <Text style={styles.source}>Note principale : {message.primarySource.noteTitle}</Text>
-        ) : null}
-        {message.sentinel ? <Text style={styles.sentinel}>Reponse de repli: aucune source suffisante dans le coffre.</Text> : null}
-        {canTriggerWebSearch ? (
-          <Pressable style={styles.webSearchButton} onPress={() => onSuggestWebSearch?.(webSearchSuggestion!.trim())}>
-            <Text style={styles.webSearchButtonText}>Preparer une recherche web</Text>
-          </Pressable>
-        ) : null}
-        {message.stats ? (
-          <Text style={styles.meta}>
-            {message.stats.tokens} tokens · TTFT {message.stats.ttft.toFixed(1)}s · {message.stats.tps.toFixed(0)} tok/s
-          </Text>
-        ) : null}
-        {!isUser ? (
-          <View style={styles.actionsBar}>
-            {canReusePrompt ? (
-              <Pressable style={styles.actionButton} onPress={() => onReusePrompt?.(replyPrompt!.trim())}>
-                <Text style={styles.actionButtonText}>Relancer</Text>
-              </Pressable>
-            ) : null}
-            <Pressable style={styles.actionButton} onPress={() => { void Share.share({ message: message.content }); }}>
-              <Text style={styles.actionButtonText}>Partager</Text>
+        </View>
+      ) : null}
+      {showWebSearchAction || showDeleteAction ? (
+        <View style={styles.actionRow}>
+          {showWebSearchAction ? (
+            <Pressable
+              testID="message-web-search-action"
+              style={styles.webSearchActionButton}
+              onPress={() => onSuggestWebSearch?.(webSearchSuggestion!)}
+            >
+              <Text style={styles.webSearchActionLabel}>Recherche sur le web</Text>
             </Pressable>
-            {canOpenPrimarySource ? (
-              <Pressable style={styles.actionButton} onPress={() => onOpenPrimarySource?.(message.primarySource!.filePath)}>
-                <Text style={styles.actionButtonText}>Source</Text>
-              </Pressable>
-            ) : null}
-            {canTriggerWebSearch ? (
-              <Pressable style={styles.actionButton} onPress={() => onSuggestWebSearch?.(webSearchSuggestion!.trim())}>
-                <Text style={styles.actionButtonText}>Web</Text>
-              </Pressable>
-            ) : null}
-            {onUseQueryInChat && reusableQuery ? (
-              <Pressable style={styles.actionButton} onPress={() => onUseQueryInChat(reusableQuery)}>
-                <Text style={styles.actionButtonText}>Requete</Text>
-              </Pressable>
-            ) : null}
-          </View>
-        ) : null}
-      </View>
+          ) : null}
+          {showDeleteAction ? (
+            <Pressable
+              testID="message-delete-action"
+              style={styles.deleteActionButton}
+              onPress={() => onDeleteMessage?.(message.id)}
+            >
+              <Text style={styles.deleteActionLabel}>Supprimer la réponse</Text>
+            </Pressable>
+          ) : null}
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -136,6 +120,7 @@ const styles = StyleSheet.create({
   },
   assistantStack: {
     alignItems: 'stretch',
+    gap: 10,
   },
   base: {
     borderRadius: 20,
@@ -150,10 +135,29 @@ const styles = StyleSheet.create({
   },
   assistantBubble: {
     width: '100%',
-    backgroundColor: '#202020',
+    backgroundColor: '#f4f1ea',
     borderWidth: 1,
-    borderColor: '#303030',
+    borderColor: '#ddd4c8',
     paddingBottom: 14,
+  },
+  followUpBubble: {
+    width: '100%',
+    backgroundColor: '#f4f1ea',
+    borderWidth: 1,
+    borderColor: '#ddd4c8',
+  },
+  followUpHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  followUpLabel: {
+    color: '#5d4b38',
+    fontSize: 12,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
   },
   row: {
     flexDirection: 'row',
@@ -171,127 +175,161 @@ const styles = StyleSheet.create({
     color: '#d6d6d6',
   },
   assistantRole: {
-    color: '#f3f3f3',
+    color: '#2f2419',
   },
   userContent: {
     color: '#f1f1f1',
     fontSize: 15,
     lineHeight: 22,
   },
-  source: {
-    color: '#c9b18e',
-    fontSize: 13,
-    fontWeight: '600',
-  },
   queryOverviewBox: {
     borderRadius: 12,
-    backgroundColor: '#181818',
+    backgroundColor: '#fbf8f3',
     borderWidth: 1,
-    borderColor: '#343434',
+    borderColor: '#ded5c9',
     padding: 12,
-    gap: 6,
+    gap: 10,
   },
-  queryOverviewTitle: {
-    color: '#f1f1f1',
-    fontWeight: '700',
-  },
-  queryOverviewText: {
-    color: '#d0d0d0',
-    lineHeight: 20,
-  },
-  queryLabel: {
-    color: '#9c9c9c',
-    fontSize: 12,
-    fontWeight: '600',
-  },
-  webSourceList: {
-    gap: 8,
-  },
-  webSourceCard: {
-    borderRadius: 12,
-    backgroundColor: '#222222',
-    borderWidth: 1,
-    borderColor: '#343434',
-    padding: 10,
-    gap: 4,
-  },
-  webSourceTitle: {
-    color: '#f0f0f0',
-    fontWeight: '700',
-  },
-  webSourceBody: {
-    color: '#d0d0d0',
-    lineHeight: 19,
-  },
-  webSourceMeta: {
-    color: '#9f9f9f',
-    fontSize: 12,
-    fontWeight: '600',
-  },
-  webSourceHref: {
-    color: '#9bc0ff',
-    fontSize: 12,
-    textDecorationLine: 'underline',
-  },
-  useQueryButton: {
-    alignSelf: 'flex-start',
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: '#4a4a4a',
-    backgroundColor: '#292929',
-    paddingHorizontal: 14,
-    paddingVertical: 9,
-  },
-  useQueryButtonText: {
-    color: '#f3f3f3',
-    fontWeight: '700',
-  },
-  timelineList: {
-    gap: 4,
-  },
-  timelineItem: {
-    color: '#a4a4a4',
-    fontSize: 12,
-  },
-  sentinel: {
-    color: '#f0b36a',
-    fontSize: 12,
-    fontWeight: '600',
-  },
-  webSearchButton: {
-    alignSelf: 'flex-start',
-    borderRadius: 999,
-    backgroundColor: '#f2f2f2',
-    paddingHorizontal: 14,
-    paddingVertical: 9,
-  },
-  webSearchButtonText: {
-    color: '#171717',
-    fontWeight: '700',
-  },
-  meta: {
-    color: '#8f8f8f',
-    fontSize: 12,
-  },
-  actionsBar: {
+  actionRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 8,
-    paddingTop: 4,
-    borderTopWidth: 1,
-    borderTopColor: '#313131',
+    gap: 10,
+    paddingTop: 2,
   },
-  actionButton: {
+  webSearchActionButton: {
+    alignSelf: 'flex-start',
     borderRadius: 999,
+    backgroundColor: '#efe3cf',
     borderWidth: 1,
-    borderColor: '#3b3b3b',
-    backgroundColor: '#252525',
-    paddingHorizontal: 12,
-    paddingVertical: 7,
+    borderColor: '#dbc4a6',
+    paddingHorizontal: 14,
+    paddingVertical: 9,
   },
-  actionButtonText: {
-    color: '#d7d7d7',
+  webSearchActionLabel: {
+    color: '#5b3a0f',
     fontSize: 12,
-    fontWeight: '700',
+    fontWeight: '800',
+  },
+  deleteActionButton: {
+    alignSelf: 'flex-start',
+    borderRadius: 999,
+    backgroundColor: '#f6e3de',
+    borderWidth: 1,
+    borderColor: '#ddb6ab',
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+  },
+  deleteActionLabel: {
+    color: '#7a2f22',
+    fontSize: 12,
+    fontWeight: '800',
   },
 });
+
+function isNotInVaultMessage(message: ChatMessage) {
+  if (message.sentinel) {
+    return true;
+  }
+
+  const normalized = message.content.trim().toLocaleLowerCase('fr').replace(/\s+/g, ' ').replace(/[.!?]+$/g, '');
+  return (
+    normalized.startsWith("cette information n'est pas dans ton coffre") ||
+    normalized.startsWith("cette information n'est pas consignee dans ton coffre") ||
+    normalized.startsWith("cette information n'est pas consignée dans ton coffre") ||
+    normalized.startsWith("je n'ai pas trouve") ||
+    normalized.startsWith("je n'ai pas trouvé") ||
+    normalized.startsWith("je ne trouve pas") ||
+    normalized.startsWith('aucune information pertinente n\'est disponible dans ton coffre')
+  );
+}
+
+function isRenderableQueryOverview(message: ChatMessage) {
+  const queryOverview = message.queryOverview;
+  if (!queryOverview) {
+    return false;
+  }
+
+  return Boolean(
+    queryOverview.summary?.trim() ||
+      queryOverview.searchQuery?.trim() ||
+      queryOverview.sources?.length ||
+      (message.provenance === 'web' && message.content.trim()),
+  );
+}
+
+function buildDdgMarkdown(message: ChatMessage): string {
+  if (message.provenance === 'web' && message.content.trim()) {
+    return sanitizeDdgMarkdown(message.content);
+  }
+
+  if (!message.queryOverview) {
+    return '';
+  }
+
+  const lines: string[] = ['# Vue d\'ensemble DDG', ''];
+  const summary = sanitizeDdgMarkdown(message.queryOverview.summary?.trim() ?? '');
+  if (summary) {
+    lines.push(summary, '');
+  }
+
+  if (message.queryOverview.searchQuery?.trim()) {
+    lines.push(`**Requête DDG :** \`${message.queryOverview.searchQuery.trim()}\``, '');
+  }
+
+  if (message.queryOverview.sources?.length) {
+    lines.push('## Sources', '');
+    for (const source of message.queryOverview.sources) {
+      lines.push(`- [${source.title || source.href}](${source.href})`);
+    }
+    lines.push('');
+  }
+
+  return sanitizeDdgMarkdown(lines.join('\n').trim());
+}
+
+function sanitizeDdgMarkdown(markdown: string): string {
+  const normalizedLines: string[] = [];
+
+  for (const rawLine of markdown.replace(/\r\n/g, '\n').split('\n')) {
+    const trimmed = rawLine.trim();
+    if (/^(?:[-*]|•)\s*$/.test(trimmed)) {
+      continue;
+    }
+
+    const heading = extractBulletHeading(trimmed);
+    if (heading) {
+      normalizedLines.push(`## ${heading}`, '');
+      continue;
+    }
+
+    normalizedLines.push(rawLine);
+  }
+
+  return normalizedLines
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+function extractBulletHeading(line: string): string | null {
+  if (!/^(?:[-*]|•)\s+/.test(line)) {
+    return null;
+  }
+
+  let candidate = line.replace(/^(?:[-*]|•)\s+/, '').trim();
+  const boldWrapped = candidate.match(/^(?:\*\*|__)(.+?)(?:\*\*|__)$/);
+  if (boldWrapped?.[1]) {
+    candidate = boldWrapped[1].trim();
+  }
+
+  if (!candidate.endsWith(':')) {
+    return null;
+  }
+
+  const heading = candidate.slice(0, -1).trim();
+  if (!heading || /[.!?]$/.test(heading)) {
+    return null;
+  }
+
+  return heading;
+}

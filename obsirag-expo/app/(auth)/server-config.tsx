@@ -53,6 +53,9 @@ export default function ServerConfigScreen() {
       <SectionCard title="Connexion backend" subtitle="Configurez l'instance ObsiRAG qui alimentera l'application Expo.">
         <Text style={styles.label}>URL backend</Text>
         <TextInput value={backendUrl} onChangeText={setBackendUrl} style={styles.input} autoCapitalize="none" />
+        <Text style={styles.helpText}>
+          Sur Expo Go mobile, n'utilisez pas localhost. Renseignez l'IP reseau de cette machine pour le port 8000, ou activez le backend mock.
+        </Text>
         <Text style={styles.label}>Token d'acces</Text>
         <TextInput value={accessToken} onChangeText={setAccessToken} style={styles.input} autoCapitalize="none" secureTextEntry />
         <View style={styles.switchRow}>
@@ -90,6 +93,10 @@ const styles = StyleSheet.create({
   switchLabel: {
     flex: 1,
     color: '#4f402d',
+  },
+  helpText: {
+    color: '#6a5844',
+    lineHeight: 20,
   },
   button: {
     borderRadius: 999,

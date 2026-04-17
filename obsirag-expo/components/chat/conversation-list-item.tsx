@@ -7,9 +7,10 @@ type ConversationListItemProps = {
   item: ConversationSummary;
   onPress: () => void;
   onDelete?: () => void;
+  deleteDisabled?: boolean;
 };
 
-export function ConversationListItem({ item, onPress, onDelete }: ConversationListItemProps) {
+export function ConversationListItem({ item, onPress, onDelete, deleteDisabled = false }: ConversationListItemProps) {
   return (
     <View style={styles.card}>
       <Pressable onPress={onPress} style={styles.pressableContent}>
@@ -25,8 +26,8 @@ export function ConversationListItem({ item, onPress, onDelete }: ConversationLi
         </Text>
       </Pressable>
       {onDelete ? (
-        <Pressable onPress={onDelete} style={styles.deleteButton}>
-          <Text style={styles.deleteButtonText}>Supprimer</Text>
+        <Pressable onPress={onDelete} style={[styles.deleteButton, deleteDisabled ? styles.deleteButtonDisabled : null]} disabled={deleteDisabled}>
+          <Text style={[styles.deleteButtonText, deleteDisabled ? styles.deleteButtonTextDisabled : null]}>{deleteDisabled ? 'Suppression...' : 'Supprimer'}</Text>
         </Pressable>
       ) : null}
     </View>
@@ -72,8 +73,14 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     backgroundColor: '#f8efe6',
   },
+  deleteButtonDisabled: {
+    opacity: 0.6,
+  },
   deleteButtonText: {
     color: '#9f4f2d',
     fontWeight: '700',
+  },
+  deleteButtonTextDisabled: {
+    color: '#8f7e70',
   },
 });

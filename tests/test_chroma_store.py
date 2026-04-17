@@ -7,6 +7,7 @@ ce qui évite le disque, le modèle sentence-transformers et les ports réseau.
 from __future__ import annotations
 
 import os
+import subprocess
 import sqlite3
 import tempfile
 import threading
@@ -107,12 +108,13 @@ def _make_chroma_store(tmp_path):
         "add_chunks", "delete_by_file", "search",
         "count", "invalidate_list_notes_cache", "list_notes",
         "search_by_tags", "search_by_entity", "search_by_keyword",
+        "search_by_note_title",
         "search_by_date_range", "find_similar_notes",
         "get_notes_by_file_paths", "get_note_by_file_path", "list_user_notes",
         "list_generated_notes", "list_notes_sorted_by_title", "list_recent_notes",
         "count_notes", "list_note_folders", "list_note_tags", "list_notes_by_type",
         "list_insight_notes", "list_synapse_notes", "list_report_notes", "get_backlinks",
-        "_collection_get", "_refresh_collection", "_run_collection_op",
+        "_collection_get", "_refresh_collection", "_run_collection_op", "native_api_available",
     ]:
         real_method = getattr(ChromaStore, method)
         setattr(store, method, lambda *a, m=real_method, s=store, **kw: m(s, *a, **kw))
@@ -297,6 +299,22 @@ class TestChromaSearch:
         results = chroma.search("requête", top_k=5)
         assert results == []
 
+    def test_search_returns_empty_when_native_api_is_marked_unavailable(self, chroma_with_data):
+        chroma_with_data._native_api_available = False
+
+        assert chroma_with_data.search("chunk", top_k=2) == []
+
+    def test_search_filters_generated_chat_and_web_artifacts(self, chroma):
+        chroma.add_chunks([
+            _make_chunk(0, file_hash="user", file_path="notes/artemis.md"),
+            _make_chunk(1, file_hash="chat", file_path="obsirag/conversations/2026-04/chat_artemis.md"),
+            _make_chunk(2, file_hash="web", file_path="obsirag/insights/web_artemis.md"),
+        ])
+
+        results = chroma.search("Contenu", top_k=5)
+
+        assert [item["metadata"].get("file_path") for item in results] == ["notes/artemis.md"]
+
 
 # ---------------------------------------------------------------------------
 # Tests fonctionnels — search_by_keyword
@@ -308,6 +326,40 @@ class TestChromaKeyword:
         chroma.add_chunks([_make_chunk(0)])
         results = chroma.search_by_keyword("Contenu")
         assert len(results) > 0
+
+    def test_keyword_and_title_search_return_empty_when_native_api_is_unavailable(self, chroma_with_data):
+        chroma_with_data._native_api_available = False
+
+        assert chroma_with_data.search_by_keyword("Contenu") == []
+        assert chroma_with_data.search_by_note_title("Note de test") == []
+
+    def test_keyword_and_title_search_filter_generated_artifacts(self, chroma):
+        chroma.add_chunks([
+            _make_chunk(0, file_hash="user", file_path="notes/artemis.md"),
+            _make_chunk(1, file_hash="chat", file_path="obsirag/conversations/2026-04/chat_artemis.md"),
+            _make_chunk(2, file_hash="web", file_path="obsirag/insights/web_artemis.md"),
+        ])
+
+        keyword_results = chroma.search_by_keyword("Contenu", top_k=5)
+        title_results = chroma.search_by_note_title("Note de test", top_k=5)
+
+        assert [item["metadata"].get("file_path") for item in keyword_results] == ["notes/artemis.md"]
+        assert [item["metadata"].get("file_path") for item in title_results] == ["notes/artemis.md"]
+
+
+@pytest.mark.unit
+class TestChromaNativeApiProbe:
+    def test_native_api_probe_marks_store_unavailable_on_signal_failure(self, tmp_path):
+        from src.database.chroma_store import ChromaStore
+
+        store = ChromaStore.__new__(ChromaStore)
+        store._persist_dir = str(tmp_path / "chroma-test")
+
+        with patch("src.database.chroma_store.subprocess.run") as run_mock:
+            run_mock.return_value = subprocess.CompletedProcess(args=["python"], returncode=-11, stdout="", stderr="segv")
+
+            assert ChromaStore._probe_native_api_availability(store) is False
+
 
 
 @pytest.mark.unit

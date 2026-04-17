@@ -21,6 +21,19 @@ _ENTITY_MATCH_STOPWORDS = {
     "who", "why", "how", "from", "into", "your", "vous", "nous", "leur", "elle",
     "lui", "son", "ses", "cet", "cette", "these", "those",
 }
+_FALLBACK_ENTITY_LABELS = {
+    "PER": "PERSON",
+    "PERSON": "PERSON",
+    "ORG": "ORG",
+    "GPE": "GPE",
+    "LOC": "LOC",
+    "PRODUCT": "PRODUCT",
+}
+_PRODUCT_HINT_TOKENS = {
+    "airpods", "airtag", "apple", "galaxy", "iphone", "ipad", "ipod", "macbook",
+    "mac", "nintendo", "pixel", "playstation", "surface", "switch", "vision",
+    "watch", "xbox",
+}
 
 
 class AutoLearnEntityServices:
@@ -98,38 +111,29 @@ class AutoLearnEntityServices:
         self,
         text: str,
         *,
-        max_entities: int = 3,
+        max_entities: int = 10,
         max_notes: int = 3,
     ) -> list[dict]:
         if not text or not text.strip():
             return []
 
         entities = self._owner._load_wuddai_entities()
-        if not entities:
-            return []
-
-        matches = self._match_wuddai_entities(text, entities, max_entities=max_entities)
-        if not matches:
-            return []
-
         notes = self._list_notes()
+        matches = self._match_wuddai_entities(text, entities, max_entities=max_entities) if entities else []
         contexts: list[dict] = []
+        seen_values: set[str] = set()
         for match in matches:
-            tag = self._entity_tag(match)
-            related_notes = self._find_notes_for_tag(notes, tag, max_notes=max_notes) if tag else []
-            ddg_knowledge = self._fetch_ddg_entity_knowledge(match["value"])
-            contexts.append(
-                {
-                    "type": match["type"],
-                    "type_label": self._entity_type_label(match["type"]),
-                    "value": match["value"],
-                    "mentions": match.get("mentions", 0),
-                    "image_url": match.get("image_url"),
-                    "tag": tag,
-                    "notes": related_notes,
-                    "ddg_knowledge": ddg_knowledge,
-                }
-            )
+            context = self._build_entity_context(match, notes, max_notes=max_notes)
+            contexts.append(context)
+            seen_values.add(self._owner._normalize_entity_name(context["value"]))
+
+        remaining = max(0, max_entities - len(contexts))
+        if remaining:
+            fallback_matches = self._extract_fallback_entities(text, excluded_values=seen_values, max_entities=remaining)
+            for match in fallback_matches:
+                context = self._build_entity_context(match, notes, max_notes=max_notes)
+                contexts.append(context)
+
         return contexts
 
     @staticmethod
@@ -264,6 +268,152 @@ class AutoLearnEntityServices:
             key=lambda item: (-item[0], -int(item[1].get("mentions", 0)), item[1].get("value", "")),
         )
         return [entity for _score, entity in ordered[:max_entities]]
+
+    def _build_entity_context(self, match: dict, notes: list[dict], *, max_notes: int) -> dict:
+        tag = self._entity_tag(match)
+        related_notes = self._find_notes_for_tag(notes, tag, max_notes=max_notes) if tag else []
+        ddg_knowledge = self._fetch_ddg_entity_knowledge(match["value"])
+        return {
+            "type": match["type"],
+            "type_label": self._entity_type_label(match["type"]),
+            "value": match["value"],
+            "mentions": match.get("mentions", 0),
+            "image_url": match.get("image_url"),
+            "tag": tag,
+            "notes": related_notes,
+            "ddg_knowledge": ddg_knowledge,
+        }
+
+    def _extract_fallback_entities(
+        self,
+        text: str,
+        *,
+        excluded_values: set[str],
+        max_entities: int,
+    ) -> list[dict]:
+        if max_entities <= 0:
+            return []
+
+        fallback_entities: list[dict] = []
+        seen_values = set(excluded_values)
+
+        for raw_value, raw_label in self._extract_spacy_candidates(text):
+            entity_type = self._map_fallback_label(raw_label, raw_value)
+            if not entity_type:
+                continue
+            normalized = self._owner._normalize_entity_name(raw_value)
+            if not normalized or normalized in seen_values:
+                continue
+            seen_values.add(normalized)
+            fallback_entities.append(
+                {
+                    "value": raw_value.strip(),
+                    "value_normalized": normalized,
+                    "type": entity_type,
+                    "mentions": 1,
+                    "image_url": None,
+                }
+            )
+            if len(fallback_entities) >= max_entities:
+                return fallback_entities
+
+        for product_name in self._extract_product_candidates(text):
+            normalized = self._owner._normalize_entity_name(product_name)
+            if not normalized or normalized in seen_values:
+                continue
+            seen_values.add(normalized)
+            fallback_entities.append(
+                {
+                    "value": product_name,
+                    "value_normalized": normalized,
+                    "type": "PRODUCT",
+                    "mentions": 1,
+                    "image_url": None,
+                }
+            )
+            if len(fallback_entities) >= max_entities:
+                break
+
+        return fallback_entities
+
+    def _map_fallback_label(self, label: str, value: str) -> str | None:
+        mapped = _FALLBACK_ENTITY_LABELS.get((label or "").upper())
+        if mapped:
+            return mapped
+        if self._looks_like_product_name(value):
+            return "PRODUCT"
+        return None
+
+    @classmethod
+    def _extract_product_candidates(cls, text: str) -> list[str]:
+        tokens = re.findall(r"[A-Za-zÀ-ÿ0-9][A-Za-zÀ-ÿ0-9-]*", text or "")
+        candidates: list[str] = []
+        seen: set[str] = set()
+
+        for start, token in enumerate(tokens):
+            if not cls._is_product_lead_token(token):
+                continue
+            parts = [token]
+            for next_token in tokens[start + 1:start + 4]:
+                if cls._is_product_continuation_token(next_token):
+                    parts.append(next_token)
+                else:
+                    break
+
+            for size in range(len(parts), 0, -1):
+                candidate = " ".join(parts[:size]).strip()
+                if not cls._looks_like_product_name(candidate):
+                    continue
+                normalized = unicodedata.normalize("NFD", candidate.lower())
+                normalized = "".join(c for c in normalized if unicodedata.category(c) != "Mn")
+                if normalized in seen:
+                    continue
+                seen.add(normalized)
+                candidates.append(candidate)
+                break
+
+        return candidates
+
+    @classmethod
+    def _looks_like_product_name(cls, value: str) -> bool:
+        words = [word for word in re.split(r"\s+", (value or "").strip()) if word]
+        if not words or len(words) > 4:
+            return False
+
+        if not cls._is_product_lead_token(words[0]):
+            return False
+
+        if len(words) == 1:
+            return cls._token_has_product_signal(words[0])
+
+        return all(cls._is_product_continuation_token(word) for word in words[1:])
+
+    @classmethod
+    def _is_product_lead_token(cls, token: str) -> bool:
+        if not token:
+            return False
+        return cls._token_has_product_signal(token) or token[0].isupper()
+
+    @classmethod
+    def _is_product_continuation_token(cls, token: str) -> bool:
+        if not token:
+            return False
+        return (
+            cls._token_has_product_signal(token)
+            or token[0].isupper()
+            or token.isupper()
+            or any(char.isdigit() for char in token)
+        )
+
+    @classmethod
+    def _token_has_product_signal(cls, token: str) -> bool:
+        lowered = unicodedata.normalize("NFD", token.lower())
+        lowered = "".join(c for c in lowered if unicodedata.category(c) != "Mn")
+        if lowered in _PRODUCT_HINT_TOKENS:
+            return True
+        has_inner_caps = any(char.isupper() for char in token[1:])
+        has_digits = any(char.isdigit() for char in token)
+        return has_inner_caps or has_digits
 
     def _entity_tag(self, entity: dict) -> str | None:
         entity_type = entity.get("type")

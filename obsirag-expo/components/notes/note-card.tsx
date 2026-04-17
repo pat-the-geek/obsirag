@@ -2,27 +2,28 @@ import { StyleSheet, Text, View } from 'react-native';
 
 import { NoteDetail } from '../../types/domain';
 import { MarkdownNote } from './markdown-note';
-import { StatusPill } from '../ui/status-pill';
+import { TagPill } from '../ui/tag-pill';
 
 type NoteCardProps = {
   note: NoteDetail;
   onOpenNote?: (value: string) => void;
+  onOpenTag?: (value: string) => void;
 };
 
-export function NoteCard({ note, onOpenNote }: NoteCardProps) {
+export function NoteCard({ note, onOpenNote, onOpenTag }: NoteCardProps) {
   return (
     <View style={styles.card}>
       <Text style={styles.title}>{note.title}</Text>
       <View style={styles.tagsRow}>
         {(note.tags || []).map((tag) => (
-          <StatusPill key={tag} label={tag} tone="neutral" />
+          <TagPill key={tag} label={tag} onPress={onOpenTag ? () => onOpenTag(tag) : undefined} />
         ))}
       </View>
       <View style={styles.metaRow}>
         {note.noteType ? <Text style={styles.metaText}>Type: {note.noteType}</Text> : null}
         {note.dateModified ? <Text style={styles.metaText}>Modifiee: {note.dateModified.slice(0, 10)}</Text> : null}
       </View>
-      <MarkdownNote markdown={note.bodyMarkdown} {...(onOpenNote ? { onOpenNote } : {})} />
+      <MarkdownNote markdown={note.bodyMarkdown} {...(onOpenNote ? { onOpenNote } : {})} {...(onOpenTag ? { onOpenTag } : {})} />
     </View>
   );
 }

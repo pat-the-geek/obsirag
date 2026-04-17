@@ -14,6 +14,7 @@ import {
   SystemStatus,
   WebSearchResponse,
 } from '../../types/domain';
+import { NativeModules } from 'react-native';
 import {
   mockConversations,
   mockConversationSummaries,
@@ -148,6 +149,26 @@ export class ObsiRagApi {
     });
   }
 
+  async deleteConversationMessage(conversationId: string, messageId: string): Promise<ConversationDetail> {
+    if (this.config.useMockServer) {
+      const found = mockConversations.find((item) => item.id === conversationId) ?? mockConversations[0];
+      if (!found) {
+        throw new Error('No mock conversations available.');
+      }
+      return {
+        ...found,
+        messages: found.messages.filter((message) => message.id !== messageId),
+      };
+    }
+
+    return this.requestJson<ConversationDetail>(
+      `/api/v1/conversations/${encodeURIComponent(conversationId)}/messages/${encodeURIComponent(messageId)}`,
+      {
+        method: 'DELETE',
+      },
+    );
+  }
+
   async saveConversation(conversationId: string): Promise<SaveConversationResult> {
     if (this.config.useMockServer) {
       return { path: `obsirag/conversations/mock/${conversationId}.md` };
@@ -264,6 +285,15 @@ export class ObsiRagApi {
             },
           ],
         },
+        entityContexts: [
+          {
+            type: 'concept',
+            typeLabel: 'Concept',
+            value: query,
+            mentions: 1,
+            notes: [],
+          },
+        ],
       };
     }
 
@@ -338,21 +368,7 @@ export class ObsiRagApi {
       return message;
     }
 
-    const response = await fetch(`${this.config.backendUrl}/api/v1/conversations/${encodeURIComponent(conversationId)}/messages/stream`, {
-      method: 'POST',
-      headers: {
-        ...this.getAuthHeaders(),
-        'Content-Type': 'application/json',
-        Accept: 'text/event-stream',
-      },
-      body: JSON.stringify({ prompt }),
-    });
-
-    if (!response.ok) {
-      throw await this.toRequestError(response, 'Unable to stream conversation response.');
-    }
-
-    if (!response.body || typeof response.body.getReader !== 'function') {
+    const fallbackToStandardMessage = async () => {
       const fallbackMessage = await this.requestJson<ChatMessage>(
         `/api/v1/conversations/${encodeURIComponent(conversationId)}/messages`,
         {
@@ -363,17 +379,55 @@ export class ObsiRagApi {
       );
       handlers.onComplete?.(fallbackMessage);
       return fallbackMessage;
+    };
+
+    let response: Response;
+    const backendUrl = this.getResolvedBackendUrl();
+    try {
+      response = await fetch(`${backendUrl}/api/v1/conversations/${encodeURIComponent(conversationId)}/messages/stream`, {
+        method: 'POST',
+        headers: {
+          ...this.getAuthHeaders(),
+          'Content-Type': 'application/json',
+          Accept: 'text/event-stream',
+        },
+        body: JSON.stringify({ prompt }),
+      });
+    } catch (error) {
+      return fallbackToStandardMessage();
+    }
+
+    if (!response.ok) {
+      throw await this.toRequestError(response, 'Unable to stream conversation response.');
+    }
+
+    if (!response.body || typeof response.body.getReader !== 'function') {
+      return fallbackToStandardMessage();
     }
 
     const decoder = new TextDecoder();
     const reader = response.body.getReader();
     let buffer = '';
     let completedMessage: ChatMessage | null = null;
+    let sawStreamBytes = false;
 
     while (true) {
-      const { value, done } = await reader.read();
+      let value: Uint8Array | undefined;
+      let done = false;
+      try {
+        ({ value, done } = await reader.read());
+      } catch (error) {
+        if (!sawStreamBytes) {
+          return fallbackToStandardMessage();
+        }
+        throw this.toNetworkError(error, 'Le flux de reponse a ete interrompu avant la fin du message.');
+      }
       if (done) {
         break;
+      }
+
+      if (value && value.length > 0) {
+        sawStreamBytes = true;
       }
 
       buffer += decoder.decode(value, { stream: true });
@@ -428,17 +482,66 @@ export class ObsiRagApi {
   }
 
   private async requestJson<T>(path: string, init: RequestInit = {}): Promise<T> {
-    const response = await fetch(`${this.config.backendUrl}${path}`, {
-      ...init,
-      headers: {
-        ...this.getAuthHeaders(),
-        ...(init.headers ?? {}),
-      },
-    });
+    let response: Response;
+    const backendUrl = this.getResolvedBackendUrl();
+    try {
+      response = await fetch(`${backendUrl}${path}`, {
+        ...init,
+        headers: {
+          ...this.getAuthHeaders(),
+          ...(init.headers ?? {}),
+        },
+      });
+    } catch (error) {
+      throw this.toNetworkError(error, `Connexion au backend impossible pour ${path}.`);
+    }
     if (!response.ok) {
       throw await this.toRequestError(response, `Request failed for ${path}.`);
     }
     return response.json() as Promise<T>;
+  }
+
+  private toNetworkError(error: unknown, fallbackMessage: string): Error {
+    if (error instanceof Error) {
+      const rawMessage = error.message.trim();
+      if (rawMessage && rawMessage.toLowerCase() !== 'load failed') {
+        return new Error(rawMessage);
+      }
+    }
+    return new Error(fallbackMessage);
+  }
+
+  private getResolvedBackendUrl(): string {
+    const rawBackendUrl = this.config.backendUrl.trim().replace(/\/$/, '');
+    if (!rawBackendUrl) {
+      return rawBackendUrl;
+    }
+
+    try {
+      const backendUrl = new URL(rawBackendUrl);
+      if (!this.isLoopbackHost(backendUrl.hostname)) {
+        return rawBackendUrl;
+      }
+
+      const scriptUrl = NativeModules?.SourceCode?.scriptURL;
+      if (typeof scriptUrl !== 'string' || !scriptUrl) {
+        return rawBackendUrl;
+      }
+
+      const bundleUrl = new URL(scriptUrl);
+      if (!bundleUrl.hostname || this.isLoopbackHost(bundleUrl.hostname)) {
+        return rawBackendUrl;
+      }
+
+      backendUrl.hostname = bundleUrl.hostname;
+      return backendUrl.toString().replace(/\/$/, '');
+    } catch {
+      return rawBackendUrl;
+    }
+  }
+
+  private isLoopbackHost(hostname: string): boolean {
+    return hostname === 'localhost' || hostname === '127.0.0.1';
   }
 
   private getAuthHeaders(): Record<string, string> {

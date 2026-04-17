@@ -39,7 +39,7 @@ export default function IndexRoute() {
   }
 
   if (session.isError) {
-    return <Redirect href="/(auth)/login" />;
+    return <Redirect href="/(auth)/server-config" />;
   }
 
   return <Redirect href="/(auth)/server-config" />;

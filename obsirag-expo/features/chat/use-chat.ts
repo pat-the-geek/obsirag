@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useServerConfig } from '../auth/use-server-config';
 import { useAppStore } from '../../store/app-store';
 import { ChatMessage, ConversationDetail, SourceRef } from '../../types/domain';
+import { removeMessageTurn } from './message-turns';
 
 export function useConversations() {
   const { api } = useServerConfig();
@@ -57,12 +58,60 @@ export function useSaveConversation() {
   });
 }
 
+export function useDeleteConversationMessage(conversationId: string) {
+  const { api } = useServerConfig();
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (messageId: string) => {
+      const current = queryClient.getQueryData<ConversationDetail>(['conversation', conversationId]);
+      const targetMessage = current?.messages.find((message) => message.id === messageId);
+
+      if (current && targetMessage?.provenance === 'web') {
+        return {
+          ...current,
+          messages: removeMessageTurn(current.messages, messageId),
+          updatedAt: new Date().toISOString(),
+        };
+      }
+
+      return api.deleteConversationMessage(conversationId, messageId);
+    },
+    onSuccess: async (conversation) => {
+      queryClient.setQueryData(['conversation', conversationId], conversation);
+      await queryClient.invalidateQueries({ queryKey: ['conversations'] });
+    },
+  });
+}
+
 export function useExplicitWebSearch(conversationId: string) {
   const { api } = useServerConfig();
   const queryClient = useQueryClient();
 
   return useMutation({
     mutationFn: async (query: string) => api.webSearch(query),
+    onMutate: async (query) => {
+      const userMessage: ChatMessage = {
+        id: `web-user-${Date.now()}`,
+        role: 'user',
+        content: `🌐 Recherche web : ${query}`,
+        createdAt: new Date().toISOString(),
+      };
+
+      queryClient.setQueryData<ConversationDetail | undefined>(['conversation', conversationId], (current) => {
+        if (!current) {
+          return current;
+        }
+
+        return {
+          ...current,
+          messages: [...current.messages, userMessage],
+          updatedAt: new Date().toISOString(),
+        };
+      });
+
+      return { userMessageId: userMessage.id };
+    },
     onSuccess: (result) => {
       queryClient.setQueryData<ConversationDetail | undefined>(['conversation', conversationId], (current) => {
         if (!current) {
@@ -76,6 +125,7 @@ export function useExplicitWebSearch(conversationId: string) {
           createdAt: new Date().toISOString(),
           provenance: 'web',
           queryOverview: result.queryOverview,
+          entityContexts: result.entityContexts,
           timeline: ['Recherche web explicite'],
         };
 
@@ -83,6 +133,20 @@ export function useExplicitWebSearch(conversationId: string) {
           ...current,
           messages: [...current.messages, assistantMessage],
           updatedAt: new Date().toISOString(),
+        };
+      });
+
+      void queryClient.invalidateQueries({ queryKey: ['conversations'] });
+    },
+    onError: (_error, _query, context) => {
+      queryClient.setQueryData<ConversationDetail | undefined>(['conversation', conversationId], (current) => {
+        if (!current) {
+          return current;
+        }
+
+        return {
+          ...current,
+          messages: current.messages.filter((item) => item.id !== context?.userMessageId),
         };
       });
     },

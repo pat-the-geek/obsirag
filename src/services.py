@@ -111,11 +111,13 @@ class ServiceManager:
     # ---- Gestion du cycle de vie du modèle LLM ----
 
     def signal_ui_active(self) -> None:
-        """Marque l'UI comme active et charge le modèle si nécessaire."""
+        """Marque l'UI comme active.
+
+        Le chargement MLX reste synchrone et piloté par l'appel d'inférence lui-même.
+        Eviter un préchargement en thread ici réduit les crashs natifs observés sur
+        l'API FastAPI au premier prompt utilisateur.
+        """
         self._last_ui_activity = time.monotonic()
-        if not self.llm.is_loaded():
-            logger.info("Activité UI détectée — chargement du modèle MLX…")
-            threading.Thread(target=self.llm.load, daemon=True, name="llm-autoload").start()
 
     def is_ui_active(self) -> bool:
         """Retourne True si une session UI a été active dans la fenêtre d'inactivité."""

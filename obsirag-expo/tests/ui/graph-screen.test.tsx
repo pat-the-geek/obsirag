@@ -8,6 +8,7 @@ const mockSetFocusedNode = jest.fn();
 const mockGraphRefetch = jest.fn();
 const mockSubgraphRefetch = jest.fn();
 const mockInvalidateQueries = jest.fn();
+let mockGraphSearchParams: { tag?: string } = {};
 
 jest.mock('@tanstack/react-query', () => ({
   useQueryClient: () => ({
@@ -17,6 +18,27 @@ jest.mock('@tanstack/react-query', () => ({
 
 jest.mock('expo-router', () => ({
   useRouter: () => ({ push: mockPush }),
+  useLocalSearchParams: () => mockGraphSearchParams,
+}));
+
+jest.mock('../../components/graph/knowledge-graph', () => ({
+  KnowledgeGraph: ({ data, onSelectNode, zoom }: { data: { nodes: Array<{ id: string; label: string }> }; onSelectNode?: (value: string) => void; zoom: number }) => {
+    const ReactLocal = require('react');
+    const { Pressable: PressableLocal, Text: TextLocal, View: ViewLocal } = require('react-native');
+
+    return ReactLocal.createElement(
+      ViewLocal,
+      null,
+      ReactLocal.createElement(TextLocal, null, `${zoom.toFixed(1)} x`),
+      ...data.nodes.map((node) =>
+        ReactLocal.createElement(
+          PressableLocal,
+          { key: node.id, testID: `graph-node-${node.id}`, onPress: () => onSelectNode?.(node.id) },
+          ReactLocal.createElement(TextLocal, null, node.label),
+        ),
+      ),
+    );
+  },
 }));
 
 jest.mock('../../features/auth/use-server-config', () => ({
@@ -157,6 +179,7 @@ function findPressableByLabel(tree: renderer.ReactTestRenderer, label: string) {
 
 describe('GraphScreen', () => {
   beforeEach(() => {
+    mockGraphSearchParams = {};
     mockDetectNoteSynapses.mockReset();
     mockDetectNoteSynapses.mockResolvedValue({
       sourceNotePath: 'note-2',
@@ -249,5 +272,17 @@ describe('GraphScreen', () => {
     });
 
     expect(mockPush).toHaveBeenCalled();
+  });
+
+  it('initializes the tag filter from route params', () => {
+    mockGraphSearchParams = { tag: 'nasa' };
+
+    const tree = renderer.create(<GraphScreen />);
+    const texts = tree.root.findAllByType(Text).flatMap((node) => {
+      const value = node.props.children;
+      return Array.isArray(value) ? value : [value];
+    }).filter((value): value is string | number => typeof value === 'string' || typeof value === 'number').map((value) => String(value));
+
+    expect(texts).toContain('#nasa');
   });
 });

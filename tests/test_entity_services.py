@@ -181,3 +181,18 @@ class TestEntityServices:
                 contexts = service.lookup_wuddai_entity_contexts("Qui est Ada Lovelace ?")
 
         assert [context["value"] for context in contexts] == ["Ada Lovelace"]
+
+    def test_lookup_wuddai_entity_contexts_adds_product_fallback_when_missing_from_wuddai(self, tmp_settings):
+        owner = _make_owner(tmp_settings)
+        owner._load_wuddai_entities.return_value = []
+        owner._chroma = MagicMock()
+        owner._chroma.list_notes_sorted_by_title.return_value = []
+        service = AutoLearnEntityServices(owner)
+
+        with patch.object(service, "_extract_spacy_candidates", return_value=[]):
+            with patch.object(service, "_fetch_ddg_entity_knowledge", return_value={}):
+                contexts = service.lookup_wuddai_entity_contexts("Compare le MacBook Neo au MacBook Air")
+
+        assert [context["value"] for context in contexts] == ["MacBook Neo", "MacBook Air"]
+        assert [context["type"] for context in contexts] == ["PRODUCT", "PRODUCT"]
+        assert contexts[0]["tag"] == "produit/macbook-neo"

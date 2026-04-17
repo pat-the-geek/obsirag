@@ -87,6 +87,7 @@ class WebSearchRequestModel(BaseModel):
 class WebSearchResponseModel(BaseModel):
     content: str
     queryOverview: QueryOverviewModel
+    entityContexts: list[EntityContextModel] = Field(default_factory=list)
     provenance: Literal["web"] = "web"
 
 
@@ -103,6 +104,7 @@ class DdgKnowledgeModel(BaseModel):
     answer: str | None = None
     answerType: str | None = None
     definition: str | None = None
+    infobox: list[dict[str, str]] = Field(default_factory=list)
     relatedTopics: list[dict[str, str]] = Field(default_factory=list)
 
 

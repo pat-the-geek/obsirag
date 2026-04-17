@@ -23,7 +23,11 @@ export default function NoteScreen() {
 
   return (
     <Screen refreshing={isRefetching} onRefresh={refetch}>
-      <NoteCard note={data} onOpenNote={(value) => router.push(`/(tabs)/note/${encodeURIComponent(value)}`)} />
+      <NoteCard
+        note={data}
+        onOpenNote={(value) => router.push(`/(tabs)/note/${encodeURIComponent(value)}`)}
+        onOpenTag={(value) => router.push(`/(tabs)/graph?tag=${encodeURIComponent(value)}`)}
+      />
       <SectionCard title="Retrolinks">
         {data.backlinks.map((item) => (
           <Pressable key={item.filePath} style={styles.linkCard} onPress={() => router.push(`/(tabs)/note/${encodeURIComponent(item.filePath)}`)}>

@@ -23,7 +23,7 @@ export default function InsightDetailScreen() {
 
   return (
     <Screen refreshing={isRefetching} onRefresh={refetch}>
-      <NoteCard note={data} />
+      <NoteCard note={data} onOpenTag={(value) => router.push(`/(tabs)/graph?tag=${encodeURIComponent(value)}`)} />
       <SectionCard title="Navigation" subtitle="Ouvre la note avec la route standard du visualiseur Expo.">
         <Pressable style={styles.button} onPress={() => router.push(`/(tabs)/note/${encodeURIComponent(data.filePath)}`)}>
           <Text style={styles.buttonText}>Ouvrir comme note</Text>

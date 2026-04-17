@@ -5,10 +5,14 @@ streamlit>=1.35.0
 chromadb==1.5.6
 
 # Embeddings locaux multilingues
-sentence-transformers>=3.1.0
+# Sentence-Transformers 5.x reste compatible avec le backend d'embeddings local
+# tout en évitant le backtracking du resolver avec MLX-LM.
+sentence-transformers>=5.4.0
 
-# Pin transformers < 4.52 — bug NameError: 'nn' not defined introduit dans 4.52.0
-transformers>=4.41.0,<4.52.0
+# MLX-LM >= 0.31 requiert Transformers 5.x.
+# On borne la major pour garder un environnement reproductible sans le conflit
+# historique du pin <4.52 devenu incompatible avec mlx-lm.
+transformers>=5.0.0,<6.0.0
 
 # Dépendance du backend d'embeddings OpenAI-compatible utilisé quand Ollama est activé pour les embeddings
 openai>=1.50.0

@@ -787,7 +787,7 @@ class AutoLearner:
         self,
         text: str,
         *,
-        max_entities: int = 3,
+        max_entities: int = 10,
         max_notes: int = 3,
     ) -> list[dict]:
         return self._entity_services.lookup_wuddai_entity_contexts(
