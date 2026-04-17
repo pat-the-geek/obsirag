@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, Alert, KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -56,9 +56,24 @@ export default function ConversationDetailScreen() {
     [latestUserMessage?.content],
   );
   const aggregatedEntityContexts = useMemo(() => aggregateConversationEntityContexts(messages), [messages]);
+  const [generationActivityFrame, setGenerationActivityFrame] = useState(0);
   const showEntityAside = Platform.OS === 'web' && width >= 1180 && aggregatedEntityContexts.length > 0;
   const showEntityCompact = !showEntityAside && aggregatedEntityContexts.length > 0;
   const asideEntityMaxHeight = Math.max(360, height - Math.max(24, insets.top + 18) - 18);
+  const isGenerationStepActive = streamMessage.isPending && activeProgressSteps.some((step) => isGenerationStep(step));
+
+  useEffect(() => {
+    if (!isGenerationStepActive) {
+      setGenerationActivityFrame(0);
+      return undefined;
+    }
+
+    const timer = setInterval(() => {
+      setGenerationActivityFrame((current) => (current + 1) % GENERATION_ACTIVITY_FRAMES.length);
+    }, 220);
+
+    return () => clearInterval(timer);
+  }, [isGenerationStepActive]);
 
   const confirmDeleteMessage = (messageId: string) => {
     const executeDelete = () =>
@@ -145,7 +160,7 @@ export default function ConversationDetailScreen() {
                     key={message.id}
                     message={message}
                     highlightEntities={aggregatedEntityContexts}
-                    webSearchSuggestion={buildWebSearchSuggestion(previousUserQuery, messages.slice(0, index), aggregatedEntityContexts)}
+                    webSearchSuggestion={buildMessageWebSearchSuggestion(message, previousUserQuery, messages.slice(0, index), aggregatedEntityContexts)}
                     onSuggestWebSearch={(query) => explicitWebSearch.mutate(query)}
                     onOpenNote={(notePath) => router.push(`/(tabs)/note/${encodeURIComponent(notePath)}`)}
                     onOpenTag={(tag) => router.push(`/(tabs)/graph?tag=${encodeURIComponent(tag)}`)}
@@ -166,10 +181,16 @@ export default function ConversationDetailScreen() {
                   <View style={styles.progressList}>
                     {activeProgressSteps.map((step, index) => {
                       const isLast = index === activeProgressSteps.length - 1;
+                      const showGenerationActivity = isLast && isGenerationStep(step) && isGenerationStepActive;
                       return (
                         <View key={`${step}-${index}`} style={styles.progressItem}>
                           <View style={[styles.progressDot, isLast ? styles.progressDotActive : null]} />
-                          <Text style={[styles.progressText, isLast ? styles.progressTextActive : null]}>{step}</Text>
+                          <View style={styles.progressTextRow}>
+                            <Text style={[styles.progressText, isLast ? styles.progressTextActive : null]}>{step}</Text>
+                            <Text style={[styles.progressActivityGlyph, showGenerationActivity ? styles.progressActivityGlyphActive : null]}>
+                              {showGenerationActivity ? GENERATION_ACTIVITY_FRAMES[generationActivityFrame] : ' '}
+                            </Text>
+                          </View>
                         </View>
                       );
                     })}
@@ -216,6 +237,46 @@ export default function ConversationDetailScreen() {
       </KeyboardAvoidingView>
     </Screen>
   );
+}
+
+function buildMessageWebSearchSuggestion(
+  message: ChatMessage,
+  userQuery: string | undefined,
+  previousMessages: ChatMessage[],
+  fallbackEntities: EntityContext[],
+) {
+  const contextualSuggestion = buildWebSearchSuggestion(userQuery, previousMessages, fallbackEntities);
+  if (contextualSuggestion) {
+    return contextualSuggestion;
+  }
+
+  const queryOverviewSearch = message.queryOverview?.searchQuery?.trim();
+  if (queryOverviewSearch) {
+    return queryOverviewSearch;
+  }
+
+  const queryOverviewQuery = message.queryOverview?.query?.trim();
+  if (queryOverviewQuery) {
+    const derivedFromOverview = buildWebSearchSuggestion(queryOverviewQuery, previousMessages, fallbackEntities);
+    if (derivedFromOverview) {
+      return derivedFromOverview;
+    }
+    return queryOverviewQuery;
+  }
+
+  const messageEntities = [...(message.entityContexts ?? []), ...fallbackEntities];
+  const preferredSubject = selectPreferredSubject(messageEntities);
+  if (preferredSubject) {
+    const enrichmentTerms = defaultEnrichmentTerms(`Parle moi de ${preferredSubject.value}`, preferredSubject);
+    return [preferredSubject.value, ...enrichmentTerms].filter(Boolean).join(' ');
+  }
+
+  const primarySourceTitle = message.primarySource?.noteTitle?.trim();
+  if (primarySourceTitle) {
+    return primarySourceTitle;
+  }
+
+  return undefined;
 }
 
 const styles = StyleSheet.create({
@@ -343,6 +404,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 8,
   },
+  progressTextRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    minWidth: 0,
+  },
   progressDot: {
     width: 8,
     height: 8,
@@ -360,6 +427,16 @@ const styles = StyleSheet.create({
     color: '#f1f1f1',
     fontWeight: '600',
   },
+  progressActivityGlyph: {
+    width: 10,
+    color: 'transparent',
+    fontSize: 13,
+    fontWeight: '700',
+    textAlign: 'center',
+  },
+  progressActivityGlyphActive: {
+    color: '#d9c19a',
+  },
   errorText: {
     color: '#f0b36a',
     fontSize: 13,
@@ -370,12 +447,15 @@ const styles = StyleSheet.create({
   },
 });
 
+const GENERATION_ACTIVITY_FRAMES = ['-', 'x', 'o', '!'] as const;
+
 const WEB_SEARCH_STOPWORDS = new Set([
   'quel', 'quelle', 'quels', 'quelles', 'est', 'sont', 'le', 'la', 'les', 'de', 'du', 'des', 'un', 'une', 'au', 'aux',
   'dans', 'sur', 'pour', 'avec', 'sans', 'et', 'ou', 'où', 'que', 'quoi', 'qui', 'comment', 'pourquoi', 'combien',
   'son', 'sa', 'ses', 'leur', 'leurs', 'il', 'elle', 'ils', 'elles', 'lui', 'en', 'a', 't', 'tu', 'je', 'j', 'nous', 'vous',
   'me', 'moi', 'te', 'toi', 'ce', 'cet', 'cette', 'ces', 'cela', 'ca', 'ça', 'd', 'l', 'y', 'on', 'se', 'si', 'plus', 'moins',
   'parle', 'parler', 'dis', 'dire', 'explique', 'expliquer', 'presente', 'présente', 'presenter', 'présenter',
+  'recherche', 'rechercher', 'web', 'information', 'informations', 'infos',
 ]);
 
 const WEB_SEARCH_ASPECT_MAP: Record<string, string> = {
@@ -409,6 +489,13 @@ const WEB_SEARCH_ASPECT_MAP: Record<string, string> = {
 
 const WEB_SEARCH_DYNAMIC_TERMS = new Set(['salary', 'revenue', 'net worth', 'stock', 'price', 'age']);
 const WEB_SEARCH_GENERIC_INTRO_RE = /^(?:que\s+sais[- ]?tu\s+de|parle(?:[- ]?moi)?\s+de|dis(?:[- ]?moi)?\s+.+?\s+de|explique(?:[- ]?moi)?|presente(?:[- ]?moi)?|présente(?:[- ]?moi)?)/i;
+const WEB_SEARCH_EXPLICIT_SUBJECT_PATTERNS = [
+  /^(?:recherche(?:r)?\s+sur\s+le\s+web(?:\s+des)?\s+informations?\s+sur)\s+(.+)$/i,
+  /^(?:recherche(?:r)?(?:\s+des)?\s+informations?\s+sur)\s+(.+)$/i,
+  /^(?:parle(?:[- ]?moi)?\s+de)\s+(.+)$/i,
+  /^(?:que\s+sais[- ]?tu\s+de)\s+(.+)$/i,
+  /^(?:présente(?:[- ]?moi)?|presente(?:[- ]?moi)?|explique(?:[- ]?moi)?)\s+(.+)$/i,
+];
 
 const WEB_SEARCH_DEFAULT_ENRICHMENT_TERMS: Record<string, string[]> = {
   person: ['biography', 'career', 'latest'],
@@ -426,7 +513,8 @@ function buildWebSearchSuggestion(userQuery: string | undefined, previousMessage
 
   const recentEntities = collectRecentEntities(previousMessages, fallbackEntities);
   const normalizedQuestion = userQuery.trim().replace(/\s+/g, ' ');
-  const preferredSubject = selectPreferredSubject(recentEntities);
+  const explicitSubject = resolveExplicitSubject(normalizedQuestion, recentEntities);
+  const preferredSubject = explicitSubject ?? selectPreferredSubject(recentEntities);
   const subjectTerms = preferredSubject ? [preferredSubject.value] : [];
 
   const aspectTerms = extractWebAspectTerms(normalizedQuestion, preferredSubject);
@@ -443,6 +531,64 @@ function buildWebSearchSuggestion(userQuery: string | undefined, previousMessage
   }
 
   return dedupedParts.join(' ');
+}
+
+function isGenerationStep(step: string) {
+  const normalized = step.trim().toLocaleLowerCase('fr');
+  return normalized.includes('generation de la reponse') || normalized.includes('réponse générée') || normalized.includes('reponse generee');
+}
+
+function resolveExplicitSubject(question: string, entities: EntityContext[]) {
+  const explicitSubject = extractExplicitSubject(question);
+  if (!explicitSubject) {
+    return undefined;
+  }
+
+  const normalizedExplicit = normalizeSearchText(explicitSubject);
+  const matchedEntity = entities.find((entity) => {
+    const normalizedEntity = normalizeSearchText(entity.value);
+    return normalizedEntity === normalizedExplicit || normalizedEntity.includes(normalizedExplicit) || normalizedExplicit.includes(normalizedEntity);
+  });
+
+  if (matchedEntity) {
+    return {
+      ...matchedEntity,
+      value: explicitSubject,
+    };
+  }
+
+  return {
+    type: 'concept',
+    typeLabel: 'Sujet',
+    value: explicitSubject,
+    notes: [],
+  };
+}
+
+function extractExplicitSubject(question: string) {
+  const normalizedQuestion = question.trim();
+  for (const pattern of WEB_SEARCH_EXPLICIT_SUBJECT_PATTERNS) {
+    const match = normalizedQuestion.match(pattern);
+    const candidate = match?.[1]?.trim();
+    if (candidate) {
+      return cleanExplicitSubject(candidate);
+    }
+  }
+  return undefined;
+}
+
+function cleanExplicitSubject(value: string) {
+  return value.replace(/[?.!,;:]+$/g, '').trim();
+}
+
+function normalizeSearchText(value: string) {
+  return value
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLocaleLowerCase('fr')
+    .replace(/[^a-z0-9\s-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 function collectRecentEntities(previousMessages: ChatMessage[], fallbackEntities: EntityContext[]) {

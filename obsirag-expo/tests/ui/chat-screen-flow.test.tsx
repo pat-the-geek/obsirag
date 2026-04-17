@@ -119,6 +119,19 @@ function findPressableByLabel(tree: renderer.ReactTestRenderer, label: string) {
   })[0];
 }
 
+function findPressablesByLabel(tree: renderer.ReactTestRenderer, label: string) {
+  return tree.root.findAll((node) => {
+    if (typeof node.props.onPress !== 'function') {
+      return false;
+    }
+    const texts = node.findAllByType(Text).flatMap((textNode) => {
+      const value = textNode.props.children;
+      return Array.isArray(value) ? value : [value];
+    });
+    return texts.includes(label);
+  });
+}
+
 function textTreeContains(tree: renderer.ReactTestRenderer, expected: string) {
   return tree.root.findAllByType(Text).some((node) => {
     const value = node.props.children;
@@ -190,10 +203,10 @@ describe('ConversationDetailScreen', () => {
     mockStreamMessageState = { mutate: mockStreamMessageMutate, isPending: false, error: null };
   });
 
-  it('renders save in the composer area and removes the web search action', () => {
+  it('renders save in the composer area and keeps the per-response web search action', () => {
     const tree = renderer.create(<ConversationDetailScreen />);
 
-    expect(textTreeContains(tree, 'Recherche web')).toBe(false);
+    expect(textTreeContains(tree, 'Rechercher sur le web')).toBe(true);
     expect(tree.root.findByProps({ testID: 'message-composer-secondary-action' })).toBeTruthy();
 
     act(() => {
@@ -267,7 +280,7 @@ describe('ConversationDetailScreen', () => {
     const tree = renderer.create(<ConversationDetailScreen />);
 
     act(() => {
-      findPressableByLabel(tree, 'Recherche sur le web')?.props.onPress();
+      findPressablesByLabel(tree, 'Rechercher sur le web').at(-1)?.props.onPress();
     });
 
     expect(mockExplicitWebSearchMutate).toHaveBeenCalledWith(`Elon Musk salary ${new Date().getFullYear()}`);
@@ -309,7 +322,7 @@ describe('ConversationDetailScreen', () => {
     const tree = renderer.create(<ConversationDetailScreen />);
 
     act(() => {
-      findPressableByLabel(tree, 'Recherche sur le web')?.props.onPress();
+      findPressablesByLabel(tree, 'Rechercher sur le web').at(-1)?.props.onPress();
     });
 
     expect(mockExplicitWebSearchMutate).toHaveBeenCalledWith('SpaceX company overview latest');
@@ -352,10 +365,91 @@ describe('ConversationDetailScreen', () => {
     const tree = renderer.create(<ConversationDetailScreen />);
 
     act(() => {
-      findPressableByLabel(tree, 'Recherche sur le web')?.props.onPress();
+      findPressablesByLabel(tree, 'Rechercher sur le web').at(-1)?.props.onPress();
     });
 
     expect(mockExplicitWebSearchMutate).toHaveBeenCalledWith(`Elon Musk age ${new Date().getFullYear()}`);
+  });
+
+  it('offers web search from a regular assistant response too', () => {
+    mockConversationData = {
+      id: 'conv-1',
+      title: 'Conversation test',
+      updatedAt: '2026-04-16T12:00:00Z',
+      draft: '',
+      messages: [
+        {
+          id: 'user-1',
+          role: 'user',
+          content: 'Parle moi de SpaceX',
+          createdAt: '2026-04-16T12:00:00Z',
+        },
+        {
+          id: 'assistant-1',
+          role: 'assistant',
+          content: 'SpaceX est une entreprise spatiale fondee par Elon Musk.',
+          createdAt: '2026-04-16T12:00:01Z',
+          provenance: 'vault',
+          entityContexts: [
+            { value: 'SpaceX', type: 'organization', typeLabel: 'Organisation', notes: [] },
+          ],
+        },
+      ],
+    };
+
+    const tree = renderer.create(<ConversationDetailScreen />);
+
+    act(() => {
+      findPressablesByLabel(tree, 'Rechercher sur le web').at(-1)?.props.onPress();
+    });
+
+    expect(mockExplicitWebSearchMutate).toHaveBeenCalledWith('SpaceX company overview latest');
+  });
+
+  it('prioritizes the explicit subject from the user query over previous detected entities', () => {
+    mockConversationData = {
+      id: 'conv-1',
+      title: 'Conversation test',
+      updatedAt: '2026-04-16T12:00:00Z',
+      draft: '',
+      messages: [
+        {
+          id: 'assistant-context',
+          role: 'assistant',
+          content: 'Alpha Impulsion partage certains projets suivis aussi par Alphabet.',
+          createdAt: '2026-04-16T11:59:00Z',
+          provenance: 'vault',
+          entityContexts: [
+            { value: 'Alphabet', type: 'organization', typeLabel: 'Organisation', mentions: 19, notes: [] },
+          ],
+          primarySource: {
+            filePath: 'Space/Alpha-Impulsion.md',
+            noteTitle: "Alpha Impulsion révolutionne l'espace",
+          },
+        },
+        {
+          id: 'user-1',
+          role: 'user',
+          content: 'recherche sur le web des informations sur alpha impulsion',
+          createdAt: '2026-04-16T12:00:00Z',
+        },
+        {
+          id: 'assistant-1',
+          role: 'assistant',
+          content: 'Voici une réponse locale sur Alpha Impulsion.',
+          createdAt: '2026-04-16T12:00:01Z',
+          provenance: 'vault',
+        },
+      ],
+    };
+
+    const tree = renderer.create(<ConversationDetailScreen />);
+
+    act(() => {
+      findPressablesByLabel(tree, 'Rechercher sur le web').at(-1)?.props.onPress();
+    });
+
+    expect(mockExplicitWebSearchMutate).toHaveBeenCalledWith('alpha impulsion');
   });
 
   it('keeps the source access available from the message bubble', () => {

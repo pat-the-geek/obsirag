@@ -632,3 +632,84 @@ def test_explicit_web_search_returns_overview_and_entity_contexts(tmp_settings):
     assert payload["queryOverview"]["sources"][0]["domain"] == "example.com"
     assert payload["queryOverview"]["sources"][0]["publishedAt"] == "2026-04-16"
     assert payload["entityContexts"][0]["value"] == "Ada Lovelace"
+
+
+def test_create_message_enriches_entity_contexts_with_line_number_and_relation_explanation(tmp_path: Path, tmp_settings):
+    store = ApiConversationStore(tmp_path / "api" / "conversations.json")
+    service_manager = _StubServiceManager()
+    source_note = tmp_settings.vault / "Space" / "Alpha Impulsion.md"
+    source_note.parent.mkdir(parents=True, exist_ok=True)
+    source_note.write_text(
+        "---\n"
+        "title: Alpha Impulsion\n"
+        "---\n"
+        "# Alpha Impulsion\n\n"
+        "Alpha Impulsion développe des projets spatiaux ambitieux.\n"
+        "Alphabet s'intéresse également aux mêmes projets de propulsion et d'observation orbitale.\n",
+        encoding="utf-8",
+    )
+    service_manager.learner.lookup_wuddai_entity_contexts.return_value = [
+        {
+            "type": "ORG",
+            "type_label": "Organisation",
+            "value": "Alphabet",
+            "mentions": 19,
+            "notes": [
+                {
+                    "title": "Alpha Impulsion",
+                    "file_path": "Space/Alpha Impulsion.md",
+                }
+            ],
+        }
+    ]
+    service_manager.llm.chat.return_value = json.dumps(
+        {
+            "items": [
+                {
+                    "entity": "Alphabet",
+                    "reason": "Alphabet est cité dans la source car elle suit aussi les projets spatiaux associés à Alpha Impulsion.",
+                }
+            ]
+        },
+        ensure_ascii=False,
+    )
+
+    with (
+        patch("src.api.app.settings", tmp_settings),
+        patch("src.api.app.conversation_store", store),
+        patch("src.api.app.get_service_manager", return_value=service_manager),
+        patch(
+            "src.api.app.subprocess.run",
+            return_value=subprocess.CompletedProcess(
+                args=["python", "-m", "src.api.chat_worker"],
+                returncode=0,
+                stdout=json.dumps(
+                    {
+                        "answer": "Alpha Impulsion est présente dans le coffre avec plusieurs liens sectoriels.",
+                        "sources": [
+                            {
+                                "metadata": {
+                                    "file_path": "Space/Alpha Impulsion.md",
+                                    "note_title": "Alpha Impulsion",
+                                    "is_primary": True,
+                                },
+                                "score": 0.95,
+                            }
+                        ],
+                    },
+                    ensure_ascii=False,
+                ),
+                stderr="",
+            ),
+        ),
+    ):
+        client = TestClient(app)
+        response = client.post("/api/v1/conversations/conv-entity-enriched/messages", json={"prompt": "Parle-moi de Alpha Impulsion"})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["entityContexts"][0]["value"] == "Alphabet"
+    assert payload["entityContexts"][0]["lineNumber"] == 7
+    assert payload["entityContexts"][0]["relationExplanation"] == (
+        "Alphabet est cité dans la source car elle suit aussi les projets spatiaux associés à Alpha Impulsion."
+    )

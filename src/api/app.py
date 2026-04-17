@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import queue
+import re
 import sqlite3
 import subprocess
 import sys
@@ -304,7 +305,16 @@ async def create_message(
     answer = str(result.get("answer") or "")
     sources = list(result.get("sources") or [])
     sentinel = is_not_in_vault(answer)
-    entity_contexts = _lookup_conversation_entity_contexts(payload.prompt, answer, svc)
+    source_models = [_source_from_chunk(chunk) for chunk in sources]
+    primary_source = next((item for item in source_models if item.isPrimary), None)
+    entity_contexts = _enrich_entity_contexts(
+        user_text=payload.prompt,
+        answer=answer,
+        entity_contexts=_lookup_conversation_entity_contexts(payload.prompt, answer, svc),
+        sources=source_models,
+        primary_source=primary_source,
+        svc=svc,
+    )
     query_overview = _lookup_query_overview(payload.prompt, svc) if sentinel else {}
     assistant_message = _build_assistant_message(
         answer=answer,
@@ -369,6 +379,8 @@ async def stream_message(
         answer = str(result.get("answer") or "")
         sources = list(result.get("sources") or [])
         sentinel = is_not_in_vault(answer)
+        source_models = [_source_from_chunk(chunk) for chunk in sources]
+        primary_source = next((item for item in source_models if item.isPrimary), None)
 
         _append_timeline_step(timeline, "Réponse générée par le worker API")
         yield _sse_event("retrieval_status", {"phase": "generation", "message": "Réponse générée par le worker API"})
@@ -384,14 +396,20 @@ async def stream_message(
             _append_timeline_step(timeline, status_message)
             yield _sse_event("retrieval_status", {"phase": phase, "message": status_message})
             if phase == "entities":
-                entity_contexts = _lookup_conversation_entity_contexts(payload.prompt, answer, svc)
+                entity_contexts = _enrich_entity_contexts(
+                    user_text=payload.prompt,
+                    answer=answer,
+                    entity_contexts=_lookup_conversation_entity_contexts(payload.prompt, answer, svc),
+                    sources=source_models,
+                    primary_source=primary_source,
+                    svc=svc,
+                )
             elif phase == "web":
                 query_overview = _lookup_query_overview(payload.prompt, svc)
 
         for token in _iter_answer_tokens(answer):
             yield _sse_event("token", {"token": token})
 
-        source_models = [_source_from_chunk(chunk) for chunk in sources]
         yield _sse_event("sources_ready", {"sources": [item.model_dump(mode="json") for item in source_models]})
 
         assistant_message = _build_assistant_message(
@@ -647,7 +665,14 @@ def explicit_web_search(
         sources=[_web_source_model(item) for item in (overview.get("sources") or []) if item.get("href")],
     )
     content = _format_query_overview_markdown(overview)
-    entity_contexts = _lookup_conversation_entity_contexts(payload.query, content, svc)
+    entity_contexts = _enrich_entity_contexts(
+        user_text=payload.query,
+        answer=content,
+        entity_contexts=_lookup_conversation_entity_contexts(payload.query, content, svc),
+        sources=[],
+        primary_source=None,
+        svc=svc,
+    )
     return WebSearchResponseModel(
         content=content,
         queryOverview=query_overview,
@@ -777,11 +802,213 @@ def _entity_context_model(value: dict[str, Any]) -> EntityContextModel:
         typeLabel=str(value.get("type_label") or value.get("type") or "Entité"),
         value=str(value.get("value") or "Entité"),
         mentions=int(value.get("mentions") or 0) or None,
+        lineNumber=int(value.get("line_number") or 0) or None,
+        relationExplanation=str(value.get("relation_explanation") or "").strip() or None,
         imageUrl=str(value.get("image_url") or "") or None,
         tag=str(value.get("tag") or "") or None,
         notes=[_related_note_from_note(item) for item in (value.get("notes") or []) if item.get("file_path")],
         ddgKnowledge=_ddg_knowledge_model(value.get("ddg_knowledge") or {}),
     )
+
+
+def _enrich_entity_contexts(
+    *,
+    user_text: str,
+    answer: str,
+    entity_contexts: list[dict[str, Any]] | None,
+    sources: list[SourceRefModel],
+    primary_source: SourceRefModel | None,
+    svc,
+) -> list[dict[str, Any]]:
+    enriched: list[dict[str, Any]] = []
+    evidence_rows: list[dict[str, Any]] = []
+
+    for context in entity_contexts or []:
+        value = str(context.get("value") or "").strip()
+        if not value:
+            continue
+
+        clone = dict(context)
+        evidence = _find_entity_source_evidence(clone, sources=sources, primary_source=primary_source)
+        if evidence.get("line_number"):
+            clone["line_number"] = evidence["line_number"]
+        enriched.append(clone)
+        evidence_rows.append(
+            {
+                "entity": value,
+                "type": str(context.get("type_label") or context.get("type") or "Entité"),
+                "source_title": evidence.get("source_title") or (primary_source.noteTitle if primary_source else ""),
+                "source_path": evidence.get("source_path") or (primary_source.filePath if primary_source else ""),
+                "line_number": evidence.get("line_number"),
+                "snippet": evidence.get("snippet") or "",
+            }
+        )
+
+    explanations = _generate_entity_relation_explanations(user_text, answer, evidence_rows, svc)
+    for context, evidence in zip(enriched, evidence_rows, strict=False):
+        context["relation_explanation"] = explanations.get(str(context.get("value") or "")) or _fallback_entity_relation_explanation(evidence)
+
+    return enriched
+
+
+def _find_entity_source_evidence(
+    context: dict[str, Any],
+    *,
+    sources: list[SourceRefModel],
+    primary_source: SourceRefModel | None,
+) -> dict[str, Any]:
+    entity_name = str(context.get("value") or "").strip()
+    if not entity_name:
+        return {}
+
+    candidate_paths: list[tuple[str, str]] = []
+    source_paths = {normalize_vault_relative_path(item.filePath): item for item in sources if item.filePath}
+    note_candidates = [item for item in (context.get("notes") or []) if item.get("file_path") or item.get("filePath")]
+
+    for note in note_candidates:
+        normalized = normalize_vault_relative_path(str(note.get("file_path") or note.get("filePath") or ""), vault_root=settings.vault)
+        if normalized in source_paths:
+            source = source_paths[normalized]
+            candidate_paths.append((source.filePath, source.noteTitle))
+
+    if primary_source and primary_source.filePath:
+        candidate_paths.append((primary_source.filePath, primary_source.noteTitle))
+
+    for source in sources:
+        candidate_paths.append((source.filePath, source.noteTitle))
+
+    for note in note_candidates:
+        note_path = str(note.get("file_path") or note.get("filePath") or "")
+        candidate_paths.append((note_path, str(note.get("title") or note_path or "")))
+
+    seen_paths: set[str] = set()
+    for raw_path, raw_title in candidate_paths:
+        normalized = normalize_vault_relative_path(raw_path, vault_root=settings.vault)
+        if not normalized or normalized in seen_paths:
+            continue
+        seen_paths.add(normalized)
+        resolved = resolve_vault_path(normalized, vault_root=settings.vault)
+        content = read_text_file(resolved, default="", errors="replace")
+        if not content:
+            continue
+        match = _find_entity_line_match(content, entity_name)
+        if not match:
+            continue
+        return {
+            "source_path": normalized,
+            "source_title": raw_title or Path(normalized).stem,
+            "line_number": int(match.get("line") or 0) or None,
+            "snippet": str(match.get("snippet") or "").strip(),
+        }
+
+    return {}
+
+
+def _find_entity_line_match(content: str, entity_name: str) -> dict[str, Any] | None:
+    search = entity_name.strip().lower()
+    if not search:
+        return None
+
+    for line_number, raw_line in enumerate(content.splitlines(), start=1):
+        if search not in raw_line.lower():
+            continue
+        return {
+            "line": line_number,
+            "snippet": raw_line.strip(),
+        }
+
+    return None
+
+
+def _generate_entity_relation_explanations(
+    user_text: str,
+    answer: str,
+    evidence_rows: list[dict[str, Any]],
+    svc,
+) -> dict[str, str]:
+    if not evidence_rows:
+        return {}
+
+    llm = getattr(svc, "llm", None)
+    chat = getattr(llm, "chat", None)
+    if not callable(chat):
+        return {}
+
+    prompt_lines = [
+        "Tu expliques pourquoi chaque entité détectée est liée au sujet demandé.",
+        "Réponds uniquement en JSON valide au format {\"items\":[{\"entity\":\"...\",\"reason\":\"...\"}]}",
+        "Chaque explication doit être une phrase courte, factuelle, en français.",
+        "N'invente rien et appuie-toi seulement sur la question, la réponse et l'extrait de source.",
+        "",
+        f"Question: {user_text.strip()}",
+        f"Réponse: {answer.strip()[:800]}",
+        "",
+        "Entités:",
+    ]
+
+    for index, row in enumerate(evidence_rows, start=1):
+        prompt_lines.extend(
+            [
+                f"{index}. entity={row['entity']}",
+                f"   type={row.get('type') or 'Entité'}",
+                f"   source_title={row.get('source_title') or '-'}",
+                f"   source_path={row.get('source_path') or '-'}",
+                f"   line_number={row.get('line_number') or '-'}",
+                f"   snippet={row.get('snippet') or '-'}",
+            ]
+        )
+
+    try:
+        raw = chat(
+            [
+                {"role": "system", "content": "Tu produis des explications relationnelles d'entités, précises et très concises."},
+                {"role": "user", "content": "\n".join(prompt_lines)},
+            ],
+            temperature=0.0,
+            max_tokens=500,
+            operation="entity_relation_explanations",
+        )
+    except Exception:
+        return {}
+
+    if not isinstance(raw, str) or not raw.strip():
+        return {}
+
+    payload = _extract_first_json_object(raw)
+    if not isinstance(payload, dict):
+        return {}
+
+    explanations: dict[str, str] = {}
+    for item in payload.get("items") or []:
+        entity = str((item or {}).get("entity") or "").strip()
+        reason = str((item or {}).get("reason") or "").strip()
+        if entity and reason:
+            explanations[entity] = reason
+    return explanations
+
+
+def _extract_first_json_object(raw: str) -> dict[str, Any] | None:
+    decoder = json.JSONDecoder()
+    for start, char in enumerate(raw):
+        if char != "{":
+            continue
+        try:
+            parsed, _end = decoder.raw_decode(raw[start:])
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, dict):
+            return parsed
+    return None
+
+
+def _fallback_entity_relation_explanation(evidence: dict[str, Any]) -> str:
+    entity = str(evidence.get("entity") or "Cette entité").strip() or "Cette entité"
+    source_title = str(evidence.get("source_title") or "la source associée").strip() or "la source associée"
+    snippet = str(evidence.get("snippet") or "").strip()
+    if snippet:
+        compact = re.sub(r"\s+", " ", snippet).strip()
+        return f"{entity} est cité dans {source_title} car l'extrait associé le mentionne directement: {compact}"
+    return f"{entity} est cité car il apparaît dans {source_title} parmi les éléments reliés au sujet demandé."
 
 
 def _ddg_knowledge_model(value: dict[str, Any]) -> DdgKnowledgeModel | None:

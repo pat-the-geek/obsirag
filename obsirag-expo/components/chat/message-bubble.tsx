@@ -1,8 +1,9 @@
-import { useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { useEffect, useRef, useState } from 'react';
+import { Animated, Easing, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { ChatMessage, EntityContext } from '../../types/domain';
 import { MarkdownNote, renderEntityHighlightedText } from '../notes/markdown-note';
+import { EntityContextList } from './entity-context-list';
 import { SourceList } from './source-list';
 
 type MessageBubbleProps = {
@@ -35,67 +36,103 @@ export function MessageBubble({
   onDeleteMessage,
 }: MessageBubbleProps) {
   const isUser = message.role === 'user';
+  const revealProgress = useRef(new Animated.Value(isUser || process.env.NODE_ENV === 'test' ? 1 : 0)).current;
   const [sourcesOpen, setSourcesOpen] = useState(false);
+  const [entityContextsOpen, setEntityContextsOpen] = useState(false);
   const hasRenderableQueryOverview = isRenderableQueryOverview(message);
   const shouldHideAssistantMainBubble = Boolean(!isUser && hasRenderableQueryOverview && (message.sentinel || message.provenance === 'web'));
-  const showWebSearchAction = Boolean(!isUser && isNotInVaultMessage(message) && webSearchSuggestion && onSuggestWebSearch);
+  const showWebSearchAction = Boolean(!isUser && message.id !== 'streaming-assistant' && webSearchSuggestion && onSuggestWebSearch);
   const showDeleteAction = Boolean(!isUser && message.id !== 'streaming-assistant' && onDeleteMessage);
   const ddgMarkdown = buildDdgMarkdown(message);
+
+  useEffect(() => {
+    if (isUser || process.env.NODE_ENV === 'test') {
+      revealProgress.setValue(1);
+      return undefined;
+    }
+
+    revealProgress.setValue(0);
+    const animation = Animated.timing(revealProgress, {
+      toValue: 1,
+      duration: 420,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: true,
+    });
+
+    animation.start();
+    return () => animation.stop();
+  }, [isUser, message.id, revealProgress]);
+
+  const assistantRevealStyle = !isUser
+    ? {
+        opacity: revealProgress,
+        transform: [
+          {
+            translateY: revealProgress.interpolate({
+              inputRange: [0, 1],
+              outputRange: [28, 0],
+            }),
+          },
+        ],
+      }
+    : null;
 
   return (
     <View style={[styles.stack, isUser ? styles.userStack : styles.assistantStack]}>
       {!shouldHideAssistantMainBubble ? (
-        <View style={[styles.base, isUser ? styles.userBubble : styles.assistantBubble]}>
-          {isUser ? (
-            <Text style={styles.userContent}>{renderEntityHighlightedText(message.content, 'dark', highlightEntities, undefined, `user-${message.id}`)}</Text>
-          ) : (
-            <MarkdownNote
-              markdown={message.content}
-              variant="article"
-              tone="light"
-              entityHighlights={highlightEntities}
-              {...(onOpenNote ? { onOpenNote } : {})}
-              {...(onOpenTag ? { onOpenTag } : {})}
-            />
-          )}
-          {!isUser && message.sources?.length ? (
-            <SourceList
-              sources={message.sources}
-              isOpen={sourcesOpen}
-              onToggleOpen={() => setSourcesOpen((current) => !current)}
-              onSelectSource={(source) => onOpenNote?.(source.filePath)}
-            />
-          ) : null}
-        </View>
+        <Animated.View testID={isUser ? undefined : 'assistant-reveal-shell'} style={assistantRevealStyle}>
+          <View style={[styles.base, isUser ? styles.userBubble : styles.assistantBubble]}>
+            {isUser ? (
+              <Text style={styles.userContent}>{renderEntityHighlightedText(message.content, 'dark', highlightEntities, undefined, `user-${message.id}`)}</Text>
+            ) : (
+              <MarkdownNote
+                markdown={message.content}
+                variant="article"
+                tone="light"
+                entityHighlights={highlightEntities}
+                {...(onOpenNote ? { onOpenNote } : {})}
+                {...(onOpenTag ? { onOpenTag } : {})}
+              />
+            )}
+            {!isUser && message.sources?.length ? (
+              <SourceList
+                sources={message.sources}
+                isOpen={sourcesOpen}
+                onToggleOpen={() => setSourcesOpen((current) => !current)}
+                onSelectSource={(source) => onOpenNote?.(source.filePath)}
+              />
+            ) : null}
+            {!isUser && message.entityContexts?.length ? (
+              <EntityContextList
+                entities={message.entityContexts}
+                isOpen={entityContextsOpen}
+                onToggleOpen={() => setEntityContextsOpen((current) => !current)}
+              />
+            ) : null}
+          </View>
+        </Animated.View>
       ) : null}
       {!isUser && hasRenderableQueryOverview ? (
-        <View testID="message-query-overview-response" style={[styles.base, styles.followUpBubble]}>
-          <View style={styles.followUpHeader}>
-            <Text style={styles.assistantRole}>ObsiRAG</Text>
-            <Text style={styles.followUpLabel}>Vue d'ensemble DDG</Text>
+        <Animated.View style={assistantRevealStyle}>
+          <View testID="message-query-overview-response" style={[styles.base, styles.followUpBubble]}>
+            <View style={styles.followUpHeader}>
+              <Text style={styles.assistantRole}>ObsiRAG</Text>
+              <Text style={styles.followUpLabel}>Vue d'ensemble DDG</Text>
+            </View>
+            <View style={styles.queryOverviewBox}>
+              <MarkdownNote
+                markdown={ddgMarkdown}
+                tone="light"
+                entityHighlights={highlightEntities}
+                {...(onOpenNote ? { onOpenNote } : {})}
+                {...(onOpenTag ? { onOpenTag } : {})}
+              />
+            </View>
           </View>
-          <View style={styles.queryOverviewBox}>
-            <MarkdownNote
-              markdown={ddgMarkdown}
-              tone="light"
-              entityHighlights={highlightEntities}
-              {...(onOpenNote ? { onOpenNote } : {})}
-              {...(onOpenTag ? { onOpenTag } : {})}
-            />
-          </View>
-        </View>
+        </Animated.View>
       ) : null}
       {showWebSearchAction || showDeleteAction ? (
         <View style={styles.actionRow}>
-          {showWebSearchAction ? (
-            <Pressable
-              testID="message-web-search-action"
-              style={styles.webSearchActionButton}
-              onPress={() => onSuggestWebSearch?.(webSearchSuggestion!)}
-            >
-              <Text style={styles.webSearchActionLabel}>Recherche sur le web</Text>
-            </Pressable>
-          ) : null}
           {showDeleteAction ? (
             <Pressable
               testID="message-delete-action"
@@ -103,6 +140,15 @@ export function MessageBubble({
               onPress={() => onDeleteMessage?.(message.id)}
             >
               <Text style={styles.deleteActionLabel}>Supprimer la réponse</Text>
+            </Pressable>
+          ) : null}
+          {showWebSearchAction ? (
+            <Pressable
+              testID="message-web-search-action"
+              style={styles.webSearchActionButton}
+              onPress={() => onSuggestWebSearch?.(webSearchSuggestion!)}
+            >
+              <Text style={styles.webSearchActionLabel}>Rechercher sur le web</Text>
             </Pressable>
           ) : null}
         </View>
@@ -225,23 +271,6 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
 });
-
-function isNotInVaultMessage(message: ChatMessage) {
-  if (message.sentinel) {
-    return true;
-  }
-
-  const normalized = message.content.trim().toLocaleLowerCase('fr').replace(/\s+/g, ' ').replace(/[.!?]+$/g, '');
-  return (
-    normalized.startsWith("cette information n'est pas dans ton coffre") ||
-    normalized.startsWith("cette information n'est pas consignee dans ton coffre") ||
-    normalized.startsWith("cette information n'est pas consignée dans ton coffre") ||
-    normalized.startsWith("je n'ai pas trouve") ||
-    normalized.startsWith("je n'ai pas trouvé") ||
-    normalized.startsWith("je ne trouve pas") ||
-    normalized.startsWith('aucune information pertinente n\'est disponible dans ton coffre')
-  );
-}
 
 function isRenderableQueryOverview(message: ChatMessage) {
   const queryOverview = message.queryOverview;

@@ -62,6 +62,8 @@ export type EntityContext = {
   typeLabel: string;
   value: string;
   mentions?: number;
+  lineNumber?: number;
+  relationExplanation?: string;
   imageUrl?: string;
   tag?: string;
   notes: RelatedNote[];

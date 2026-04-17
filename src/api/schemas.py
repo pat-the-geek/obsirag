@@ -113,6 +113,8 @@ class EntityContextModel(BaseModel):
     typeLabel: str
     value: str
     mentions: int | None = None
+    lineNumber: int | None = None
+    relationExplanation: str | None = None
     imageUrl: str | None = None
     tag: str | None = None
     notes: list[RelatedNoteModel] = Field(default_factory=list)

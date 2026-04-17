@@ -195,6 +195,20 @@ describe('MessageBubble', () => {
     expect(tree.root.findByType(MarkdownNote).props.tone).toBe('light');
   });
 
+  it('wraps assistant responses in a reveal shell', () => {
+    const message: ChatMessage = {
+      id: 'assistant-reveal',
+      role: 'assistant',
+      content: 'Une reponse qui apparait progressivement.',
+      createdAt: '2026-04-16T12:00:00Z',
+      provenance: 'vault',
+    };
+
+    const tree = renderer.create(<MessageBubble message={message} />);
+
+    expect(tree.root.findByProps({ testID: 'assistant-reveal-shell' })).toBeTruthy();
+  });
+
   it('renders detailed web sources for enriched answers', () => {
     const message: ChatMessage = {
       id: 'assistant-4',
@@ -225,15 +239,14 @@ describe('MessageBubble', () => {
     expect(tree.root.findByProps({ testID: 'message-query-overview-response' })).toBeTruthy();
   });
 
-  it('offers a direct web-search action for not-in-vault answers', () => {
+  it('offers a direct web-search action for assistant answers', () => {
     const searchCalls: string[] = [];
     const message: ChatMessage = {
       id: 'assistant-web-search',
       role: 'assistant',
-      content: "Cette information n'est pas dans ton coffre.",
+      content: 'Voici un premier niveau de reponse.',
       createdAt: '2026-04-17T12:00:00Z',
       provenance: 'vault',
-      sentinel: true,
     };
 
     const tree = renderer.create(
@@ -328,6 +341,26 @@ describe('MessageBubble', () => {
     expect(searchCalls).toEqual(['Elon Musk salary 2026']);
   });
 
+  it('does not offer a web-search action for the streaming assistant placeholder', () => {
+    const message: ChatMessage = {
+      id: 'streaming-assistant',
+      role: 'assistant',
+      content: 'Generation en cours...',
+      createdAt: '2026-04-17T12:00:00Z',
+      provenance: 'vault',
+    };
+
+    const tree = renderer.create(
+      <MessageBubble
+        message={message}
+        webSearchSuggestion="Ada Lovelace biography"
+        onSuggestWebSearch={() => undefined}
+      />,
+    );
+
+    expect(tree.root.findAllByProps({ testID: 'message-web-search-action' })).toHaveLength(0);
+  });
+
   it('highlights detected entity names in assistant messages with a type-based color', () => {
     const message: ChatMessage = {
       id: 'assistant-highlight',
@@ -388,7 +421,7 @@ describe('MessageBubble', () => {
     );
   });
 
-  it('does not render entity details inline anymore', () => {
+  it('keeps detected entities collapsed by default and renders the markdown table on demand', () => {
     const message: ChatMessage = {
       id: 'assistant-6',
       role: 'assistant',
@@ -401,6 +434,8 @@ describe('MessageBubble', () => {
           typeLabel: 'Personne',
           value: 'Napoleon Bonaparte',
           mentions: 4,
+          lineNumber: 18,
+          relationExplanation: 'Napoleon Bonaparte est mentionné dans la note source comme sujet central de ce passage.',
           imageUrl: 'https://example.com/napoleon.png',
           tag: 'Napoleon',
           notes: [
@@ -428,15 +463,21 @@ describe('MessageBubble', () => {
 
     const tree = renderer.create(<MessageBubble message={message} />);
 
-    const texts = tree.root.findAllByType(Text).flatMap((node) => {
-      const value = node.props.children;
-      return Array.isArray(value) ? value : [value];
-    });
-    const joined = texts.filter((value): value is string => typeof value === 'string').join(' ');
+    expect(() => tree.root.findByProps({ testID: 'entity-contexts-panel-content' })).toThrow();
 
-    expect(joined).not.toMatch(/Details des entites NER/);
-    expect(joined).not.toMatch(/Napoleon Bonaparte/);
-    expect(() => tree.root.findByProps({ testID: 'message-entity-contexts-response' })).toThrow();
+    act(() => {
+      tree.root.findByProps({ testID: 'entity-contexts-panel-toggle' }).props.onPress();
+    });
+
+    expect(tree.root.findByProps({ testID: 'entity-contexts-panel-content' })).toBeTruthy();
+    const markdownTable = tree.root.findByProps({ testID: 'markdown-table' });
+    const joined = markdownTable.findAllByType(Text).flatMap((node) => collectText(node.props.children)).join(' ');
+
+    expect(joined).toContain('N°');
+    expect(joined).toContain("Nom de l'entité");
+    expect(joined).toContain('Napoleon Bonaparte');
+    expect(joined).toContain('1');
+    expect(joined).toContain('comme sujet central de ce passage');
   });
 
   it('opens internal wikilinks from assistant markdown', () => {
