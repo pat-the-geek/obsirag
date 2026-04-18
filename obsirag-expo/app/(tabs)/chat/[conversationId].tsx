@@ -165,13 +165,16 @@ export default function ConversationDetailScreen() {
                     key={message.id}
                     message={message}
                     highlightEntities={aggregatedEntityContexts}
-                    webSearchSuggestion={buildMessageWebSearchSuggestion(message, previousUserQuery, messages.slice(0, index), aggregatedEntityContexts)}
                     onSuggestWebSearch={(query) => explicitWebSearch.mutate(query)}
                     onOpenNote={(notePath) => router.push(`/(tabs)/note/${encodeURIComponent(notePath)}`)}
                     onOpenTag={(tag) => router.push(`/(tabs)/graph?tag=${encodeURIComponent(tag)}`)}
                     onOpenPrimarySource={(notePath) => router.push(`/(tabs)/note/${encodeURIComponent(notePath)}`)}
                     onDeleteMessage={confirmDeleteMessage}
                     onReusePrompt={(query) => setDraft(conversationId, query)}
+                    {...(() => {
+                      const webSearchSuggestion = buildMessageWebSearchSuggestion(message, previousUserQuery, messages.slice(0, index), aggregatedEntityContexts);
+                      return webSearchSuggestion ? { webSearchSuggestion } : {};
+                    })()}
                     {...(previousUserQuery ? { replyPrompt: previousUserQuery } : {})}
                   />
                 );
@@ -225,7 +228,6 @@ export default function ConversationDetailScreen() {
                   });
                 }}
                 secondaryActionDisabled={saveConversation.isPending}
-                tertiaryActionLabel={hasReportableConversation ? 'Rapport' : undefined}
                 onTertiaryAction={() => {
                   if (!conversationId) {
                     return;
@@ -237,6 +239,7 @@ export default function ConversationDetailScreen() {
                 }}
                 tertiaryActionDisabled={generateConversationReport.isPending}
                 disabled={streamMessage.isPending || !draft.trim()}
+                {...(hasReportableConversation ? { tertiaryActionLabel: 'Rapport' } : {})}
               />
             </View>
           </View>
@@ -535,7 +538,7 @@ function buildWebSearchSuggestion(userQuery: string | undefined, previousMessage
   const aspectTerms = extractWebAspectTerms(normalizedQuestion, preferredSubject);
   const needsContextualSubject = !explicitSubject && questionNeedsContextualSubject(normalizedQuestion);
   const basedOnQuestionParts = [explicitSubject?.value, ...aspectTerms];
-  const dedupedQuestionParts = [...new Set(basedOnQuestionParts.map((part) => part?.trim()).filter(Boolean))];
+  const dedupedQuestionParts = [...new Set(basedOnQuestionParts.map((part) => part?.trim()).filter((part): part is string => Boolean(part)))];
 
   if (!needsContextualSubject && dedupedQuestionParts.length) {
     if (!/\b(19|20)\d{2}\b/.test(normalizedQuestion) && dedupedQuestionParts.some((part) => WEB_SEARCH_DYNAMIC_TERMS.has(part))) {
@@ -747,7 +750,7 @@ function defaultEnrichmentTerms(question: string, subject?: EntityContext) {
   }
 
   const typeKey = normalizeEntityTypeKey(subject.type);
-  const defaults = WEB_SEARCH_DEFAULT_ENRICHMENT_TERMS[typeKey] ?? WEB_SEARCH_DEFAULT_ENRICHMENT_TERMS.concept;
+  const defaults = WEB_SEARCH_DEFAULT_ENRICHMENT_TERMS[typeKey] ?? WEB_SEARCH_DEFAULT_ENRICHMENT_TERMS.concept ?? [];
 
   if (lowered.includes('actualit') || lowered.includes('recent') || lowered.includes('récent') || lowered.includes('202')) {
     return [...defaults.filter((term) => term !== 'latest'), 'latest'];

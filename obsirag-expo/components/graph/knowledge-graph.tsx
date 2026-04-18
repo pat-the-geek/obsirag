@@ -622,6 +622,20 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     textAlign: 'center',
   },
+  zoomButton: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#f8fafc',
+  },
+  zoomButtonText: {
+    color: '#0f172a',
+    fontSize: 18,
+    lineHeight: 20,
+    fontWeight: '700',
+  },
   resetZoomDockButton: {
     borderRadius: 999,
     backgroundColor: '#e8ddd0',
@@ -654,7 +668,7 @@ function buildVisNetworkHtml(data: GraphData, focusedNodeId?: string, zoom = 1, 
   const nodes = data.nodes.map((node) => ({
     id: node.id,
     fullLabel: node.label,
-    label: shouldRenderInitialLabel(node.degree, focusedNodeId ? 0 : labelBehavior.threshold)
+    label: shouldRenderInitialLabel(node.degree, focusedNodeId ? 0 : labelBehavior.priorityDegree)
       ? (node.label.length > 40 ? `${node.label.slice(0, 39)}…` : node.label)
       : '',
     title: buildNodeTooltipHtml(node),

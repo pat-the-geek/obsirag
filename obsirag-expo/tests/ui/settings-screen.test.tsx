@@ -1,5 +1,6 @@
 import React from 'react';
 import renderer from 'react-test-renderer';
+import { Text } from 'react-native';
 
 const mockPush = jest.fn();
 const mockReplace = jest.fn();
@@ -80,7 +81,7 @@ describe('settings screen', () => {
 
   it('shows live runtime mode and active model details', () => {
     const tree = renderer.create(<SettingsScreen />);
-    const textNodes = tree.root.findAllByType('Text');
+    const textNodes = tree.root.findAllByType(Text);
     const renderedText = textNodes
       .map((node) => {
         const children = node.props.children;

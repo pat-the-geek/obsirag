@@ -16,7 +16,7 @@ export function NoteCard({ note, onOpenNote, onOpenTag }: NoteCardProps) {
       <Text style={styles.title}>{note.title}</Text>
       <View style={styles.tagsRow}>
         {(note.tags || []).map((tag) => (
-          <TagPill key={tag} label={tag} onPress={onOpenTag ? () => onOpenTag(tag) : undefined} />
+          <TagPill key={tag} label={tag} {...(onOpenTag ? { onPress: () => onOpenTag(tag) } : {})} />
         ))}
       </View>
       <View style={styles.metaRow}>

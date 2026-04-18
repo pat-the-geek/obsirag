@@ -93,7 +93,7 @@ describe('ObsiRagApi.streamConversationResponse', () => {
             },
           }),
         },
-      } as Response)
+      } as unknown as Response)
       .mockResolvedValueOnce({
         ok: true,
         json: async () => fallbackMessage,
@@ -136,7 +136,7 @@ describe('ObsiRagApi.streamConversationResponse', () => {
           };
         },
       },
-    } as Response);
+    } as unknown as Response);
 
     const result = await api.streamConversationResponse('conv-1', 'bonjour', { onToken, onComplete });
 

@@ -9,11 +9,11 @@ import { useAppStore, useStoreHydrated } from '../../store/app-store';
 export default function TabsLayout() {
   const hasHydrated = useStoreHydrated();
   const router = useRouter();
-  const segments = useSegments();
+  const routeSegments = useSegments() as readonly string[];
   const { backendUrl, useMockServer } = useServerConfig();
   const session = useSessionStatus();
   const setActiveConversationId = useAppStore((state) => state.setActiveConversationId);
-  const isInsideChatThread = segments.includes('chat') && segments.length > 2;
+  const isInsideChatThread = routeSegments.includes('chat') && routeSegments.length > 2;
 
   if (!hasHydrated) {
     return (

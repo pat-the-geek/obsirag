@@ -40,6 +40,7 @@ export function ConversationEntitySidebar({ entities, onOpenNote, onOpenTag, com
         nestedScrollEnabled
       >
         {entities.map((entity) => {
+          const entityTag = entity.tag;
           const summary = entity.ddgKnowledge?.abstractText || entity.ddgKnowledge?.answer || entity.ddgKnowledge?.definition;
 
           return (
@@ -50,7 +51,7 @@ export function ConversationEntitySidebar({ entities, onOpenNote, onOpenTag, com
                   <Text style={styles.entityTitle}>{entity.value}</Text>
                   <Text style={styles.entityType}>{entity.typeLabel}</Text>
                   {typeof entity.mentions === 'number' ? <Text style={styles.entityMeta}>{entity.mentions} mention{entity.mentions > 1 ? 's' : ''}</Text> : null}
-                  {entity.tag ? <TagPill label={entity.tag} tone="dark" {...(onOpenTag ? { onPress: () => onOpenTag(entity.tag!) } : {})} /> : null}
+                  {entityTag ? <TagPill label={entityTag} tone="dark" {...(onOpenTag ? { onPress: () => onOpenTag(entityTag) } : {})} /> : null}
                 </View>
               </View>
               {summary ? <Text style={styles.entitySummary} numberOfLines={compact ? 3 : 4}>{summary}</Text> : null}
@@ -84,23 +85,27 @@ export function aggregateConversationEntityContexts(messages: ChatMessage[]): En
       const key = entityKey(entity);
       const current = entitiesByKey.get(key);
       if (!current) {
+        const normalizedKnowledge = normalizeDdgKnowledge(entity.ddgKnowledge);
         entitiesByKey.set(key, {
           ...entity,
           notes: normalizeNotes(entity.notes),
-          ddgKnowledge: normalizeDdgKnowledge(entity.ddgKnowledge),
+          ...(normalizedKnowledge ? { ddgKnowledge: normalizedKnowledge } : {}),
         });
         continue;
       }
 
+      const mergedKnowledge = mergeDdgKnowledge(current.ddgKnowledge, entity.ddgKnowledge);
       entitiesByKey.set(key, {
         type: current.type || entity.type,
         typeLabel: current.typeLabel || entity.typeLabel,
         value: current.value || entity.value,
-        mentions: (current.mentions ?? 0) + (entity.mentions ?? 0) || undefined,
-        imageUrl: current.imageUrl || entity.imageUrl,
-        tag: current.tag || entity.tag,
+        ...(((current.mentions ?? 0) + (entity.mentions ?? 0)) > 0
+          ? { mentions: (current.mentions ?? 0) + (entity.mentions ?? 0) }
+          : {}),
+        ...(current.imageUrl || entity.imageUrl ? { imageUrl: current.imageUrl || entity.imageUrl } : {}),
+        ...(current.tag || entity.tag ? { tag: current.tag || entity.tag } : {}),
         notes: mergeNotes(current.notes, entity.notes),
-        ddgKnowledge: mergeDdgKnowledge(current.ddgKnowledge, entity.ddgKnowledge),
+        ...(mergedKnowledge ? { ddgKnowledge: mergedKnowledge } : {}),
       });
     }
   }
@@ -150,15 +155,19 @@ function mergeDdgKnowledge(current?: DdgKnowledge, incoming?: DdgKnowledge): Ddg
   if (!incoming) {
     return current;
   }
+
+  const infobox = current.infobox?.length ? current.infobox : incoming.infobox;
+  const relatedTopics = current.relatedTopics?.length ? current.relatedTopics : incoming.relatedTopics;
+
   return {
-    heading: current.heading || incoming.heading,
-    entity: current.entity || incoming.entity,
-    abstractText: current.abstractText || incoming.abstractText,
-    answer: current.answer || incoming.answer,
-    answerType: current.answerType || incoming.answerType,
-    definition: current.definition || incoming.definition,
-    infobox: current.infobox?.length ? current.infobox : incoming.infobox,
-    relatedTopics: current.relatedTopics?.length ? current.relatedTopics : incoming.relatedTopics,
+    ...(current.heading || incoming.heading ? { heading: current.heading || incoming.heading } : {}),
+    ...(current.entity || incoming.entity ? { entity: current.entity || incoming.entity } : {}),
+    ...(current.abstractText || incoming.abstractText ? { abstractText: current.abstractText || incoming.abstractText } : {}),
+    ...(current.answer || incoming.answer ? { answer: current.answer || incoming.answer } : {}),
+    ...(current.answerType || incoming.answerType ? { answerType: current.answerType || incoming.answerType } : {}),
+    ...(current.definition || incoming.definition ? { definition: current.definition || incoming.definition } : {}),
+    ...(infobox?.length ? { infobox } : {}),
+    ...(relatedTopics?.length ? { relatedTopics } : {}),
   };
 }
 

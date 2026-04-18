@@ -2,6 +2,8 @@ import React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { Alert, Text, TextInput } from 'react-native';
 
+import { ConversationDetail } from '../../types/domain';
+
 jest.mock('../../components/chat/conversation-entity-sidebar', () => {
   const ReactLocal = require('react');
   const { Text: TextLocal, View: ViewLocal } = require('react-native');
@@ -36,7 +38,7 @@ const alertSpy = jest.spyOn(Alert, 'alert');
 const originalConfirm = globalThis.confirm;
 const mockConfirm = jest.fn();
 let mockStreamMessageState = { mutate: mockStreamMessageMutate, isPending: false, error: null as Error | null };
-let mockConversationData = {
+let mockConversationData: ConversationDetail | undefined = {
   id: 'conv-1',
   title: 'Conversation test',
   updatedAt: '2026-04-16T12:00:00Z',
@@ -75,6 +77,7 @@ let mockConversationData = {
   lastGenerationStats: {
     tokens: 321,
     ttft: 1.4,
+    total: 7.6,
     tps: 42,
   },
 };
@@ -191,6 +194,7 @@ describe('ConversationDetailScreen', () => {
       lastGenerationStats: {
         tokens: 321,
         ttft: 1.4,
+        total: 7.6,
         tps: 42,
       },
     };

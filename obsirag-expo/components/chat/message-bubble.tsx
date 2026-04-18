@@ -95,7 +95,7 @@ export function MessageBubble({
                 markdown={message.content}
                 variant="article"
                 tone="light"
-                entityHighlights={highlightEntities}
+                {...(highlightEntities ? { entityHighlights: highlightEntities } : {})}
                 {...(onOpenNote ? { onOpenNote } : {})}
                 {...(onOpenTag ? { onOpenTag } : {})}
               />
@@ -129,7 +129,7 @@ export function MessageBubble({
               <MarkdownNote
                 markdown={ddgMarkdown}
                 tone="light"
-                entityHighlights={highlightEntities}
+                {...(highlightEntities ? { entityHighlights: highlightEntities } : {})}
                 {...(onOpenNote ? { onOpenNote } : {})}
                 {...(onOpenTag ? { onOpenTag } : {})}
               />

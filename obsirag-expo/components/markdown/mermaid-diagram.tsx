@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Linking, Platform, Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { WebView } from 'react-native-webview';
+import mermaidModule from 'mermaid';
 
 type MermaidDiagramProps = {
   code: string;
@@ -502,7 +503,7 @@ export function resolveMermaidLibrary(moduleValue: unknown): MermaidRuntime {
 }
 
 function loadMermaidLibrary() {
-  mermaidLibraryPromise ??= import('mermaid/dist/mermaid.esm.min.mjs').then(resolveMermaidLibrary);
+  mermaidLibraryPromise ??= Promise.resolve(resolveMermaidLibrary(mermaidModule));
   return mermaidLibraryPromise;
 }
 

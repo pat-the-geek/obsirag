@@ -25,9 +25,9 @@ function AuthGuardedLayout() {
 
 export default function AuthLayout() {
   const hasHydrated = useStoreHydrated();
-  const segments = useSegments();
+  const routeSegments = useSegments() as readonly string[];
   const { backendUrl, useMockServer } = useServerConfig();
-  const isServerConfigRoute = segments.includes('server-config');
+  const isServerConfigRoute = routeSegments.includes('server-config');
 
   if (!hasHydrated) {
     return (

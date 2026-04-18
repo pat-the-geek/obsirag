@@ -8,9 +8,13 @@ export function removeMessageTurn(messages: ChatMessage[], messageId: string): C
 
   const deletedIds = new Set<string>([messageId]);
   const targetMessage = messages[targetIndex];
+  if (!targetMessage) {
+    return messages;
+  }
+
   if (targetMessage.role === 'assistant' && targetIndex > 0) {
     const previousMessage = messages[targetIndex - 1];
-    if (previousMessage.role === 'user') {
+    if (previousMessage?.role === 'user') {
       deletedIds.add(previousMessage.id);
     }
   }

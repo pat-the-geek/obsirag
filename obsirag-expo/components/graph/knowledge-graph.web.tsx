@@ -85,9 +85,9 @@ const MIN_BASE_SCALE = 0.01;
 export function KnowledgeGraph({ data, focusedNodeId, onSelectNode, onOpenNode, onDetectSynapses, zoom = 1, onZoomChange, onZoomIn, onZoomOut, onZoomReset }: KnowledgeGraphProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const networkRef = useRef<Network | null>(null);
-  const zoomSyncTimerRef = useRef<ReturnType<typeof window.setTimeout> | null>(null);
-  const redrawTimerRef = useRef<ReturnType<typeof window.setTimeout> | null>(null);
-  const focusTimerRef = useRef<ReturnType<typeof window.setTimeout> | null>(null);
+  const zoomSyncTimerRef = useRef<number | null>(null);
+  const redrawTimerRef = useRef<number | null>(null);
+  const focusTimerRef = useRef<number | null>(null);
   const suppressZoomSyncRef = useRef(false);
   const fitScaleRef = useRef(1);
   const preferredScaleRef = useRef(clamp(zoom, MIN_GRAPH_ZOOM, MAX_GRAPH_ZOOM));
@@ -149,7 +149,7 @@ export function KnowledgeGraph({ data, focusedNodeId, onSelectNode, onOpenNode, 
 
     const styleTag = ensureVisTooltipStyles();
     const tooltipElement = ensureGraphTooltipElement();
-    let hideTooltipTimer: ReturnType<typeof window.setTimeout> | null = null;
+    let hideTooltipTimer: number | null = null;
 
     if (destroyed || !containerRef.current) {
       return undefined;

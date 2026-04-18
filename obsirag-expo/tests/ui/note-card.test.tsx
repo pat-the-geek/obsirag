@@ -27,8 +27,11 @@ describe('NoteCard', () => {
     const pills = tree.root.findAll((node) => node.props.testID === 'tag-pill' && typeof node.props.onPress === 'function');
     expect(pills.length).toBeGreaterThanOrEqual(2);
 
+    const firstPill = pills[0];
+    expect(firstPill).toBeTruthy();
+
     act(() => {
-      pills[0].props.onPress();
+      firstPill?.props.onPress();
     });
 
     expect(calls).toEqual(['Dune']);

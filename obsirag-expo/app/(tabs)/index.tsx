@@ -58,13 +58,13 @@ export default function DashboardScreen() {
     return (
       <Screen backgroundColor="#f4f1ea" refreshing={isRefetching} onRefresh={refetch}>
         <SystemStartupView
-          startup={data.startup}
+          {...(data.startup ? { startup: data.startup } : {})}
           backendReachable={data.backendReachable}
           llmAvailable={data.llmAvailable}
           notesIndexed={data.notesIndexed}
           chunksIndexed={data.chunksIndexed}
         />
-        <AutolearnLogPanel log={data.autolearn?.log} compact />
+        <AutolearnLogPanel {...(data.autolearn?.log ? { log: data.autolearn.log } : {})} compact />
       </Screen>
     );
   }
@@ -107,7 +107,7 @@ export default function DashboardScreen() {
         <Text>Auto-learn: {autolearnStatus}</Text>
         <Text>Source runtime: {runtimeSourceLabel}</Text>
         <SystemStartupView
-          startup={data.startup}
+          {...(data.startup ? { startup: data.startup } : {})}
           backendReachable={data.backendReachable}
           llmAvailable={data.llmAvailable}
           notesIndexed={data.notesIndexed}

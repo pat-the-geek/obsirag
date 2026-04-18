@@ -118,8 +118,6 @@ export function MarkdownNote({ markdown, onOpenNote, onOpenTag, variant = 'defau
                   {block.headers.map((cell, cellIndex) => (
                     <View key={`header-${cellIndex}`} style={[styles.tableCell, styles.tableHeaderCell, { width: block.widths[cellIndex] ?? 150 }]}>
                       {renderTableCellLines(cell, {
-                        onOpenNote,
-                        onOpenTag,
                         tone,
                         textStyle: [
                           styles.tableHeaderText,
@@ -130,7 +128,9 @@ export function MarkdownNote({ markdown, onOpenNote, onOpenTag, variant = 'defau
                               ? styles.tableTextRight
                               : styles.tableTextLeft,
                         ],
-                        entityHighlights,
+                          ...(onOpenNote ? { onOpenNote } : {}),
+                          ...(onOpenTag ? { onOpenTag } : {}),
+                          ...(entityHighlights ? { entityHighlights } : {}),
                       })}
                     </View>
                   ))}
@@ -140,8 +140,6 @@ export function MarkdownNote({ markdown, onOpenNote, onOpenTag, variant = 'defau
                     {row.map((cell, cellIndex) => (
                       <View key={`row-${rowIndex}-cell-${cellIndex}`} style={[styles.tableCell, { width: block.widths[cellIndex] ?? 150 }]}>
                         {renderTableCellLines(cell, {
-                          onOpenNote,
-                          onOpenTag,
                           tone,
                           textStyle: [
                             styles.tableCellText,
@@ -152,7 +150,9 @@ export function MarkdownNote({ markdown, onOpenNote, onOpenTag, variant = 'defau
                                 ? styles.tableTextRight
                                 : styles.tableTextLeft,
                           ],
-                          entityHighlights,
+                                ...(onOpenNote ? { onOpenNote } : {}),
+                                ...(onOpenTag ? { onOpenTag } : {}),
+                                ...(entityHighlights ? { entityHighlights } : {}),
                         })}
                       </View>
                     ))}
@@ -207,7 +207,7 @@ function parseMarkdownBlocks(markdown: string): MarkdownBlock[] {
   };
 
   for (let index = 0; index < lines.length; index += 1) {
-    const rawLine = lines[index];
+    const rawLine = lines[index] ?? '';
     const line = rawLine.replace(/\t/g, '  ');
     if (line.trim().startsWith('```')) {
       if (inCode) {
@@ -385,7 +385,7 @@ function estimateMarkdownTableWidths(headers: string[], rows: string[][]): numbe
 
   const overflow = totalWidth - maxTotalWidth;
   return rawWidths.map((width, index) => {
-    const proportionalShrink = (shrinkable[index] / shrinkableTotal) * overflow;
+    const proportionalShrink = ((shrinkable[index] ?? 0) / shrinkableTotal) * overflow;
     return Math.max(minWidth, Math.round(width - proportionalShrink));
   });
 }

@@ -1,5 +1,6 @@
 import React from 'react';
 import renderer from 'react-test-renderer';
+import { Text } from 'react-native';
 
 const mockUseRouter = jest.fn();
 const mockUseSystemStatus = jest.fn();
@@ -74,7 +75,7 @@ describe('dashboard screen', () => {
 
   it('renders the active ObsiRAG LLM model returned by system status', () => {
     const tree = renderer.create(<DashboardScreen />);
-    const textNodes = tree.root.findAllByType('Text');
+    const textNodes = tree.root.findAllByType(Text);
     const renderedText = textNodes
       .map((node) => {
         const children = node.props.children;

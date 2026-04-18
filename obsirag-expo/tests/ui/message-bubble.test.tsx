@@ -1,6 +1,6 @@
 import React from 'react';
 import renderer, { act } from 'react-test-renderer';
-import { Text } from 'react-native';
+import { Text, View } from 'react-native';
 
 import { MessageBubble } from '../../components/chat/message-bubble';
 import { MarkdownNote } from '../../components/notes/markdown-note';
@@ -63,7 +63,7 @@ describe('MessageBubble', () => {
 
     const tree = renderer.create(<MessageBubble message={message} />);
     const shell = tree.root.findByProps({ testID: 'user-message-shell' });
-    const bubble = tree.root.findAllByType('View').find((node) => {
+    const bubble = tree.root.findAllByType(View).find((node) => {
       const style = node.props.style;
       if (!Array.isArray(style)) {
         return false;
@@ -207,7 +207,7 @@ describe('MessageBubble', () => {
     };
 
     const tree = renderer.create(<MessageBubble message={message} />);
-    const bubble = tree.root.findAllByType('View').find((node) => {
+    const bubble = tree.root.findAllByType(View).find((node) => {
       const style = node.props.style;
       if (!Array.isArray(style)) {
         return false;
