@@ -23,6 +23,7 @@ import {
   mockNotes,
   mockSystemStatus,
 } from './mock-data';
+import { normalizeBackendUrlInput } from '../../features/auth/backend-url';
 
 type StreamHandlers = {
   onStatus?: (value: string) => void;
@@ -522,7 +523,7 @@ export class ObsiRagApi {
   }
 
   private getResolvedBackendUrl(): string {
-    const rawBackendUrl = this.config.backendUrl.trim().replace(/\/$/, '');
+    const rawBackendUrl = normalizeBackendUrlInput(this.config.backendUrl);
     if (!rawBackendUrl) {
       return rawBackendUrl;
     }

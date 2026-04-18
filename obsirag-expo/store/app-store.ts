@@ -2,6 +2,8 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { create } from 'zustand';
 import { createJSONStorage, persist } from 'zustand/middleware';
 
+import { normalizeBackendUrlInput } from '../features/auth/backend-url';
+
 const DEFAULT_BACKEND_URL = 'http://localhost:8000';
 
 function migrateBackendUrl(value: unknown): string {
@@ -9,7 +11,7 @@ function migrateBackendUrl(value: unknown): string {
     return DEFAULT_BACKEND_URL;
   }
 
-  const trimmedValue = value.trim();
+  const trimmedValue = normalizeBackendUrlInput(value);
   if (trimmedValue === 'http://localhost:8501') {
     return DEFAULT_BACKEND_URL;
   }
@@ -59,7 +61,7 @@ export const useAppStore = create<AppStoreState>()(
       drafts: {},
       sourcePanels: {},
       mermaidViewer: null,
-      setBackendUrl: (value) => set({ backendUrl: value }),
+      setBackendUrl: (value) => set({ backendUrl: normalizeBackendUrlInput(value) }),
       setAccessToken: (value) => set({ accessToken: value }),
       setUseMockServer: (value) => set({ useMockServer: value }),
       setActiveConversationId: (value) => set({ activeConversationId: value }),

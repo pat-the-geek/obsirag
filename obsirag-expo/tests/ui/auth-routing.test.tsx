@@ -57,6 +57,16 @@ describe('auth routing guards', () => {
     mockUseAppStore.mockReset();
   });
 
+  it('does not request session status while already on server-config', () => {
+    const sessionSentinel = { isLoading: false, isError: true, data: undefined };
+    mockUseSessionStatus.mockImplementation(() => sessionSentinel);
+
+    const tree = renderer.create(<AuthLayout />);
+
+    expect(() => tree.root.findByProps({ testID: 'stack' })).not.toThrow();
+    expect(mockUseSessionStatus).not.toHaveBeenCalled();
+  });
+
   it('does not redirect repeatedly when auth layout is already on server-config', () => {
     const tree = renderer.create(<AuthLayout />);
 

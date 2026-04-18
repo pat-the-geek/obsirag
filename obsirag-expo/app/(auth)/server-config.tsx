@@ -5,6 +5,7 @@ import { useQueryClient } from '@tanstack/react-query';
 
 import { Screen } from '../../components/ui/screen';
 import { SectionCard } from '../../components/ui/section-card';
+import { resolveSessionBackendUrlHint } from '../../features/auth/backend-url';
 import { useServerConfig } from '../../features/auth/use-server-config';
 import { saveAccessToken } from '../../services/storage/secure-session';
 
@@ -36,8 +37,9 @@ export default function ServerConfigScreen() {
       const session = await api.createSession(accessToken);
       await saveAccessToken(accessToken);
       setUseMockServer(false);
-      if (session.backendUrlHint && session.backendUrlHint !== backendUrl) {
-        setBackendUrl(session.backendUrlHint);
+      const nextBackendUrl = resolveSessionBackendUrlHint(backendUrl, session.backendUrlHint);
+      if (nextBackendUrl) {
+        setBackendUrl(nextBackendUrl);
       }
       await queryClient.invalidateQueries();
       router.replace('/(tabs)');

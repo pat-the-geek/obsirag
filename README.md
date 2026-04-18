@@ -135,6 +135,54 @@ source .venv/bin/activate
 pytest --no-cov
 ```
 
+## Acces reseau local ou Tailscale
+
+Le runtime principal Expo + FastAPI peut etre utilise depuis une autre machine du reseau local ou via Tailscale, a condition d'annoncer une URL publique cohérente au client.
+
+### Reglages requis
+
+Dans `.env`, verifier au minimum les variables suivantes :
+
+```env
+API_PUBLIC_BASE_URL=http://tailscale-host.example.ts.net:8000
+```
+
+- `API_PUBLIC_BASE_URL` doit pointer vers le nom DNS Tailscale, le nom mDNS local ou un host LAN stable de la machine qui heberge ObsiRAG.
+- Pour l'ancienne UI Streamlit uniquement, `STREAMLIT_SERVER_ADDRESS=0.0.0.0` permet aussi une exposition reseau. Cette variable ne pilote pas le runtime Expo + FastAPI.
+- Eviter `localhost` ou `127.0.0.1` dans la configuration saisie depuis une autre machine : ces adresses designent la machine cliente, pas le Mac qui heberge ObsiRAG.
+
+### URLs a utiliser depuis une autre machine
+
+- Interface Expo web : `http://tailscale-host.example.ts.net:8081`
+- Backend API : `http://tailscale-host.example.ts.net:8000`
+
+Dans l'ecran de configuration Expo, les saisies suivantes sont supportees :
+
+- `tailscale-host.example.ts.net:8000`
+- `http://tailscale-host.example.ts.net:8000`
+
+### Diagnostic rapide
+
+Un script de diagnostic leger permet de verifier les listeners locaux, l'API, Expo web et l'URL publique annoncee :
+
+```bash
+./scripts/check_remote_access.sh --host tailscale-host.example.ts.net
+```
+
+Exemples :
+
+```bash
+./scripts/check_remote_access.sh --host nom-de-machine.local
+./scripts/check_remote_access.sh --host tailscale-host.example.ts.net --api-port 8000 --expo-port 8081
+```
+
+Ce script ne remplace pas un test depuis la machine distante, mais il permet de detecter rapidement :
+
+- un bind local seulement,
+- une URL publique mal configuree dans `.env`,
+- une API ou un frontend non joignable,
+- un decalage entre les ports exposes et ceux annonces au client.
+
 ---
 
 ## Fonctionnalités
