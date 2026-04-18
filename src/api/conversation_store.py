@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
@@ -29,6 +30,17 @@ class ApiConversationStore:
 
     def get(self, conversation_id: str) -> ConversationDetailModel | None:
         return next((item for item in self.list() if item.id == conversation_id), None)
+
+    def repair_unanswered_tail(self, conversation_id: str) -> ConversationDetailModel | None:
+        conversation = self.get(conversation_id)
+        if conversation is None:
+            return None
+
+        original_message_count = len(conversation.messages)
+        repaired = self._without_unanswered_tail(conversation)
+        if len(repaired.messages) == original_message_count:
+            return conversation
+        return self.upsert(repaired)
 
     def create(self, title: str | None = None) -> ConversationDetailModel:
         conversation = ConversationDetailModel(
@@ -118,7 +130,7 @@ class ApiConversationStore:
         title = conversation.title.strip() or self._derive_title(conversation.messages)
         month = datetime.now(UTC).strftime("%Y-%m")
         timestamp = datetime.now(UTC).strftime("%Y%m%d_%H%M")
-        slug = re.sub(r"[^\w\s-]", "", title).strip().replace(" ", "-")[:60] or "conversation"
+        slug = self._slugify_title(title, fallback="conversation")
         out_dir = settings.conversations_dir / month
         out_dir.mkdir(parents=True, exist_ok=True)
         out_path = out_dir / f"{slug}_{timestamp}.md"
@@ -141,6 +153,21 @@ class ApiConversationStore:
         out_path.write_text("\n".join(lines).strip() + "\n", encoding="utf-8")
         return out_path
 
+    def save_report_markdown(self, conversation_id: str, markdown: str, *, title: str | None = None) -> Path:
+        conversation = self.get(conversation_id)
+        if conversation is None:
+            raise KeyError(conversation_id)
+
+        resolved_title = title.strip() if title and title.strip() else f"Rapport {conversation.title.strip() or self._derive_title(conversation.messages)}"
+        month = datetime.now(UTC).strftime("%Y-%m")
+        timestamp = datetime.now(UTC).strftime("%Y%m%d_%H%M")
+        slug = self._slugify_title(resolved_title, fallback="rapport")
+        out_dir = settings.insights_dir / month
+        out_dir.mkdir(parents=True, exist_ok=True)
+        out_path = out_dir / f"rapport_{slug}_{timestamp}.md"
+        out_path.write_text(markdown.rstrip() + "\n", encoding="utf-8")
+        return out_path
+
     def _save_all(self, conversations: list[ConversationDetailModel]) -> None:
         payload = StoredConversationCollectionModel(
             conversations=[
@@ -160,6 +187,13 @@ class ApiConversationStore:
         return "Nouveau fil"
 
     @staticmethod
+    def _slugify_title(title: str, *, fallback: str) -> str:
+        normalized = unicodedata.normalize("NFD", title)
+        normalized = "".join(character for character in normalized if unicodedata.category(character) != "Mn")
+        normalized = re.sub(r"[^\w\s-]", "", normalized).strip().replace(" ", "-")[:60]
+        return normalized or fallback
+
+    @staticmethod
     def _latest_generation_stats(messages: list[ChatMessageModel]):
         for message in reversed(messages):
             if message.role == "assistant" and message.stats is not None:
@@ -169,5 +203,21 @@ class ApiConversationStore:
     @staticmethod
     def _normalize_conversation(conversation: ConversationDetailModel) -> ConversationDetailModel:
         if not conversation.title.strip():
+            conversation.title = ApiConversationStore._derive_title(conversation.messages)
+        return conversation
+
+    @staticmethod
+    def _without_unanswered_tail(conversation: ConversationDetailModel) -> ConversationDetailModel:
+        kept_messages = list(conversation.messages)
+        while kept_messages and kept_messages[-1].role == "user":
+            kept_messages.pop()
+
+        if len(kept_messages) == len(conversation.messages):
+            return conversation
+
+        conversation.messages = kept_messages
+        conversation.updatedAt = datetime.now(UTC).isoformat()
+        conversation.lastGenerationStats = ApiConversationStore._latest_generation_stats(conversation.messages)
+        if conversation.title == "Nouveau fil":
             conversation.title = ApiConversationStore._derive_title(conversation.messages)
         return conversation

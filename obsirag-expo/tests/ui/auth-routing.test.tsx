@@ -4,6 +4,7 @@ import renderer from 'react-test-renderer';
 const mockUseSegments = jest.fn();
 const mockUseServerConfig = jest.fn();
 const mockUseSessionStatus = jest.fn();
+const mockUseSystemStatus = jest.fn();
 const mockUseStoreHydrated = jest.fn();
 const mockUseAppStore = jest.fn();
 
@@ -32,6 +33,10 @@ jest.mock('../../features/auth/use-server-config', () => ({
   useSessionStatus: () => mockUseSessionStatus(),
 }));
 
+jest.mock('../../features/system/use-system-status', () => ({
+  useSystemStatus: () => mockUseSystemStatus(),
+}));
+
 jest.mock('../../store/app-store', () => ({
   useStoreHydrated: () => mockUseStoreHydrated(),
   useAppStore: (selector: (state: { setActiveConversationId: (value?: string) => void }) => unknown) =>
@@ -39,6 +44,7 @@ jest.mock('../../store/app-store', () => ({
 }));
 
 import AuthLayout from '../../app/(auth)/_layout';
+import IndexRoute from '../../app/index';
 import TabsLayout from '../../app/(tabs)/_layout';
 
 describe('auth routing guards', () => {
@@ -46,6 +52,7 @@ describe('auth routing guards', () => {
     mockUseSegments.mockReturnValue(['(auth)', 'server-config']);
     mockUseServerConfig.mockReturnValue({ backendUrl: 'http://localhost:8000', useMockServer: false });
     mockUseSessionStatus.mockReturnValue({ isLoading: false, isError: true, data: undefined });
+    mockUseSystemStatus.mockReturnValue({ isLoading: false, data: { startup: { ready: true } } });
     mockUseStoreHydrated.mockReturnValue(true);
     mockUseAppStore.mockReset();
   });
@@ -63,5 +70,24 @@ describe('auth routing guards', () => {
     const tree = renderer.create(<TabsLayout />);
 
     expect(tree.root.findByProps({ testID: 'redirect' }).props.children).toBe('/(auth)/server-config');
+  });
+
+  it('redirects authenticated auth layout access to the main tabs shell', () => {
+    mockUseSegments.mockReturnValue(['(auth)', 'login']);
+    mockUseSessionStatus.mockReturnValue({ isLoading: false, isError: false, data: { authenticated: true } });
+
+    const tree = renderer.create(<AuthLayout />);
+
+    expect(tree.root.findByProps({ testID: 'redirect' }).props.children).toBe('/(tabs)');
+  });
+
+  it('redirects authenticated root access to the main tabs shell', () => {
+    mockUseServerConfig.mockReturnValue({ backendUrl: 'http://localhost:8000', useMockServer: false });
+    mockUseSessionStatus.mockReturnValue({ isLoading: false, isError: false, data: { authenticated: true } });
+    mockUseStoreHydrated.mockReturnValue(true);
+
+    const tree = renderer.create(<IndexRoute />);
+
+    expect(tree.root.findByProps({ testID: 'redirect' }).props.children).toBe('/(tabs)');
   });
 });

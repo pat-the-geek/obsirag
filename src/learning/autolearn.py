@@ -408,6 +408,7 @@ class AutoLearner:
                 self._set_status(
                     note=note_meta.get("title", note_meta["file_path"]),
                     step=f"[Accéléré] {new_done + 1}/{pending_total} — en cours…",
+                    file_path=note_meta.get("file_path", ""),
                 )
                 if self._process_and_mark_note(
                     note_meta,
@@ -420,6 +421,7 @@ class AutoLearner:
                     self._set_status(
                         note=note_meta.get("title", note_meta["file_path"]),
                         step=f"[Accéléré] {new_done}/{pending_total} ✓",
+                        file_path=note_meta.get("file_path", ""),
                     )
 
             logger.info(f"Auto-learner mode accéléré terminé — {new_done}/{pending_total} note(s) traitée(s)")
@@ -522,11 +524,13 @@ class AutoLearner:
 
     # ---- Cycle principal ----
 
-    def _set_status(self, note: str = "", step: str = "", active: bool = True) -> None:
+    def _set_status(self, note: str = "", step: str = "", active: bool = True, file_path: str = "") -> None:
         """Met à jour le statut de traitement (thread-safe)."""
         log = self.processing_status["log"]
         if step:
-            log.append(f"{datetime.now().strftime('%H:%M:%S')} — {step}")
+            location = file_path.strip() or note.strip()
+            prefix = f"{location} — " if location else ""
+            log.append(f"{datetime.now().strftime('%H:%M:%S')} — {prefix}{step}")
             if len(log) > 20:  # garder les 20 derniers messages
                 log.pop(0)
         self.processing_status.update({"active": active, "note": note, "step": step})
@@ -646,14 +650,15 @@ class AutoLearner:
         sleep_between_questions: int | None = None,
     ) -> None:
         _sleep_q = sleep_between_questions if sleep_between_questions is not None else self._SLEEP_BETWEEN_QUESTIONS
+        file_path = str(note_meta.get("file_path", "")).strip()
         title = note_meta.get("title", note_meta["file_path"])
         logger.info(f"Auto-learner : traitement de '{title}'")
-        self._set_status(note=title, step="Récupération des chunks…")
+        self._set_status(note=title, step="Récupération des chunks…", file_path=file_path)
 
         chunks = self._chroma.search(title, top_k=5)
         if not chunks:
             logger.warning(f"Auto-learner : aucun chunk trouvé pour '{title}'")
-            self._set_status(note=title, step="⚠️ Aucun chunk trouvé, note ignorée")
+            self._set_status(note=title, step="⚠️ Aucun chunk trouvé, note ignorée", file_path=file_path)
             try:
                 self._metrics.increment("autolearn_notes_skipped_total")
             except Exception:
@@ -670,11 +675,11 @@ class AutoLearner:
         qa_pairs = [qa_pair] if qa_pair else []
 
         if qa_pairs:
-            self._set_status(note=title, step=f"Sauvegarde de l'insight ({len(qa_pairs)} Q&A)…")
+            self._set_status(note=title, step=f"Sauvegarde de l'insight ({len(qa_pairs)} Q&A)…", file_path=file_path)
             self._save_knowledge_artifact(title, note_meta, qa_pairs)
-            self._set_status(note=title, step=f"✅ Insight sauvegardé ({len(qa_pairs)} Q&A)")
+            self._set_status(note=title, step=f"✅ Insight sauvegardé ({len(qa_pairs)} Q&A)", file_path=file_path)
         else:
-            self._set_status(note=title, step="⚠️ Aucune réponse QA valide, insight non créé")
+            self._set_status(note=title, step="⚠️ Aucune réponse QA valide, insight non créé", file_path=file_path)
             logger.warning(f"Auto-learner : aucune réponse QA pour '{title}', artefact non créé")
             try:
                 self._metrics.increment("autolearn_notes_skipped_total")
@@ -688,10 +693,10 @@ class AutoLearner:
         if fp and self._is_obsirag_generated(fp):
             abs_path = settings.vault / fp
             if abs_path.exists():
-                self._set_status(note=title, step="Suggestion d'un titre représentatif…")
+                self._set_status(note=title, step="Suggestion d'un titre représentatif…", file_path=file_path)
                 new_title = self._suggest_note_title(content_preview, title)
                 if new_title:
-                    self._set_status(note=title, step=f"Renommage : '{new_title}'…")
+                    self._set_status(note=title, step=f"Renommage : '{new_title}'…", file_path=file_path)
                     result = self._rename_note_in_vault(abs_path, new_title, fp)
                     if result:
                         # Mettre à jour note_meta avec le nouveau chemin relatif
@@ -700,11 +705,12 @@ class AutoLearner:
                         try:
                             new_rel = str(result.relative_to(settings.vault))
                             note_meta["file_path"] = new_rel
+                            file_path = new_rel
                         except Exception:
                             pass
-                        self._set_status(note=new_title, step=f"✅ Note renommée → '{new_title}'")
+                        self._set_status(note=new_title, step=f"✅ Note renommée → '{new_title}'", file_path=file_path)
                     else:
-                        self._set_status(note=title, step="⚠️ Renommage annulé (conflit ou erreur)")
+                        self._set_status(note=title, step="⚠️ Renommage annulé (conflit ou erreur)", file_path=file_path)
 
     def _is_weak_answer(self, answer: str) -> bool:
         return len(answer.strip()) < _MIN_ANSWER_LENGTH or bool(_WEAK_ANSWER_PATTERNS.search(answer))

@@ -1,3 +1,5 @@
+Object.assign(globalThis, { __OBSIRAG_JEST__: true });
+
 jest.mock('react-native-webview', () => {
   const React = require('react');
   const { View } = require('react-native');
@@ -73,3 +75,14 @@ jest.mock('d3-force', () => {
     },
   };
 });
+
+jest.mock('mermaid', () => ({
+  __esModule: true,
+  default: {
+    initialize: jest.fn(),
+    render: jest.fn(async (id: string, code: string) => ({
+      svg: `<svg data-mermaid-id="${id}"><text>${code}</text></svg>`,
+      bindFunctions: undefined,
+    })),
+  },
+}));

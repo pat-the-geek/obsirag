@@ -40,6 +40,23 @@ class SystemAlertModel(BaseModel):
     description: str
 
 
+class StartupStatusModel(BaseModel):
+    ready: bool = False
+    steps: list[str] = Field(default_factory=list)
+    currentStep: str = ""
+    error: str | None = None
+    updatedAt: str | None = None
+
+
+class RuntimeInfoModel(BaseModel):
+    llmProvider: str
+    llmModel: str
+    embeddingModel: str
+    vectorStore: str
+    nerModel: str
+    autolearnMode: str
+
+
 class SystemStatusResponse(BaseModel):
     backendReachable: bool
     llmAvailable: bool
@@ -47,6 +64,8 @@ class SystemStatusResponse(BaseModel):
     chunksIndexed: int
     indexing: IndexingStatusModel
     autolearn: AutolearnStatusModel
+    startup: StartupStatusModel
+    runtime: RuntimeInfoModel
     alerts: list[SystemAlertModel] = Field(default_factory=list)
 
 

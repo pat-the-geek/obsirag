@@ -826,6 +826,15 @@ class TestAutoLearner:
         assert learner.processing_status["step"] == ""
         assert persist.call_count == 26
 
+    def test_set_status_includes_file_path_in_log_entry(self):
+        learner = AutoLearner(MagicMock(), MagicMock(), MagicMock())
+
+        with patch.object(learner, "_persist_status"):
+            learner._set_status(note="Titre lisible", step="Récupération des chunks…", file_path="Dossiers/note-source.md")
+
+        assert "Dossiers/note-source.md" in learner.processing_status["log"][-1]
+        assert "Récupération des chunks…" in learner.processing_status["log"][-1]
+
     def test_run_bulk_initial_processes_pending_notes_and_sets_done_flag(self, tmp_settings):
         chroma = MagicMock()
         chroma.list_notes.return_value = [

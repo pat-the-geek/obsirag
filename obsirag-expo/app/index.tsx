@@ -1,6 +1,6 @@
 import { Redirect } from 'expo-router';
-import { ActivityIndicator } from 'react-native';
 
+import { SystemStartupView } from '../components/system/system-startup-view';
 import { Screen } from '../components/ui/screen';
 import { useServerConfig, useSessionStatus } from '../features/auth/use-server-config';
 import { useStoreHydrated } from '../store/app-store';
@@ -12,8 +12,8 @@ export default function IndexRoute() {
 
   if (!hasHydrated) {
     return (
-      <Screen>
-        <ActivityIndicator />
+      <Screen backgroundColor="#f4f1ea">
+        <SystemStartupView loading />
       </Screen>
     );
   }
@@ -28,8 +28,8 @@ export default function IndexRoute() {
 
   if (session.isLoading) {
     return (
-      <Screen>
-        <ActivityIndicator />
+      <Screen backgroundColor="#f4f1ea">
+        <SystemStartupView loading />
       </Screen>
     );
   }

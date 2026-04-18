@@ -8,6 +8,9 @@ type MessageComposerProps = {
   secondaryActionLabel?: string;
   onSecondaryAction?: () => void;
   secondaryActionDisabled?: boolean;
+  tertiaryActionLabel?: string;
+  onTertiaryAction?: () => void;
+  tertiaryActionDisabled?: boolean;
 };
 
 export function MessageComposer({
@@ -18,6 +21,9 @@ export function MessageComposer({
   secondaryActionLabel,
   onSecondaryAction,
   secondaryActionDisabled,
+  tertiaryActionLabel,
+  onTertiaryAction,
+  tertiaryActionDisabled,
 }: MessageComposerProps) {
   const canSubmit = !disabled && value.trim().length > 0;
 
@@ -42,18 +48,29 @@ export function MessageComposer({
         style={styles.input}
       />
       <View style={styles.bottomRow}>
-        {secondaryActionLabel && onSecondaryAction ? (
-          <Pressable
-            testID="message-composer-secondary-action"
-            disabled={secondaryActionDisabled}
-            onPress={onSecondaryAction}
-            style={[styles.secondaryButton, secondaryActionDisabled && styles.buttonDisabled]}
-          >
-            <Text style={styles.secondaryButtonLabel}>{secondaryActionLabel}</Text>
-          </Pressable>
-        ) : (
-          <View style={styles.spacer} />
-        )}
+        <View style={styles.leftActions}>
+          {secondaryActionLabel && onSecondaryAction ? (
+            <Pressable
+              testID="message-composer-secondary-action"
+              disabled={secondaryActionDisabled}
+              onPress={onSecondaryAction}
+              style={[styles.secondaryButton, secondaryActionDisabled && styles.buttonDisabled]}
+            >
+              <Text style={styles.secondaryButtonLabel}>{secondaryActionLabel}</Text>
+            </Pressable>
+          ) : null}
+          {tertiaryActionLabel && onTertiaryAction ? (
+            <Pressable
+              testID="message-composer-tertiary-action"
+              disabled={tertiaryActionDisabled}
+              onPress={onTertiaryAction}
+              style={[styles.tertiaryButton, tertiaryActionDisabled && styles.buttonDisabled]}
+            >
+              <Text style={styles.tertiaryButtonLabel}>{tertiaryActionLabel}</Text>
+            </Pressable>
+          ) : null}
+          {!secondaryActionLabel && !tertiaryActionLabel ? <View style={styles.spacer} /> : null}
+        </View>
         <Pressable disabled={!canSubmit} onPress={onSubmit} style={[styles.button, !canSubmit && styles.buttonDisabled]}>
           <Text style={styles.buttonLabel}>Envoyer</Text>
         </Pressable>
@@ -84,6 +101,13 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 12,
   },
+  leftActions: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    flexWrap: 'wrap',
+  },
   spacer: {
     flex: 1,
   },
@@ -98,6 +122,19 @@ const styles = StyleSheet.create({
   },
   secondaryButtonLabel: {
     color: '#f0f0f0',
+    fontWeight: '700',
+  },
+  tertiaryButton: {
+    alignSelf: 'flex-end',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 999,
+    backgroundColor: '#4a2f17',
+    borderWidth: 1,
+    borderColor: '#7a5225',
+  },
+  tertiaryButtonLabel: {
+    color: '#fff4e8',
     fontWeight: '700',
   },
   button: {

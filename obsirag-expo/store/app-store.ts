@@ -2,6 +2,25 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { create } from 'zustand';
 import { createJSONStorage, persist } from 'zustand/middleware';
 
+const DEFAULT_BACKEND_URL = 'http://localhost:8000';
+
+function migrateBackendUrl(value: unknown): string {
+  if (typeof value !== 'string') {
+    return DEFAULT_BACKEND_URL;
+  }
+
+  const trimmedValue = value.trim();
+  if (trimmedValue === 'http://localhost:8501') {
+    return DEFAULT_BACKEND_URL;
+  }
+
+  if (trimmedValue === 'http://127.0.0.1:8501') {
+    return 'http://127.0.0.1:8000';
+  }
+
+  return trimmedValue || DEFAULT_BACKEND_URL;
+}
+
 type AppStoreState = {
   hasHydrated: boolean;
   backendUrl: string;
@@ -32,7 +51,7 @@ export const useAppStore = create<AppStoreState>()(
   persist(
     (set) => ({
       hasHydrated: false,
-      backendUrl: 'http://localhost:8000',
+      backendUrl: DEFAULT_BACKEND_URL,
       accessToken: '',
       useMockServer: false,
       activeConversationId: undefined,
@@ -71,7 +90,15 @@ export const useAppStore = create<AppStoreState>()(
     }),
     {
       name: 'obsirag-expo-store',
+      version: 3,
       storage: createJSONStorage(() => AsyncStorage),
+      migrate: (persistedState) => {
+        const state = (persistedState ?? {}) as Partial<AppStoreState>;
+        return {
+          ...state,
+          backendUrl: migrateBackendUrl(state.backendUrl),
+        };
+      },
       onRehydrateStorage: () => (state) => {
         state?.setHasHydrated(true);
       },

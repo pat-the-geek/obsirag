@@ -84,6 +84,31 @@ export const mockSystemStatus: SystemStatus = {
   llmAvailable: true,
   notesIndexed: 736,
   chunksIndexed: 4812,
+  runtime: {
+    llmProvider: 'MLX',
+    llmModel: 'mlx-community/Qwen2.5-7B-Instruct-4bit',
+    embeddingModel: 'paraphrase-multilingual-MiniLM-L12-v2',
+    vectorStore: 'ChromaDB',
+    nerModel: 'xx_ent_wiki_sm',
+    autolearnMode: 'worker',
+  },
+  startup: {
+    ready: true,
+    currentStep: 'Tous les services sont opérationnels',
+    steps: [
+      '📁 Initialisation des répertoires de données…',
+      "🗄️ Chargement de ChromaDB et du modèle d'embedding (peut prendre 30 s)…",
+      '🤖 Initialisation du client MLX (chargement differe)…',
+      '🔗 Initialisation du pipeline RAG…',
+      "🗂️ Initialisation du pipeline d'indexation…",
+      '🧠 Initialisation du graphe de connaissances…',
+      "📚 Initialisation de l'auto-learner…",
+      '👁️ Démarrage du watcher de coffre…',
+      '🚀 Lancement des services en arrière-plan…',
+      '✅ Tous les services sont opérationnels',
+    ],
+    updatedAt: new Date().toISOString(),
+  },
   indexing: {
     running: false,
     processed: 736,
@@ -143,6 +168,27 @@ export const mockNotes: NoteDetail[] = [
     ],
     dateModified: now,
     noteType: 'user-note',
+  },
+  {
+    id: 'obsirag/insights/2026-04/web_artemis_ii.md',
+    filePath: 'obsirag/insights/2026-04/web_artemis_ii.md',
+    title: 'Artemis II et validation mission',
+    bodyMarkdown:
+      '# Artemis II et validation mission\n\n> [!info] Rapport insight mock charge depuis le viewer Expo.\n\n## Contexte\n\nLa mission Artemis II sert de base de demonstration pour les artefacts markdown du module chat.\n\n## Synthese\n\nCe document montre comment un rapport genere peut etre relu directement dans le viewer.',
+    tags: ['insight', 'space', 'obsirag', 'rapport'],
+    frontmatter: {
+      type: 'rapport',
+      statut: 'finalise',
+    },
+    backlinks: [],
+    links: [
+      {
+        title: 'Artemis II',
+        filePath: 'Space/Artemis II.md',
+      },
+    ],
+    dateModified: now,
+    noteType: 'insight',
   },
 ];
 

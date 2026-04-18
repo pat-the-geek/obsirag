@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -62,8 +63,6 @@ class TestApiConversationStore:
             ],
         )
 
-        from unittest.mock import patch
-
         with patch("src.api.conversation_store.settings", tmp_settings):
             store.upsert(conversation)
             saved_path = store.save_markdown(conversation.id)
@@ -72,3 +71,21 @@ class TestApiConversationStore:
         content = saved_path.read_text(encoding="utf-8")
         assert "# Mission Artemis" in content
         assert "### 🤖 Réponse" in content
+
+    def test_save_report_markdown_writes_insight_file(self, tmp_path: Path, tmp_settings):
+        store = ApiConversationStore(tmp_path / "api" / "conversations.json")
+        conversation = ConversationDetailModel(
+            id="conv-2",
+            title="Mission Artemis",
+            updatedAt="2026-04-16T18:00:00",
+            draft="",
+            messages=[],
+        )
+
+        with patch("src.api.conversation_store.settings", tmp_settings):
+            store.upsert(conversation)
+            saved_path = store.save_report_markdown(conversation.id, "# Rapport Mission Artemis\n", title="Rapport Mission Artemis")
+
+        assert saved_path.exists()
+        assert str(saved_path).startswith(str(tmp_settings.insights_dir))
+        assert saved_path.read_text(encoding="utf-8").startswith("# Rapport Mission Artemis")

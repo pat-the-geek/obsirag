@@ -105,4 +105,43 @@ describe('ObsiRagApi.streamConversationResponse', () => {
     expect(onComplete).toHaveBeenCalledWith(fallbackMessage);
     expect(result).toEqual(fallbackMessage);
   });
+
+  it('returns the completion payload even when token frames were emitted before it', async () => {
+    const api = new ObsiRagApi({
+      backendUrl: 'http://localhost:8000',
+      useMockServer: false,
+    });
+    const onToken = jest.fn();
+    const onComplete = jest.fn();
+    const frames = [
+      'event: retrieval_status\ndata: {"message":"Generation MLX"}\n\n',
+      'event: token\ndata: {"token":"Bonjour "}\n\n',
+      'event: token\ndata: {"token":"monde"}\n\n',
+      'event: message_complete\ndata: {"id":"assistant-2","role":"assistant","content":"Bonjour monde","createdAt":"2026-04-18T12:00:00Z","provenance":"vault","timeline":["Generation MLX"]}\n\n',
+    ].join('');
+
+    (global.fetch as jest.Mock).mockResolvedValueOnce({
+      ok: true,
+      body: {
+        getReader: () => {
+          let consumed = false;
+          return {
+            read: async () => {
+              if (consumed) {
+                return { done: true, value: undefined };
+              }
+              consumed = true;
+              return { done: false, value: new TextEncoder().encode(frames) };
+            },
+          };
+        },
+      },
+    } as Response);
+
+    const result = await api.streamConversationResponse('conv-1', 'bonjour', { onToken, onComplete });
+
+    expect(onToken).toHaveBeenCalledTimes(2);
+    expect(onComplete).toHaveBeenCalledWith(result);
+    expect(result.content).toBe('Bonjour monde');
+  });
 });

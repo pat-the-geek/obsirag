@@ -27,6 +27,7 @@ jest.mock('../../components/chat/conversation-entity-sidebar', () => {
 
 const mockRouterPush = jest.fn();
 const mockSaveConversationMutate = jest.fn();
+const mockGenerateConversationReportMutate = jest.fn();
 const mockDeleteConversationMessageMutate = jest.fn();
 const mockExplicitWebSearchMutate = jest.fn();
 const mockStreamMessageMutate = jest.fn();
@@ -92,6 +93,7 @@ jest.mock('../../features/chat/use-chat', () => ({
   }),
   useDeleteConversationMessage: () => ({ mutate: mockDeleteConversationMessageMutate, isPending: false }),
   useExplicitWebSearch: () => ({ mutate: mockExplicitWebSearchMutate, isPending: false }),
+  useGenerateConversationReport: () => ({ mutate: mockGenerateConversationReportMutate, isPending: false }),
   useSaveConversation: () => ({ mutate: mockSaveConversationMutate }),
   useStreamMessage: () => mockStreamMessageState,
 }));
@@ -194,6 +196,7 @@ describe('ConversationDetailScreen', () => {
     };
     mockRouterPush.mockReset();
     mockSaveConversationMutate.mockReset();
+    mockGenerateConversationReportMutate.mockReset();
     mockDeleteConversationMessageMutate.mockReset();
     mockExplicitWebSearchMutate.mockReset();
     mockStreamMessageMutate.mockReset();
@@ -208,6 +211,7 @@ describe('ConversationDetailScreen', () => {
 
     expect(textTreeContains(tree, 'Rechercher sur le web')).toBe(true);
     expect(tree.root.findByProps({ testID: 'message-composer-secondary-action' })).toBeTruthy();
+    expect(tree.root.findByProps({ testID: 'message-composer-tertiary-action' })).toBeTruthy();
 
     act(() => {
       findPressableByLabel(tree, 'Sauvegarder')?.props.onPress();
@@ -215,6 +219,26 @@ describe('ConversationDetailScreen', () => {
 
     expect(mockSaveConversationMutate).toHaveBeenCalled();
     expect(mockSaveConversationMutate.mock.calls[0][0]).toBe('conv-1');
+  });
+
+  it('generates a report insight and opens it in the note viewer', () => {
+    mockGenerateConversationReportMutate.mockImplementation((_conversationId: string, options?: { onSuccess?: (result: { path: string }) => void }) => {
+      options?.onSuccess?.({ path: 'obsirag/insights/2026-04/rapport_test.md' });
+    });
+
+    const tree = renderer.create(<ConversationDetailScreen />);
+
+    const [saveButton, reportButton] = findPressablesByLabel(tree, 'Sauvegarder').concat(findPressablesByLabel(tree, 'Rapport')).filter(Boolean);
+    expect(saveButton).toBeTruthy();
+    expect(reportButton).toBeTruthy();
+
+    act(() => {
+      findPressableByLabel(tree, 'Rapport')?.props.onPress();
+    });
+
+    expect(mockGenerateConversationReportMutate).toHaveBeenCalled();
+    expect(mockGenerateConversationReportMutate.mock.calls[0][0]).toBe('conv-1');
+    expect(mockRouterPush).toHaveBeenCalledWith(`/(tabs)/note/${encodeURIComponent('obsirag/insights/2026-04/rapport_test.md')}`);
   });
 
   it('asks for confirmation before deleting an assistant response', () => {
@@ -286,7 +310,7 @@ describe('ConversationDetailScreen', () => {
     expect(mockExplicitWebSearchMutate).toHaveBeenCalledWith(`Elon Musk salary ${new Date().getFullYear()}`);
   });
 
-  it('expands generic subject questions into enrichment-oriented DDG queries', () => {
+  it('bases explicit web search on the current subject question', () => {
     mockConversationData = {
       id: 'conv-1',
       title: 'Conversation test',
@@ -325,7 +349,7 @@ describe('ConversationDetailScreen', () => {
       findPressablesByLabel(tree, 'Rechercher sur le web').at(-1)?.props.onPress();
     });
 
-    expect(mockExplicitWebSearchMutate).toHaveBeenCalledWith('SpaceX company overview latest');
+    expect(mockExplicitWebSearchMutate).toHaveBeenCalledWith('SpaceX');
   });
 
   it('falls back to the primary source title when no recent entity is available', () => {
@@ -371,7 +395,7 @@ describe('ConversationDetailScreen', () => {
     expect(mockExplicitWebSearchMutate).toHaveBeenCalledWith(`Elon Musk age ${new Date().getFullYear()}`);
   });
 
-  it('offers web search from a regular assistant response too', () => {
+  it('keeps web search tied to the latest user question on regular assistant responses too', () => {
     mockConversationData = {
       id: 'conv-1',
       title: 'Conversation test',
@@ -403,7 +427,7 @@ describe('ConversationDetailScreen', () => {
       findPressablesByLabel(tree, 'Rechercher sur le web').at(-1)?.props.onPress();
     });
 
-    expect(mockExplicitWebSearchMutate).toHaveBeenCalledWith('SpaceX company overview latest');
+    expect(mockExplicitWebSearchMutate).toHaveBeenCalledWith('SpaceX');
   });
 
   it('prioritizes the explicit subject from the user query over previous detected entities', () => {
@@ -599,4 +623,5 @@ describe('ConversationDetailScreen', () => {
     expect(textTreeContains(tree, 'Generation MLX')).toBe(true);
     expect(textTreeContains(tree, 'Generation en cours...')).toBe(false);
   });
+
 });

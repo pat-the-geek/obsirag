@@ -13,7 +13,7 @@ class TestMermaidEmbed:
         assert "mermaid.min.js" in html
         assert "mermaid.render('mg7', code)" in html
         assert "const code = \"graph TD\\nA-->B\";" in html
-        assert "⚠ Erreur Mermaid" in html
+        assert "document.getElementById('err').textContent = code;" in html
 
     def test_estimate_mermaid_height_clamps_bounds(self):
         assert estimate_mermaid_height("graph TD\nA-->B") == 200

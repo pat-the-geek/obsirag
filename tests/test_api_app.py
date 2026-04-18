@@ -8,8 +8,12 @@ from unittest.mock import MagicMock, patch
 from fastapi.testclient import TestClient
 
 from src.api.app import app
+from src.api.app import _build_conversation_theme_coverage_section
+from src.api.app import _iter_answer_tokens
 from src.api.app import _lookup_conversation_entity_contexts
+from src.api.app import _normalize_report_markdown
 from src.api.conversation_store import ApiConversationStore
+from src.api.schemas import ConversationDetailModel
 
 
 class _StubServiceManager:
@@ -17,6 +21,7 @@ class _StubServiceManager:
         self.llm = MagicMock()
         self.llm.is_available.return_value = True
         self.learner = MagicMock()
+        self.indexer = MagicMock()
         self.learner.processing_status = {"active": False, "log": []}
         self.learner._scheduler = MagicMock()
         self.learner._scheduler.get_job.return_value = None
@@ -28,6 +33,7 @@ class _StubServiceManager:
         self.chroma.list_notes.return_value = []
         self.chroma.list_note_folders.return_value = []
         self.chroma.list_note_tags.return_value = []
+        self.chroma.invalidate_list_notes_cache.return_value = None
         self.rag = MagicMock()
         self.rag.query.return_value = (
             "Reponse synchrone",
@@ -89,6 +95,60 @@ def test_health_reflects_vector_store_degradation(tmp_settings):
 
     assert response.status_code == 200
     assert response.json()["vectorStoreAvailable"] is False
+
+
+def test_system_status_includes_startup_steps(tmp_settings):
+    startup_payload = {
+        "ready": False,
+        "steps": [
+            "📁 Initialisation des répertoires de données…",
+            "🤖 Initialisation du client MLX (chargement differe)…",
+        ],
+        "current_step": "🤖 Initialisation du client MLX (chargement differe)…",
+        "updated_at": "2026-04-18T10:00:00+00:00",
+    }
+    tmp_settings.startup_status_file.parent.mkdir(parents=True, exist_ok=True)
+    tmp_settings.startup_status_file.write_text(json.dumps(startup_payload), encoding="utf-8")
+
+    with (
+        patch("src.api.app.settings", tmp_settings),
+        patch("src.api.app.ensure_service_manager_started"),
+    ):
+        client = TestClient(app)
+        response = client.get("/api/v1/system/status")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["startup"]["ready"] is False
+    assert payload["startup"]["steps"] == startup_payload["steps"]
+    assert payload["startup"]["currentStep"] == startup_payload["current_step"]
+    assert payload["runtime"]["llmProvider"] == "MLX"
+    assert payload["runtime"]["llmModel"] == tmp_settings.mlx_chat_model
+    assert payload["runtime"]["vectorStore"] == "ChromaDB"
+
+
+def test_system_status_infers_ready_startup_when_status_file_is_missing(tmp_settings):
+    tmp_settings.data_dir.mkdir(parents=True, exist_ok=True)
+    tmp_settings.index_state_file.write_text(json.dumps({"note.md": "2026-04-18T08:00:00"}), encoding="utf-8")
+    service_status_file = tmp_settings.data_dir / "stats" / "service_manager_status.json"
+    service_status_file.parent.mkdir(parents=True, exist_ok=True)
+    service_status_file.write_text(
+        json.dumps({"running": False, "processed": 784, "total": 784, "current": "Notes/Journal.md"}),
+        encoding="utf-8",
+    )
+
+    with (
+        patch("src.api.app.settings", tmp_settings),
+        patch("src.api.app.ensure_service_manager_started"),
+    ):
+        client = TestClient(app)
+        response = client.get("/api/v1/system/status")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["startup"]["ready"] is True
+    assert payload["startup"]["currentStep"] == "Tous les services sont opérationnels"
+    assert payload["startup"]["steps"][-1] == "Tous les services sont opérationnels"
 
 
 def test_delete_conversation_message_removes_target_message_and_previous_question(tmp_path: Path, tmp_settings):
@@ -156,6 +216,351 @@ def test_delete_conversation_message_returns_not_found_for_unknown_message(tmp_p
         response = client.delete("/api/v1/conversations/conv-delete-missing/messages/assistant-missing")
 
     assert response.status_code == 404
+
+
+def test_get_conversation_removes_unanswered_trailing_question(tmp_path: Path, tmp_settings):
+    store = ApiConversationStore(tmp_path / "api" / "conversations.json")
+    conversation = store.create("Fil incomplet")
+    conversation.id = "conv-repair-tail"
+    conversation.messages = [
+        {
+            "id": "user-1",
+            "role": "user",
+            "content": "Question 1",
+            "createdAt": "2026-04-17T12:00:00Z",
+        },
+        {
+            "id": "assistant-1",
+            "role": "assistant",
+            "content": "Reponse 1",
+            "createdAt": "2026-04-17T12:00:01Z",
+            "stats": {"tokens": 10, "ttft": 0.3, "total": 1.0, "tps": 10.0},
+        },
+        {
+            "id": "user-2",
+            "role": "user",
+            "content": "Question restee sans reponse",
+            "createdAt": "2026-04-17T12:00:02Z",
+        },
+    ]
+    store.upsert(conversation)
+
+    with (
+        patch("src.api.app.settings", tmp_settings),
+        patch("src.api.app.conversation_store", store),
+    ):
+        client = TestClient(app)
+        response = client.get("/api/v1/conversations/conv-repair-tail")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert [message["id"] for message in payload["messages"]] == ["user-1", "assistant-1"]
+    assert payload["lastGenerationStats"]["tokens"] == 10
+
+    stored = store.get("conv-repair-tail")
+    assert stored is not None
+    assert [message.id for message in stored.messages] == ["user-1", "assistant-1"]
+
+
+def test_generate_conversation_report_creates_and_indexes_insight(tmp_path: Path, tmp_settings):
+    store = ApiConversationStore(tmp_path / "api" / "conversations.json")
+    source_note = tmp_settings.vault / "Space" / "Artemis II.md"
+    source_note.parent.mkdir(parents=True, exist_ok=True)
+    source_note.write_text(
+        "# Artemis II\n\n![Capsule Orion](https://example.com/orion.png)\n",
+        encoding="utf-8",
+    )
+    conversation = store.create("Mission Artemis")
+    conversation.id = "conv-report"
+    conversation.messages = [
+        {
+            "id": "user-1",
+            "role": "user",
+            "content": "Fais une synthese de la mission Artemis II.",
+            "createdAt": "2026-04-18T12:00:00Z",
+        },
+        {
+            "id": "assistant-1",
+            "role": "assistant",
+            "content": "Artemis II valide Orion avant les prochaines missions lunaires.\n\n```mermaid\nflowchart TD\nA[Préparation] --> B[Vol circumlunaire]\n```",
+            "createdAt": "2026-04-18T12:00:01Z",
+            "sources": [
+                {
+                    "filePath": "Space/Artemis II.md",
+                    "noteTitle": "Artemis II",
+                }
+            ],
+            "entityContexts": [
+                {
+                    "type": "ORG",
+                    "typeLabel": "Organisation",
+                    "value": "NASA",
+                    "imageUrl": "https://example.com/nasa.png",
+                }
+            ],
+        },
+    ]
+    store.upsert(conversation)
+
+    service_manager = _StubServiceManager()
+    service_manager.llm.chat.return_value = "# Rapport Artemis\n\n## Synthese\n\nMission de validation avant retour lunaire.\n"
+
+    with (
+        patch("src.api.app.settings", tmp_settings),
+        patch("src.api.conversation_store.settings", tmp_settings),
+        patch("src.api.app.conversation_store", store),
+        patch("src.api.app.get_service_manager", return_value=service_manager),
+    ):
+        client = TestClient(app)
+        response = client.post("/api/v1/conversations/conv-report/report")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["path"].startswith("obsirag/insights/")
+    saved_path = tmp_settings.vault / payload["path"]
+    assert saved_path.exists()
+    content = saved_path.read_text(encoding="utf-8")
+    assert "type: rapport" in content
+    assert "title: Rapport Mission Artemis" in content
+    assert "## Corpus complet par themes" in content
+    assert "#### Utilisateur" in content
+    assert "Fais une synthese de la mission Artemis II." in content
+    assert "#### Assistant" in content
+    assert "Artemis II valide Orion avant les prochaines missions lunaires." in content
+    assert "```mermaid" in content
+    assert "A[Preparation] --> B[Vol circumlunaire]" in content
+    assert "#### Illustrations associees" in content
+    assert "![NASA](https://example.com/nasa.png)" in content
+    assert "![Capsule Orion](https://example.com/orion.png)" in content
+    service_manager.indexer.index_note.assert_called_once_with(saved_path)
+    service_manager.chroma.invalidate_list_notes_cache.assert_called_once()
+
+
+def test_normalize_report_markdown_deduplicates_ner_section_and_skips_placeholder_block():
+    raw_markdown = """# Rapport Dune
+
+### Entités NER - Index complet
+
+- **Timothée Chalamet** (PERSON)
+- **Dune** (WORK)
+- **Dune Partie 3** (WORK)
+- **Dune Troisième Partie Le Messie et son empire de sang** (WORK)
+- **Dune 3 affiches sombres** (WORK)
+- **Dune 3** (WORK)
+- **IMAX 70mm** (MEDIUM)
+- **Dune Partie Trois** (WORK)
+- **Dune Partie 3** (WORK)
+- **Warner Bros.** (ORG)
+
+## Entites NER - Index complet
+
+### PERSON
+A completer.
+
+### ORG
+A completer.
+
+### GPE
+A completer.
+
+### LOC
+A completer.
+
+### EVENT
+A completer.
+
+### SUBSTANCE
+A completer.
+
+### DATE
+A completer.
+
+*Sources :* Conversation uniquement
+"""
+
+    normalized = _normalize_report_markdown(
+        raw_markdown,
+        default_title="Rapport Dune",
+        sources=[],
+    )
+
+    assert normalized.count("## Entites NER - Index complet") == 1
+    assert normalized.count("- **Dune Partie 3** (WORK_OF_ART)") == 1
+    assert "- **Dune Troisième Partie Le Messie et son empire de sang** (WORK_OF_ART)" not in normalized
+    assert "- **Dune 3 affiches sombres** (WORK_OF_ART)" not in normalized
+    assert "- **Dune 3** (WORK_OF_ART)" not in normalized
+    assert "- **Dune Partie Trois** (WORK_OF_ART)" not in normalized
+    assert "- **Dune Part Three** (WORK_OF_ART)" not in normalized
+    assert "- **Dune Part Three Timothée Chalamet** (WORK_OF_ART)" not in normalized
+    assert "### WORK_OF_ART" in normalized
+    assert "### PERSON\n- **Timothée Chalamet** (PERSON)" in normalized
+    assert "### ORG\n- **Warner Bros.** (ORG)" in normalized
+    assert "### MEDIUM" in normalized
+    assert "- **IMAX 70mm** (MEDIUM)" in normalized
+    assert "A completer." not in normalized
+    assert "### GPE" not in normalized
+    assert "### DATE" not in normalized
+    assert "### MISC" not in normalized
+
+
+def test_normalize_report_markdown_extracts_embedded_markdown_document_before_ner_cleanup():
+    raw_markdown = """# Rapport que sais-tu sur le film Dune ?
+
+```markdown
+---
+title: Rapport que sais-tu sur le film Dune ?
+date: 2026-04-15
+type: rapport
+statut: finalise
+---
+
+### Entités NER - Index complet
+
+- **Timothée Chalamet** (PERSON)
+- **Dune** (WORK_OF_ART)
+- **Dune Partie 3** (WORK_OF_ART)
+- **Dune Part Three** (WORK_OF_ART)
+- **Dune 3 affiches sombres** (WORK_OF_ART)
+- **IMAX 70mm** (MEDIUM)
+
+## Entites NER - Index complet
+
+### PERSON
+A completer.
+
+### ORG
+A completer.
+
+### GPE
+A completer.
+
+### LOC
+A completer.
+
+### EVENT
+A completer.
+
+### SUBSTANCE
+A completer.
+
+### DATE
+A completer.
+```
+"""
+
+    normalized = _normalize_report_markdown(
+        raw_markdown,
+        default_title="Rapport que sais-tu sur le film Dune ?",
+        sources=[],
+    )
+
+    assert "```markdown" not in normalized
+    assert normalized.count("## Entites NER - Index complet") == 1
+    assert normalized.count("- **Dune Partie 3** (WORK_OF_ART)") == 1
+    assert "- **Dune Part Three** (WORK_OF_ART)" not in normalized
+    assert "- **Dune 3 affiches sombres** (WORK_OF_ART)" not in normalized
+    assert "### MEDIUM" in normalized
+    assert "A completer." not in normalized
+
+
+def test_normalize_report_markdown_extracts_unclosed_embedded_markdown_document():
+    raw_markdown = """# Rapport que sais-tu sur le film Dune ?
+
+```markdown
+---
+title: Rapport que sais-tu sur le film Dune ?
+date: 2026-04-15
+type: rapport
+statut: finalise
+---
+
+### Entités NER - Index complet
+
+- **Timothée Chalamet** (PERSON)
+- **Dune Partie 3** (WORK_OF_ART)
+- **Dune Part Three** (WORK_OF_ART)
+- **Dune 3 affiches sombres** (WORK_OF_ART)
+- **IMAX 70mm** (MEDIUM)
+
+## Entites NER - Index complet
+
+### PERSON
+A completer.
+
+### ORG
+A completer.
+"""
+
+    normalized = _normalize_report_markdown(
+        raw_markdown,
+        default_title="Rapport que sais-tu sur le film Dune ?",
+        sources=[],
+    )
+
+    assert "```markdown" not in normalized
+    assert normalized.count("## Entites NER - Index complet") == 1
+    assert normalized.count("- **Dune Partie 3** (WORK_OF_ART)") == 1
+    assert "- **Dune Part Three** (WORK_OF_ART)" not in normalized
+    assert "- **Dune 3 affiches sombres** (WORK_OF_ART)" not in normalized
+    assert "### MEDIUM" in normalized
+    assert "A completer." not in normalized
+
+
+def test_normalize_report_markdown_ignores_misc_noise_entries():
+    raw_markdown = """# Rapport Dune
+
+## Entites NER - Index complet
+
+### MISC
+- ****D** (MISC)
+- **Denis Villeneuve** (PERSON)
+
+*Sources :* Conversation uniquement
+"""
+
+    normalized = _normalize_report_markdown(
+        raw_markdown,
+        default_title="Rapport Dune",
+        sources=[],
+    )
+
+    assert "### MISC" not in normalized
+    assert "****D**" not in normalized
+    assert "### PERSON" in normalized
+    assert "- **Denis Villeneuve** (PERSON)" in normalized
+
+
+def test_theme_coverage_section_keeps_readable_heading_without_midword_truncation():
+    conversation = ConversationDetailModel.model_validate(
+        {
+            "id": "conv-theme-heading",
+            "title": "Dune",
+            "updatedAt": "2026-04-18T12:00:00Z",
+            "draft": "",
+            "messages": [
+                {
+                    "id": "user-1",
+                    "role": "user",
+                    "content": "ajoute à la conversation une synthèse de toutes les notes concernant les films Dune avec un focus sur les personnages, les maisons et les visions politiques décrites dans les sources",
+                    "createdAt": "2026-04-18T12:00:00Z",
+                },
+                {
+                    "id": "assistant-1",
+                    "role": "assistant",
+                    "content": "Voici la synthèse regroupée.",
+                    "createdAt": "2026-04-18T12:00:01Z",
+                },
+            ],
+        }
+    )
+
+    section = _build_conversation_theme_coverage_section(conversation)
+    heading_line = next(line for line in section.splitlines() if line.startswith("### Theme 1 - "))
+
+    assert "ajoute à la conversation une synthèse de toutes les notes concernant les films Dune avec un focus sur les personnages" in heading_line
+    assert "les maisons et les..." in heading_line
+    assert not heading_line.endswith("avec u")
+    assert not heading_line.endswith("avec u...")
 
 
 def test_lookup_conversation_entity_contexts_requests_up_to_ten_entities():
@@ -231,6 +636,17 @@ def test_stream_message_emits_sse_and_persists_messages(tmp_path: Path, tmp_sett
         "Extraction des entites NER",
         "Finalisation de la reponse",
     ]
+
+
+def test_iter_answer_tokens_preserves_mermaid_markdown_whitespace():
+    answer = "### Diagramme\n\n```mermaid\nflowchart TD\n  A[Start] --> B[Done]\n```\n"
+
+    tokens = _iter_answer_tokens(answer)
+
+    assert "".join(tokens) == answer
+    assert any("```mermaid\n" in token for token in tokens)
+    assert any("B[Done]\n" in token for token in tokens)
+    assert tokens[-1] == "```\n"
 
 
 def test_create_message_uses_fallback_worker_when_primary_worker_crashes(tmp_path: Path, tmp_settings):

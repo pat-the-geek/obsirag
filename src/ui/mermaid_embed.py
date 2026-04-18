@@ -28,7 +28,22 @@ def build_mermaid_html_document(code: str, idx: int) -> str:
   <script>
     (async function() {{
       const code = {code_json};
+      function hasForbiddenCharacter(value) {{
+        for (const character of value) {{
+          const current = character.charCodeAt(0);
+          if (current === 9 || current === 10 || current === 13) {{
+            continue;
+          }}
+          if (current < 32 || current > 126) {{
+            return true;
+          }}
+        }}
+        return false;
+      }}
       try {{
+        if (hasForbiddenCharacter(code)) {{
+          throw new Error('Caracteres non ASCII detectes');
+        }}
         mermaid.initialize({{
           startOnLoad: false,
           theme: 'dark',
@@ -39,8 +54,8 @@ def build_mermaid_html_document(code: str, idx: int) -> str:
         const {{ svg }} = await mermaid.render('mg{idx}', code);
         document.getElementById('out').innerHTML = svg;
       }} catch(e) {{
-        document.getElementById('err').textContent =
-          '⚠ Erreur Mermaid\\n' + e.message + '\\n\\n' + code;
+        document.getElementById('out').innerHTML = '';
+        document.getElementById('err').textContent = code;
       }}
     }})();
   </script>

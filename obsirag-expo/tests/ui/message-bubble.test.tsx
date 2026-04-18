@@ -53,6 +53,30 @@ describe('MessageBubble', () => {
     expect(joined).not.toMatch(/unknown/i);
   });
 
+  it('keeps the user message shell anchored to the right edge', () => {
+    const message: ChatMessage = {
+      id: 'user-right-aligned',
+      role: 'user',
+      content: 'Message aligne a droite',
+      createdAt: '2026-04-18T12:00:00Z',
+    };
+
+    const tree = renderer.create(<MessageBubble message={message} />);
+    const shell = tree.root.findByProps({ testID: 'user-message-shell' });
+    const bubble = tree.root.findAllByType('View').find((node) => {
+      const style = node.props.style;
+      if (!Array.isArray(style)) {
+        return false;
+      }
+      return style.some((item) => item?.backgroundColor === '#191919');
+    });
+
+    expect(shell.props.style).toEqual(expect.arrayContaining([expect.objectContaining({ width: '100%', alignItems: 'flex-end' })]));
+    expect(bubble?.props.style).toEqual(
+      expect.arrayContaining([expect.objectContaining({ alignSelf: 'flex-end', marginLeft: 'auto' })]),
+    );
+  });
+
   it('hides the fallback placeholder bubble once DDG enrichment is available', () => {
     const message: ChatMessage = {
       id: 'assistant-1',
@@ -237,6 +261,29 @@ describe('MessageBubble', () => {
 
     expect(markdownNodes[0]?.props.markdown).toContain('[Wikipedia](https://example.com/ada)');
     expect(tree.root.findByProps({ testID: 'message-query-overview-response' })).toBeTruthy();
+  });
+
+  it('keeps the main assistant response visible when Mermaid content is present alongside a DDG overview', () => {
+    const message: ChatMessage = {
+      id: 'assistant-web-mermaid',
+      role: 'assistant',
+      content: ['```mermaid', 'flowchart TD', '  A[Question] --> B[Reponse]', '```'].join('\n'),
+      createdAt: '2026-04-18T12:00:00Z',
+      provenance: 'web',
+      queryOverview: {
+        query: 'diagramme mermaid',
+        searchQuery: 'diagramme mermaid flowchart example',
+        summary: 'Resume DDG',
+        sources: [],
+      },
+    };
+
+    const tree = renderer.create(<MessageBubble message={message} />);
+    const markdownNodes = tree.root.findAllByType(MarkdownNote);
+
+    expect(tree.root.findByProps({ testID: 'assistant-reveal-shell' })).toBeTruthy();
+    expect(tree.root.findByProps({ testID: 'message-query-overview-response' })).toBeTruthy();
+    expect(markdownNodes.some((node) => String(node.props.markdown).includes('```mermaid'))).toBe(true);
   });
 
   it('offers a direct web-search action for assistant answers', () => {

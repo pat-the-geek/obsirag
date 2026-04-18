@@ -179,6 +179,16 @@ export class ObsiRagApi {
     });
   }
 
+  async generateConversationReport(conversationId: string): Promise<SaveConversationResult> {
+    if (this.config.useMockServer) {
+      return { path: 'obsirag/insights/2026-04/web_artemis_ii.md' };
+    }
+
+    return this.requestJson<SaveConversationResult>(`/api/v1/conversations/${encodeURIComponent(conversationId)}/report`, {
+      method: 'POST',
+    });
+  }
+
   async getNote(noteId: string): Promise<NoteDetail> {
     if (this.config.useMockServer) {
       const found = mockNotes.find((item) => item.id === noteId) ?? mockNotes[0];

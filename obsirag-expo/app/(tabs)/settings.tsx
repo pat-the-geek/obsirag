@@ -50,6 +50,7 @@ export default function SettingsScreen() {
       <SectionCard title="Configuration serveur" subtitle="Le frontend est deja structure pour un backend Python expose via API REST/SSE.">
         <Text>Backend: {backendUrl}</Text>
         <StatusPill label={useMockServer ? 'Mode mock' : 'Mode live'} tone={useMockServer ? 'warning' : 'success'} />
+        <Text>Source runtime: {useMockServer ? 'Donnees mock locales' : 'API FastAPI live'}</Text>
         <Pressable onPress={() => router.push('/(auth)/server-config')} style={styles.button}>
           <Text style={styles.buttonText}>Modifier la connexion</Text>
         </Pressable>
@@ -79,6 +80,9 @@ export default function SettingsScreen() {
       </SectionCard>
       <SectionCard title="Runtime visible">
         <Text>LLM: {data?.llmAvailable ? 'disponible' : 'indisponible'}</Text>
+        <Text>Provider LLM: {data?.runtime?.llmProvider ?? '-'}</Text>
+        <Text>Modele actif: {data?.runtime?.llmModel ?? (useMockServer ? 'mock' : 'en attente')}</Text>
+        <Text>Embeddings: {data?.runtime?.embeddingModel ?? '-'}</Text>
         <Text>Notes indexees: {data?.notesIndexed ?? '-'}</Text>
         <Text>Chunks: {data?.chunksIndexed ?? '-'}</Text>
         <StatusPill label={autolearnLabel} tone={autolearnTone} />

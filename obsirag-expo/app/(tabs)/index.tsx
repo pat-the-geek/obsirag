@@ -1,25 +1,32 @@
-import { useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { useState } from 'react';
+import { ActivityIndicator, Image, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useRouter } from 'expo-router';
 
-import { MetricStrip } from '../../components/system/metric-strip';
+import { AutolearnLogPanel } from '../../components/system/autolearn-log-panel';
+import { SystemStartupView } from '../../components/system/system-startup-view';
 import { Screen } from '../../components/ui/screen';
 import { SectionCard } from '../../components/ui/section-card';
 import { StatusPill } from '../../components/ui/status-pill';
+import { useServerConfig } from '../../features/auth/use-server-config';
 import { useNoteSearch } from '../../features/notes/use-notes';
 import { useSystemStatus } from '../../features/system/use-system-status';
+
+const appIcon = require('../../assets/app-icon.png');
+
+type HeroBadgeTone = 'frontend' | 'ai' | 'backend' | 'runtime';
+
+type HeroBadge = {
+  icon: string;
+  label: string;
+  tone: HeroBadgeTone;
+};
 
 export default function DashboardScreen() {
   const router = useRouter();
   const [noteQuery, setNoteQuery] = useState('');
-  const { data, isLoading, isRefetching, refetch } = useSystemStatus();
+  const { backendUrl, useMockServer } = useServerConfig();
+  const { data, isLoading, isRefetching, refetch, isError, error } = useSystemStatus({ refetchIntervalMs: 1200 });
   const noteSearch = useNoteSearch(noteQuery);
-  const logScrollRef = useRef<ScrollView | null>(null);
-  const autolearnLog = data?.autolearn?.log ?? [];
-
-  useEffect(() => {
-    logScrollRef.current?.scrollToEnd({ animated: false });
-  }, [autolearnLog]);
 
   if (isLoading || !data) {
     return (
@@ -29,19 +36,84 @@ export default function DashboardScreen() {
     );
   }
 
+  if (isError) {
+    return (
+      <Screen backgroundColor="#f4f1ea" refreshing={isRefetching} onRefresh={refetch}>
+        <SystemStartupView
+          startup={{
+            ready: false,
+            steps: ['Connexion au backend', 'Lecture de l’état du système'],
+            currentStep: 'Impossible de récupérer le statut du système',
+            error: error instanceof Error ? error.message : 'Erreur inconnue',
+          }}
+          loading={false}
+          onContinue={() => refetch()}
+          continueLabel="Réessayer"
+        />
+      </Screen>
+    );
+  }
+
+  if (!data.startup?.ready) {
+    return (
+      <Screen backgroundColor="#f4f1ea" refreshing={isRefetching} onRefresh={refetch}>
+        <SystemStartupView
+          startup={data.startup}
+          backendReachable={data.backendReachable}
+          llmAvailable={data.llmAvailable}
+          notesIndexed={data.notesIndexed}
+          chunksIndexed={data.chunksIndexed}
+        />
+        <AutolearnLogPanel log={data.autolearn?.log} compact />
+      </Screen>
+    );
+  }
+
+  const autolearnLog = data.autolearn?.log ?? [];
+  const indexingStatus = formatStatusValue(data.indexing?.current, 'Aucun traitement en cours');
+  const autolearnStatus = formatStatusValue(data.autolearn?.step, 'Inactif');
+  const stackBadges = buildDashboardBadges(data);
+  const activeLlmModel = formatActiveModelValue(data.runtime?.llmModel);
+  const runtimeSourceLabel = useMockServer ? 'Donnees mock locales' : 'API FastAPI live';
+  const connectionModeLabel = useMockServer ? 'Mode mock' : 'Mode live';
+
   return (
     <Screen refreshing={isRefetching} onRefresh={refetch}>
-      <MetricStrip
-        items={[
-          { label: 'Notes indexees', value: data.notesIndexed },
-          { label: 'Chunks', value: data.chunksIndexed },
-          { label: 'LLM', value: data.llmAvailable ? 'Disponible' : 'Hors ligne' },
-        ]}
-      />
+      <View style={styles.heroCard}>
+        <Image source={appIcon} style={styles.heroImage} resizeMode="contain" />
+        <View style={styles.heroCopy}>
+          <Text style={styles.heroEyebrow}>ObsiRAG</Text>
+          <Text style={styles.heroTitle}>Dashboard</Text>
+          <Text style={styles.heroSubtitle}>Vue d’ensemble du runtime, des recherches rapides et de l’activité de l’auto-learner.</Text>
+          <View style={styles.activeModelCard}>
+            <Text style={styles.activeModelLabel}>LLM actif ObsiRAG</Text>
+            <Text selectable style={styles.activeModelValue}>{activeLlmModel}</Text>
+            <Text style={styles.activeModelMeta}>Source runtime: {runtimeSourceLabel}</Text>
+            <Text selectable style={styles.activeModelMeta}>Backend: {backendUrl}</Text>
+          </View>
+          <View style={styles.badgeRow}>
+            {stackBadges.map((badge) => (
+              <View key={`${badge.tone}-${badge.label}`} style={[styles.heroBadge, badge.tone === 'frontend' ? styles.heroBadgeFrontend : null, badge.tone === 'ai' ? styles.heroBadgeAi : null, badge.tone === 'backend' ? styles.heroBadgeBackend : null, badge.tone === 'runtime' ? styles.heroBadgeRuntime : null]}>
+                <Text style={[styles.heroBadgeLabel, badge.tone === 'frontend' ? styles.heroBadgeLabelFrontend : null, badge.tone === 'ai' ? styles.heroBadgeLabelAi : null, badge.tone === 'backend' ? styles.heroBadgeLabelBackend : null, badge.tone === 'runtime' ? styles.heroBadgeLabelRuntime : null]}>{badge.icon} {badge.label}</Text>
+              </View>
+            ))}
+          </View>
+        </View>
+      </View>
       <SectionCard title="Etat du systeme" subtitle="Synthese rapide du runtime ObsiRAG expose par le backend.">
         <StatusPill label={data.backendReachable ? 'Backend joignable' : 'Backend indisponible'} tone={data.backendReachable ? 'success' : 'danger'} />
-        <Text>Indexation: {data.indexing?.current ?? 'Etat inconnu'}</Text>
-        <Text>Auto-learn: {data.autolearn?.step ?? 'Etat inconnu'}</Text>
+        <StatusPill label={connectionModeLabel} tone={useMockServer ? 'warning' : 'success'} />
+        <Text>Indexation: {indexingStatus}</Text>
+        <Text>Auto-learn: {autolearnStatus}</Text>
+        <Text>Source runtime: {runtimeSourceLabel}</Text>
+        <SystemStartupView
+          startup={data.startup}
+          backendReachable={data.backendReachable}
+          llmAvailable={data.llmAvailable}
+          notesIndexed={data.notesIndexed}
+          chunksIndexed={data.chunksIndexed}
+          compact
+        />
       </SectionCard>
       <SectionCard title="Acces rapides" subtitle="Recherche de note et navigation directe depuis le dashboard.">
         <TextInput
@@ -58,35 +130,168 @@ export default function DashboardScreen() {
           </Pressable>
         ))}
       </SectionCard>
-      <SectionCard title="Journal auto-learn" subtitle="Flux runtime de l'auto-learner, avec les derniers evenements visibles en bas.">
-        <View style={styles.logFrame}>
-          <ScrollView
-            ref={logScrollRef}
-            style={styles.logScroll}
-            contentContainerStyle={styles.logContent}
-            nestedScrollEnabled
-            showsVerticalScrollIndicator={false}
-            onContentSizeChange={() => {
-              logScrollRef.current?.scrollToEnd({ animated: false });
-            }}
-          >
-            {autolearnLog.length ? (
-              autolearnLog.map((entry, index) => (
-                <Text key={`${index}-${entry}`} style={styles.logEntry}>
-                  {entry}
-                </Text>
-              ))
-            ) : (
-              <Text style={styles.logEmpty}>Aucun evenement auto-learn a afficher.</Text>
-            )}
-          </ScrollView>
-        </View>
-      </SectionCard>
+      <AutolearnLogPanel log={autolearnLog} />
     </Screen>
   );
 }
 
+function formatStatusValue(value: string | undefined, fallback: string) {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : fallback;
+}
+
+function buildDashboardBadges(data: NonNullable<ReturnType<typeof useSystemStatus>['data']>): HeroBadge[] {
+  const runtime = data.runtime;
+  const llmName = formatModelName(runtime?.llmModel ?? 'LLM local');
+  return [
+    { icon: 'UI', label: 'React 18.3', tone: 'frontend' },
+    { icon: 'EX', label: 'Expo 52', tone: 'frontend' },
+    { icon: 'AI', label: `${runtime?.llmProvider ?? 'MLX'} local`, tone: 'ai' },
+    { icon: 'LLM', label: llmName, tone: 'ai' },
+    { icon: 'EMB', label: shortModelLabel(runtime?.embeddingModel, 'MiniLM'), tone: 'ai' },
+    { icon: 'NER', label: shortModelLabel(runtime?.nerModel, 'xx_ent_wiki_sm'), tone: 'ai' },
+    { icon: 'API', label: data.backendReachable ? 'FastAPI online' : 'FastAPI offline', tone: 'backend' },
+    { icon: 'DB', label: `${runtime?.vectorStore ?? 'ChromaDB'} 1.5`, tone: 'backend' },
+    { icon: 'RUN', label: data.autolearn?.managedBy === 'worker' || runtime?.autolearnMode === 'worker' ? 'Auto-learn worker' : 'Auto-learn intégré', tone: 'runtime' },
+    { icon: 'OK', label: data.llmAvailable ? 'LLM prêt' : 'LLM en attente', tone: 'runtime' },
+  ];
+}
+
+function formatModelName(model: string) {
+  const trimmed = model.trim();
+  if (!trimmed) {
+    return 'LLM local';
+  }
+  const compact = trimmed.split('/').pop() ?? trimmed;
+  return compact.replace(/-4bit$/i, ' 4bit');
+}
+
+function shortModelLabel(model: string | undefined, fallback: string) {
+  const trimmed = model?.trim();
+  if (!trimmed) {
+    return fallback;
+  }
+  return trimmed.split('/').pop() ?? trimmed;
+}
+
+function formatActiveModelValue(model: string | undefined) {
+  const trimmed = model?.trim();
+  if (!trimmed) {
+    return 'Chargement du modèle MLX…';
+  }
+  return trimmed;
+}
+
 const styles = StyleSheet.create({
+  heroCard: {
+    borderRadius: 28,
+    borderWidth: 1,
+    borderColor: '#decdb8',
+    backgroundColor: '#fbf5ea',
+    paddingHorizontal: 18,
+    paddingVertical: 20,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 16,
+  },
+  heroImage: {
+    width: 92,
+    height: 92,
+    borderRadius: 24,
+  },
+  heroCopy: {
+    flex: 1,
+    gap: 8,
+  },
+  heroEyebrow: {
+    color: '#8a562b',
+    fontSize: 12,
+    fontWeight: '800',
+    letterSpacing: 0.9,
+    textTransform: 'uppercase',
+  },
+  heroTitle: {
+    color: '#1f160c',
+    fontSize: 28,
+    fontWeight: '800',
+  },
+  heroSubtitle: {
+    color: '#6f5d49',
+    fontSize: 14,
+    lineHeight: 20,
+  },
+  activeModelCard: {
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#e4cfb1',
+    backgroundColor: '#fffaf2',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    gap: 4,
+  },
+  activeModelLabel: {
+    color: '#8a562b',
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 0.6,
+    textTransform: 'uppercase',
+  },
+  activeModelValue: {
+    color: '#1f160c',
+    fontSize: 14,
+    lineHeight: 20,
+    fontWeight: '700',
+  },
+  activeModelMeta: {
+    color: '#6f5d49',
+    fontSize: 12,
+    lineHeight: 18,
+    fontWeight: '600',
+  },
+  badgeRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+    paddingTop: 4,
+  },
+  heroBadge: {
+    borderRadius: 999,
+    borderWidth: 1,
+    paddingHorizontal: 9,
+    paddingVertical: 5,
+  },
+  heroBadgeFrontend: {
+    backgroundColor: '#edf6ff',
+    borderColor: '#bfd9ee',
+  },
+  heroBadgeAi: {
+    backgroundColor: '#fff3df',
+    borderColor: '#edcc96',
+  },
+  heroBadgeBackend: {
+    backgroundColor: '#eef8ef',
+    borderColor: '#c4dfc8',
+  },
+  heroBadgeRuntime: {
+    backgroundColor: '#f6efe9',
+    borderColor: '#dfcbbb',
+  },
+  heroBadgeLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  heroBadgeLabelFrontend: {
+    color: '#23557d',
+  },
+  heroBadgeLabelAi: {
+    color: '#8a4f0a',
+  },
+  heroBadgeLabelBackend: {
+    color: '#2f6a39',
+  },
+  heroBadgeLabelRuntime: {
+    color: '#6f4a2b',
+  },
   input: {
     borderWidth: 1,
     borderColor: '#d8cfc0',
@@ -111,36 +316,5 @@ const styles = StyleSheet.create({
   quickMeta: {
     color: '#6f5d49',
     fontSize: 12,
-  },
-  logFrame: {
-    minHeight: 220,
-    maxHeight: 260,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: '#d9cfbe',
-    backgroundColor: '#201812',
-    overflow: 'hidden',
-  },
-  logScroll: {
-    flex: 1,
-  },
-  logContent: {
-    flexGrow: 1,
-    justifyContent: 'flex-end',
-    paddingHorizontal: 14,
-    paddingVertical: 14,
-    gap: 8,
-  },
-  logEntry: {
-    color: '#ece3d5',
-    fontSize: 13,
-    lineHeight: 19,
-    fontFamily: 'Menlo',
-  },
-  logEmpty: {
-    color: '#b8aa95',
-    fontSize: 13,
-    lineHeight: 19,
-    fontStyle: 'italic',
   },
 });

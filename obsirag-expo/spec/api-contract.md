@@ -145,6 +145,16 @@ message_error
 
 Retour : `NoteDetail`.
 
+## Conversations
+
+### POST /api/v1/conversations/:id/save
+
+Retour : `{ path }`.
+
+### POST /api/v1/conversations/:id/report
+
+Genere un rapport markdown Obsidian a partir de la conversation, le sauvegarde dans `obsirag/insights/` et retourne `{ path }`.
+
 ### GET /api/v1/notes/search?q=...
 
 Recherche de notes pour navigation rapide.

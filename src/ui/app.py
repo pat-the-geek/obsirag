@@ -6,7 +6,6 @@ import inspect
 import re
 import threading
 import time
-import unicodedata
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
@@ -38,6 +37,7 @@ from src.ui.chat_sessions import (
 )
 from src.ui.components.note_bridge_component import note_bridge as _note_bridge
 from src.ui.chat_mermaid import build_mermaid_chat_preview_html, estimate_chat_mermaid_height
+from src.ui.mermaid_streamlit import MERMAID_SPLIT_RE, build_streamlit_chat_blocks
 from src.ui.chat_ui_fragments import (
     build_cited_source_row_html,
     build_generation_status_caption,
@@ -197,41 +197,6 @@ _restore_active_chat_thread()
 
 
 # ---- Helpers rendu ----
-
-_EMOJI_RE = re.compile(
-    "[\U0001F000-\U0001FFFF"
-    "\U00002600-\U000027BF"
-    "\U0001F300-\U0001F9FF"
-    "\U00002702-\U000027B0]+",
-    flags=re.UNICODE,
-)
-
-
-def _clean_mermaid(code: str) -> str:
-    """Supprime accents, émojis et caractères spéciaux non ASCII dans du code Mermaid."""
-    # Supprimer les émojis
-    code = _EMOJI_RE.sub("", code)
-    lines = []
-    for line in code.splitlines():
-        # Normaliser les caractères accentués -> ASCII de base
-        normalized = unicodedata.normalize("NFD", line)
-        ascii_line = "".join(c for c in normalized if unicodedata.category(c) != "Mn")
-        # Supprimer tout caractère non imprimable non ASCII (hors tab/espace)
-        ascii_line = re.sub(r"[^\x09\x20-\x7E]", "", ascii_line)
-        lines.append(ascii_line)
-    code = "\n".join(lines)
-    # Wrapper en guillemets les labels de nœuds contenant des parenthèses ou accolades
-    # Ex: A[Titre (sous-titre)] --> A["Titre (sous-titre)"]
-    # On ne touche pas les labels déjà entre guillemets
-    code = re.sub(
-        r'\[([^"\]\[]*[(){][^"\]\[]*)\]',
-        lambda m: '["' + m.group(1).replace('"', "'") + '"]',
-        code,
-    )
-    return code
-
-
-_MERMAID_SPLIT_RE = re.compile(r"```mermaid\s*\n(.*?)```", re.DOTALL)
 
 # SVG "cerveau" — constante module-level (évite de reconstruire la chaîne à chaque message)
 _BRAIN_SVG = (
@@ -606,7 +571,7 @@ def _render_chat_response(text: str, *, placeholder=None) -> None:
     - Si placeholder fourni ET pas de Mermaid : met à jour en place (pas de slot vide).
     - Sinon : st.markdown dans le contexte courant.
     """
-    has_mermaid = bool(_MERMAID_SPLIT_RE.search(text))
+    has_mermaid = bool(MERMAID_SPLIT_RE.search(text))
 
     if not has_mermaid:
         # Cas le plus fréquent : rendu simple, mise à jour en place du placeholder
@@ -620,28 +585,18 @@ def _render_chat_response(text: str, *, placeholder=None) -> None:
     if placeholder is not None:
         placeholder.empty()
 
-    segments = _MERMAID_SPLIT_RE.split(text)
-    blocks: list[tuple[str, str]] = []
-    text_accum: list[str] = []
-    for i, segment in enumerate(segments):
-        if i % 2 == 0:
-            text_accum.append(segment)
-        else:
-            if text_accum:
-                blocks.append(("text", "\n".join(text_accum)))
-                text_accum = []
-            blocks.append(("mermaid", _clean_mermaid(segment.strip())))
-    if text_accum:
-        blocks.append(("text", "\n".join(text_accum)))
-
+    blocks = build_streamlit_chat_blocks(text)
     mermaid_idx = 0
     for btype, content in blocks:
         if btype == "text":
             if content.strip():
                 st.markdown(content)
-        else:
-            height = estimate_chat_mermaid_height(content)
+        elif btype == "mermaid_code":
             st.caption("📊 Diagramme Mermaid")
+            st.code(content, language="mermaid")
+        else:
+            st.caption("📊 Diagramme Mermaid")
+            height = estimate_chat_mermaid_height(content)
             render_html_document(build_mermaid_chat_preview_html(content, mermaid_idx), height=height)
             mermaid_idx += 1
 

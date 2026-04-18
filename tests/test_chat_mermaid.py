@@ -27,6 +27,11 @@ class TestChatMermaid:
         assert "mermaid.render('prev_5',CODE)" in html
         assert "FS_B64" in html
 
+    def test_chat_mermaid_error_falls_back_to_raw_code(self):
+        html = build_mermaid_chat_preview_html("graph TD\nA-->B", 5)
+
+        assert "document.getElementById('err').textContent=CODE;" in html
+
     def test_estimate_chat_mermaid_height_clamps_bounds(self):
         assert estimate_chat_mermaid_height("graph TD\nA-->B") == 220
         assert estimate_chat_mermaid_height("\n".join(["A-->B"] * 50)) == 600

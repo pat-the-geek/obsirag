@@ -31,6 +31,7 @@
     "expo-router": "~4.0.17",
     "expo-secure-store": "~14.0.1",
     "expo-status-bar": "~2.0.1",
+    "mermaid": "^11.14.0",
     "react": "18.3.1",
     "react-dom": "18.3.1",
     "react-hook-form": "^7.53.1",
@@ -44,6 +45,7 @@
     "zustand": "^5.0.0"
   },
   "devDependencies": {
+    "@babel/plugin-transform-class-static-block": "^7.28.6",
     "@types/d3-force": "^3.0.10",
     "@types/jest": "29.5.14",
     "@types/node": "22.15.30",

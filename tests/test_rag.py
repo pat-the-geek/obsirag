@@ -243,6 +243,39 @@ class TestRAGConversationBehavior:
         assert "Le lien direct n'est pas documenté dans ton coffre." in normalized
         assert "Les notes permettent une synthèse partielle." in normalized
 
+    def test_normalize_final_answer_sanitizes_mermaid_blocks_to_ascii_only(self, rag):
+        answer = (
+            "Voici un schema utile.\n\n"
+            "```mermaid\n"
+            "flowchart TD\n"
+            "  A[Resume 🚀] --> B[Reponse détaillée]\n"
+            "```"
+        )
+
+        normalized = rag._normalize_final_answer(answer, "Montre un schema Mermaid", "hybrid")
+
+        assert "```mermaid" in normalized
+        assert "Resume" in normalized
+        assert "Reponse detaillee" in normalized
+        assert "🚀" not in normalized
+        assert "Résumé" not in normalized
+        assert "détaillée" not in normalized
+
+    def test_normalize_final_answer_normalizes_flowchart_labels_with_parentheses_and_colons(self, rag):
+        answer = (
+            "```mermaid\n"
+            "graph TD\n"
+            "  A[Dune: Part Three Tournage]\n"
+            "  B[Premiere revelation visuelle (mars)]\n"
+            "  A --> B\n"
+            "```"
+        )
+
+        normalized = rag._normalize_final_answer(answer, "Montre un schema Mermaid", "hybrid")
+
+        assert 'A["Dune: Part Three Tournage"]' in normalized
+        assert 'B["Premiere revelation visuelle (mars)"]' in normalized
+
     def test_mark_primary_sources_flags_dominant_note(self, rag):
         chunks = [
             _make_chunk(title="Python pour data science", text="Python et pandas.", fp="python.md"),

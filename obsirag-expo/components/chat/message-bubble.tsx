@@ -40,7 +40,10 @@ export function MessageBubble({
   const [sourcesOpen, setSourcesOpen] = useState(false);
   const [entityContextsOpen, setEntityContextsOpen] = useState(false);
   const hasRenderableQueryOverview = isRenderableQueryOverview(message);
-  const shouldHideAssistantMainBubble = Boolean(!isUser && hasRenderableQueryOverview && (message.sentinel || message.provenance === 'web'));
+  const hasMermaidContent = containsMermaidFence(message.content);
+  const shouldHideAssistantMainBubble = Boolean(
+    !isUser && hasRenderableQueryOverview && !hasMermaidContent && (message.sentinel || message.provenance === 'web'),
+  );
   const showWebSearchAction = Boolean(!isUser && message.id !== 'streaming-assistant' && webSearchSuggestion && onSuggestWebSearch);
   const showDeleteAction = Boolean(!isUser && message.id !== 'streaming-assistant' && onDeleteMessage);
   const ddgMarkdown = buildDdgMarkdown(message);
@@ -80,7 +83,10 @@ export function MessageBubble({
   return (
     <View style={[styles.stack, isUser ? styles.userStack : styles.assistantStack]}>
       {!shouldHideAssistantMainBubble ? (
-        <Animated.View testID={isUser ? undefined : 'assistant-reveal-shell'} style={assistantRevealStyle}>
+        <Animated.View
+          testID={isUser ? 'user-message-shell' : 'assistant-reveal-shell'}
+          style={[assistantRevealStyle, isUser ? styles.userBubbleShell : null]}
+        >
           <View style={[styles.base, isUser ? styles.userBubble : styles.assistantBubble]}>
             {isUser ? (
               <Text style={styles.userContent}>{renderEntityHighlightedText(message.content, 'dark', highlightEntities, undefined, `user-${message.id}`)}</Text>
@@ -164,6 +170,10 @@ const styles = StyleSheet.create({
   userStack: {
     alignItems: 'flex-end',
   },
+  userBubbleShell: {
+    width: '100%',
+    alignItems: 'flex-end',
+  },
   assistantStack: {
     alignItems: 'stretch',
     gap: 10,
@@ -175,6 +185,8 @@ const styles = StyleSheet.create({
   },
   userBubble: {
     maxWidth: '56%',
+    alignSelf: 'flex-end',
+    marginLeft: 'auto',
     backgroundColor: '#191919',
     borderWidth: 1,
     borderColor: '#2d2d2d',
@@ -338,6 +350,10 @@ function sanitizeDdgMarkdown(markdown: string): string {
     .join('\n')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
+}
+
+function containsMermaidFence(markdown: string): boolean {
+  return /```mermaid\s*\n/i.test(markdown);
 }
 
 function extractBulletHeading(line: string): string | null {

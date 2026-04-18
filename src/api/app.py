@@ -8,6 +8,7 @@ import sqlite3
 import subprocess
 import sys
 import time
+import unicodedata
 from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import urlparse
@@ -19,9 +20,10 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Query, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
+from src.ai.mermaid_sanitizer import sanitize_mermaid_blocks
 from src.ai.web_search import _format_query_overview_markdown, build_query_overview_sync, is_not_in_vault
 from src.api.conversation_store import ApiConversationStore
-from src.api.runtime import get_service_manager
+from src.api.runtime import ensure_service_manager_started, get_service_manager
 from src.api.schemas import (
     AutolearnStatusModel,
     ChatMessageModel,
@@ -47,10 +49,12 @@ from src.api.schemas import (
     NoteDetailModel,
     QueryOverviewModel,
     RelatedNoteModel,
+    RuntimeInfoModel,
     SaveConversationResponse,
     SessionRequest,
     SessionResponse,
     SourceRefModel,
+    StartupStatusModel,
     SystemAlertModel,
     SystemStatusResponse,
     WebSearchRequestModel,
@@ -104,6 +108,47 @@ def _load_index_state() -> dict[str, str]:
     return JsonStateStore(settings.index_state_file).load({})
 
 
+def _load_startup_status() -> dict[str, Any]:
+    default = {"ready": False, "steps": [], "current_step": "", "error": None, "updated_at": None}
+    return JsonStateStore(settings.startup_status_file).load(default)
+
+
+def _has_meaningful_startup_payload(payload: dict[str, Any]) -> bool:
+    return bool(
+        payload.get("ready")
+        or payload.get("steps")
+        or str(payload.get("current_step") or "").strip()
+        or str(payload.get("error") or "").strip()
+        or str(payload.get("updated_at") or "").strip()
+    )
+
+
+def _infer_ready_startup_payload(indexing_status: dict[str, Any], index_state: dict[str, str]) -> dict[str, Any] | None:
+    has_runtime_evidence = bool(
+        index_state
+        or int(indexing_status.get("processed") or 0) > 0
+        or int(indexing_status.get("total") or 0) > 0
+        or str(indexing_status.get("current") or "").strip()
+    )
+    if not has_runtime_evidence:
+        return None
+
+    updated_at = None
+    status_file = settings.data_dir / "stats" / "service_manager_status.json"
+    try:
+        updated_at = datetime.fromtimestamp(status_file.stat().st_mtime, UTC).isoformat()
+    except Exception:
+        updated_at = None
+
+    return {
+        "ready": True,
+        "steps": ["Initialisation du runtime ObsiRAG", "Préparation des services applicatifs", "Tous les services sont opérationnels"],
+        "current_step": "Tous les services sont opérationnels",
+        "error": None,
+        "updated_at": updated_at,
+    }
+
+
 def _count_chunks_fast() -> int:
     db_path = settings.data_dir / "chroma" / "chroma.sqlite3"
     try:
@@ -153,6 +198,21 @@ def _resolve_autolearn_status(svc: Any | None = None) -> AutolearnStatusModel:
     )
 
 
+def _resolve_startup_status() -> StartupStatusModel:
+    payload = _load_startup_status()
+    if not _has_meaningful_startup_payload(payload):
+        inferred = _infer_ready_startup_payload(_load_indexing_status(), _load_index_state())
+        if inferred is not None:
+            payload = inferred
+    return StartupStatusModel(
+        ready=bool(payload.get("ready", False)),
+        steps=[str(item) for item in (payload.get("steps") or []) if str(item).strip()],
+        currentStep=str(payload.get("current_step") or ""),
+        error=str(payload.get("error") or "").strip() or None,
+        updatedAt=str(payload.get("updated_at") or "").strip() or None,
+    )
+
+
 def require_api_auth(authorization: str | None = Header(default=None)) -> None:
     expected = (settings.api_access_token or "").strip()
     if not expected:
@@ -188,7 +248,7 @@ def create_session(payload: SessionRequest) -> SessionResponse:
         authenticated=True,
         requiresAuth=bool(expected),
         tokenPreview=_token_preview(provided or expected),
-        backendUrlHint="http://localhost:8000",
+        backendUrlHint=settings.api_public_base_url,
         mode="token" if expected else "open",
     )
 
@@ -200,13 +260,14 @@ def get_session(_: None = Depends(require_api_auth)) -> SessionResponse:
         authenticated=True,
         requiresAuth=bool(expected),
         tokenPreview=_token_preview(expected),
-        backendUrlHint="http://localhost:8000",
+        backendUrlHint=settings.api_public_base_url,
         mode="token" if expected else "open",
     )
 
 
 @app.get("/api/v1/system/status", response_model=SystemStatusResponse)
 def system_status(_: None = Depends(require_api_auth)) -> SystemStatusResponse:
+    ensure_service_manager_started()
     indexing_status = _load_indexing_status()
     index_state = _load_index_state()
 
@@ -217,6 +278,15 @@ def system_status(_: None = Depends(require_api_auth)) -> SystemStatusResponse:
         chunksIndexed=_count_chunks_fast(),
         indexing=indexing_status,
         autolearn=_resolve_autolearn_status(),
+        startup=_resolve_startup_status(),
+        runtime=RuntimeInfoModel(
+            llmProvider="MLX",
+            llmModel=settings.mlx_chat_model,
+            embeddingModel=settings.embedding_model,
+            vectorStore="ChromaDB",
+            nerModel=settings.ner_model,
+            autolearnMode="worker" if settings.autolearn_enabled else "disabled",
+        ),
         alerts=[
             SystemAlertModel(
                 id="api-runtime",
@@ -251,7 +321,7 @@ def create_conversation(payload: CreateConversationRequest, _: None = Depends(re
 
 @app.get("/api/v1/conversations/{conversation_id}", response_model=ConversationDetailModel)
 def get_conversation(conversation_id: str, _: None = Depends(require_api_auth)) -> ConversationDetailModel:
-    item = conversation_store.get(conversation_id)
+    item = conversation_store.repair_unanswered_tail(conversation_id)
     if item is None:
         raise HTTPException(status_code=404, detail="Conversation not found")
     return item
@@ -283,6 +353,32 @@ def save_conversation(conversation_id: str, _: None = Depends(require_api_auth))
         path = conversation_store.save_markdown(conversation_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Conversation not found") from exc
+    return SaveConversationResponse(path=str(path.relative_to(settings.vault)))
+
+
+@app.post("/api/v1/conversations/{conversation_id}/report", response_model=SaveConversationResponse)
+def generate_conversation_report(conversation_id: str, _: None = Depends(require_api_auth)) -> SaveConversationResponse:
+    svc = get_service_manager()
+    svc.signal_ui_active()
+
+    conversation = conversation_store.get(conversation_id)
+    if conversation is None:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+
+    title = _conversation_report_title(conversation)
+    markdown = _generate_conversation_report_markdown(conversation, svc, default_title=title)
+
+    try:
+        path = conversation_store.save_report_markdown(conversation_id, markdown, title=title)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Conversation not found") from exc
+
+    try:
+        svc.indexer.index_note(path)
+        svc.chroma.invalidate_list_notes_cache()
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Report created but indexing failed: {exc}") from exc
+
     return SaveConversationResponse(path=str(path.relative_to(settings.vault)))
 
 
@@ -665,6 +761,7 @@ def explicit_web_search(
         sources=[_web_source_model(item) for item in (overview.get("sources") or []) if item.get("href")],
     )
     content = _format_query_overview_markdown(overview)
+    content = sanitize_mermaid_blocks(content)
     entity_contexts = _enrich_entity_contexts(
         user_text=payload.query,
         answer=content,
@@ -707,6 +804,642 @@ def _conversation_preview(item: ConversationDetailModel) -> str:
         return "Fil vide"
     content = item.messages[-1].content.strip()
     return content[:120] + ("…" if len(content) > 120 else "")
+
+
+def _conversation_report_title(conversation: ConversationDetailModel) -> str:
+    base_title = conversation.title.strip() or ApiConversationStore._derive_title(conversation.messages)
+    return f"Rapport {base_title}".strip()
+
+
+def _conversation_report_sources(conversation: ConversationDetailModel) -> list[str]:
+    sources: list[str] = []
+    for message in conversation.messages:
+        for source in message.sources or []:
+            file_path = str(source.filePath or "").strip()
+            if file_path and file_path not in sources:
+                sources.append(file_path)
+    return sources
+
+
+def _format_conversation_report_transcript(conversation: ConversationDetailModel) -> str:
+    lines = [f"Titre de la conversation : {conversation.title}", ""]
+    for index, message in enumerate(conversation.messages, start=1):
+        role = "Utilisateur" if message.role == "user" else "Assistant" if message.role == "assistant" else "Systeme"
+        content = message.content.strip()
+        if not content:
+            continue
+        lines.append(f"{role} {index}:")
+        lines.append(content)
+        if message.sources:
+            source_labels = [source.noteTitle or source.filePath for source in message.sources if source.filePath or source.noteTitle]
+            if source_labels:
+                lines.append(f"Sources mentionnees : {', '.join(source_labels[:6])}")
+        lines.append("")
+    return "\n".join(lines).strip()
+
+
+def _fallback_conversation_report_markdown(conversation: ConversationDetailModel, *, default_title: str) -> str:
+    sources = _conversation_report_sources(conversation)
+    user_questions = [message.content.strip() for message in conversation.messages if message.role == "user" and message.content.strip()]
+    assistant_answers = [message.content.strip() for message in conversation.messages if message.role == "assistant" and message.content.strip()]
+    body_lines = [
+        f"# {default_title}",
+        "",
+        "> [!info] Synthese creee automatiquement a partir de la conversation courante.",
+        "",
+        "## Contexte",
+        "",
+        "La conversation a ete transformee en rapport markdown Obsidian a partir des echanges entre l'utilisateur et l'assistant.",
+        "",
+        "## Analyse",
+        "",
+    ]
+
+    for question, answer in zip(user_questions, assistant_answers, strict=False):
+        body_lines.extend([
+            f"### {question[:90]}",
+            "",
+            answer,
+            "",
+        ])
+
+    if not assistant_answers:
+        body_lines.extend([
+            "Aucune reponse assistant exploitable n'etait disponible au moment de la generation du rapport.",
+            "",
+        ])
+
+    body_lines.extend([
+        "## Entites NER - Index complet",
+        "",
+        "### PERSON",
+        "A completer.",
+        "",
+        "### ORG",
+        "A completer.",
+        "",
+        "### GPE",
+        "A completer.",
+        "",
+        "### LOC",
+        "A completer.",
+        "",
+        "### EVENT",
+        "A completer.",
+        "",
+        "### SUBSTANCE",
+        "A completer.",
+        "",
+        "### DATE",
+        "A completer.",
+        "",
+        "*Sources :* " + (", ".join(sources) if sources else "Conversation uniquement"),
+    ])
+    return "\n".join(body_lines)
+
+
+_DEFAULT_NER_LABELS = ("PERSON", "ORG", "GPE", "LOC", "WORK_OF_ART", "EVENT", "SUBSTANCE", "DATE")
+_NER_NUMBER_ALIASES = {
+    "one": "1",
+    "first": "1",
+    "un": "1",
+    "une": "1",
+    "premier": "1",
+    "premiere": "1",
+    "deux": "2",
+    "second": "2",
+    "seconde": "2",
+    "two": "2",
+    "seconds": "2",
+    "three": "3",
+    "trois": "3",
+    "troisieme": "3",
+    "troisiemes": "3",
+    "third": "3",
+    "quatre": "4",
+    "quatrieme": "4",
+    "four": "4",
+    "cinq": "5",
+    "cinquieme": "5",
+    "five": "5",
+}
+_WORK_OF_ART_NOISE_TOKENS = {
+    "affiche",
+    "affiches",
+    "poster",
+    "posters",
+    "trailer",
+    "trailers",
+    "teaser",
+    "teasers",
+    "bande",
+    "annonce",
+    "photo",
+    "photos",
+    "image",
+    "images",
+    "visuel",
+    "visuels",
+    "sombre",
+    "sombres",
+    "dark",
+    "review",
+    "critique",
+    "critiques",
+    "rumeur",
+    "rumeurs",
+}
+
+
+def _strip_accents(value: str) -> str:
+    normalized = unicodedata.normalize("NFKD", value)
+    return "".join(char for char in normalized if not unicodedata.combining(char))
+
+
+def _normalize_heading_key(value: str) -> str:
+    lowered = _strip_accents(value).lower()
+    lowered = re.sub(r"[^a-z0-9\s-]+", " ", lowered)
+    return re.sub(r"\s+", " ", lowered).strip()
+
+
+def _is_ner_section_heading(line: str) -> bool:
+    stripped = line.strip()
+    if not stripped.startswith("#"):
+        return False
+    heading_text = stripped.lstrip("#").strip()
+    return "entites ner" in _normalize_heading_key(heading_text) and "index complet" in _normalize_heading_key(heading_text)
+
+
+def _normalize_ner_label(value: str) -> str:
+    normalized = _strip_accents(str(value).strip()).upper().replace(" ", "_").replace("-", "_")
+    normalized = re.sub(r"[^A-Z0-9_]+", "", normalized)
+    aliases = {
+        "PERSONNE": "PERSON",
+        "PERSONNES": "PERSON",
+        "PEOPLE": "PERSON",
+        "ORGANIZATION": "ORG",
+        "ORGANISATION": "ORG",
+        "ORGANISATIONS": "ORG",
+        "LOCATION": "LOC",
+        "LIEU": "LOC",
+        "LIEUX": "LOC",
+        "OEUVRE": "WORK_OF_ART",
+        "WORK": "WORK_OF_ART",
+        "WORKOFART": "WORK_OF_ART",
+        "WORKS_OF_ART": "WORK_OF_ART",
+        "ARTWORK": "WORK_OF_ART",
+        "ART": "WORK_OF_ART",
+    }
+    return aliases.get(normalized, normalized)
+
+
+def _canonical_ner_entity_key(entity_name: str, label: str) -> str:
+    normalized_name = _normalize_heading_key(entity_name)
+    if not normalized_name:
+        return ""
+
+    tokens = normalized_name.split()
+    normalized_label = _normalize_ner_label(label)
+    if normalized_label != "WORK_OF_ART":
+        return normalized_name
+
+    canonical_tokens: list[str] = []
+    for token in tokens:
+        canonical_tokens.append(_NER_NUMBER_ALIASES.get(token, token))
+
+    canonical_tokens = ["part" if token == "partie" else token for token in canonical_tokens]
+    canonical_tokens = [token for token in canonical_tokens if token not in _WORK_OF_ART_NOISE_TOKENS]
+
+    for index, token in enumerate(canonical_tokens):
+        if token.isdigit():
+            title_tokens = [item for item in canonical_tokens[:index] if item != "part"]
+            return " ".join([*title_tokens, token])
+
+    for index, token in enumerate(canonical_tokens):
+        if token == "part" and index + 1 < len(canonical_tokens) and canonical_tokens[index + 1].isdigit():
+            title_tokens = [item for item in canonical_tokens[:index] if item != "part"]
+            return " ".join([*title_tokens, canonical_tokens[index + 1]])
+
+    return " ".join(token for token in canonical_tokens if token != "part")
+
+
+def _parse_ner_entries(lines: list[str]) -> dict[str, list[str]]:
+    entries: dict[str, list[str]] = {}
+    seen: set[tuple[str, str]] = set()
+    current_label: str | None = None
+
+    for raw_line in lines:
+        stripped = raw_line.strip()
+        if not stripped:
+            continue
+        if _is_ner_section_heading(stripped):
+            current_label = None
+            continue
+        if stripped.startswith("### "):
+            current_label = _normalize_ner_label(stripped[4:]) or None
+            continue
+        if stripped.lower() == "a completer.":
+            continue
+        if not stripped.startswith("-"):
+            continue
+
+        content = stripped[1:].strip()
+        inline_match = re.match(r"(?P<name>.+?)\s*\((?P<label>[A-Za-z_ -]+)\)\s*$", content)
+        broken_inline_match = re.match(r"(?P<name>.+?)\s*\((?P<label>[A-Za-z_ -]+)\s*$", content)
+        if inline_match:
+            entity_name = inline_match.group("name").strip()
+            label = _normalize_ner_label(inline_match.group("label"))
+        elif broken_inline_match:
+            entity_name = broken_inline_match.group("name").strip()
+            label = _normalize_ner_label(broken_inline_match.group("label"))
+        else:
+            entity_name = content
+            label = current_label or "MISC"
+
+        entity_name = re.sub(r"\s+", " ", entity_name).strip(" -\t")
+        entity_name = entity_name.replace("[[", "").replace("]]", "")
+        entity_name = re.sub(r"^\*\*(.+)\*\*$", r"\1", entity_name)
+        entity_name = re.sub(r"^`(.+)`$", r"\1", entity_name)
+        entity_name = re.sub(r"\s*\([A-Za-z_ -]+\s*$", "", entity_name).strip()
+        entity_name = entity_name.strip("*#_`[](){}:; ")
+        if not entity_name or entity_name.lower() == "a completer.":
+            continue
+        if _normalize_ner_label(label) == "MISC":
+            continue
+
+        dedupe_key = (_normalize_ner_label(label), _canonical_ner_entity_key(entity_name, label))
+        if dedupe_key in seen:
+            continue
+        seen.add(dedupe_key)
+        entries.setdefault(label, []).append(entity_name)
+
+    return entries
+
+
+def _render_ner_section(entries: dict[str, list[str]]) -> str:
+    ordered_labels = [label for label in _DEFAULT_NER_LABELS if entries.get(label)]
+    extra_labels = sorted(label for label in entries if label not in _DEFAULT_NER_LABELS)
+    lines = ["## Entites NER - Index complet", ""]
+
+    if not ordered_labels and not extra_labels:
+        lines.append("Aucune entite NER exploitable detectee.")
+        return "\n".join(lines)
+
+    for label in [*ordered_labels, *extra_labels]:
+        lines.append(f"### {label}")
+        values = entries.get(label, [])
+        lines.extend(f"- **{value}** ({label})" for value in values)
+        lines.append("")
+
+    while lines and not lines[-1].strip():
+        lines.pop()
+    return "\n".join(lines)
+
+
+def _normalize_ner_section(body: str) -> str:
+    lines = body.splitlines()
+    cleaned_lines: list[str] = []
+    ner_lines: list[str] = []
+    in_ner_section = False
+
+    for line in lines:
+        stripped = line.strip()
+        if _is_ner_section_heading(line):
+            in_ner_section = True
+            ner_lines.append(line)
+            continue
+        if in_ner_section and re.match(r"^#{1,2}\s+", stripped) and not _is_ner_section_heading(line):
+            in_ner_section = False
+        if in_ner_section:
+            ner_lines.append(line)
+            continue
+        cleaned_lines.append(line)
+
+    cleaned_body = "\n".join(cleaned_lines).strip()
+    parsed_entries = _parse_ner_entries(ner_lines)
+    ner_section = _render_ner_section(parsed_entries)
+
+    if "*Sources :*" in cleaned_body:
+        prefix, suffix = cleaned_body.split("*Sources :*", 1)
+        prefix = prefix.rstrip()
+        suffix_text = suffix.strip()
+        sources_block = "*Sources :*" if not suffix_text else f"*Sources :* {suffix_text}"
+        return f"{prefix}\n\n{ner_section}\n\n{sources_block}".strip()
+
+    return f"{cleaned_body}\n\n{ner_section}".strip()
+
+
+def _extract_embedded_markdown_document(text: str) -> str | None:
+    if not text:
+        return None
+
+    matches = re.findall(r"```markdown\s*(.*?)```", text, flags=re.DOTALL | re.IGNORECASE)
+    for candidate in matches:
+        stripped = candidate.strip()
+        if stripped.startswith("---") or "## Entites NER - Index complet" in stripped or "### Entités NER - Index complet" in stripped:
+            return stripped
+
+    fence_match = re.search(r"```markdown\s*", text, flags=re.IGNORECASE)
+    if fence_match:
+        stripped = text[fence_match.end():].strip()
+        if stripped.startswith("---") or "## Entites NER - Index complet" in stripped or "### Entités NER - Index complet" in stripped:
+            return stripped
+    return None
+
+
+def _normalize_report_markdown(raw_markdown: str, *, default_title: str, sources: list[str]) -> str:
+    cleaned = (raw_markdown or "").strip()
+    if cleaned.startswith("```markdown") and cleaned.endswith("```"):
+        cleaned = cleaned[len("```markdown"): -3].strip()
+    elif cleaned.startswith("```") and cleaned.endswith("```"):
+        cleaned = cleaned[3:-3].strip()
+
+    embedded_document = _extract_embedded_markdown_document(cleaned)
+    if embedded_document:
+        cleaned = embedded_document
+
+    if not cleaned:
+        cleaned = _fallback_conversation_report_markdown(
+            ConversationDetailModel(id="", title=default_title, updatedAt=datetime.now(UTC).isoformat(), draft="", messages=[]),
+            default_title=default_title,
+        )
+
+    post = frontmatter.loads(cleaned) if cleaned else frontmatter.Post("")
+
+    metadata = dict(post.metadata)
+    metadata["title"] = str(metadata.get("title") or default_title).strip() or default_title
+    metadata["date"] = str(metadata.get("date") or datetime.now(UTC).strftime("%Y-%m-%d"))
+    metadata["type"] = "rapport"
+    metadata["statut"] = str(metadata.get("statut") or "finalise")
+    metadata["domaine"] = _coerce_frontmatter_list(metadata.get("domaine"))
+    metadata["tags"] = _merge_unique_values(["insight", "rapport", "conversation", "obsirag"], _coerce_frontmatter_list(metadata.get("tags")))
+    metadata["aliases"] = _merge_unique_values([default_title], _coerce_frontmatter_list(metadata.get("aliases")))
+    metadata["sources"] = _merge_unique_values(sources, _coerce_frontmatter_list(metadata.get("sources")))
+    metadata["champ-semantique"] = _coerce_frontmatter_list(metadata.get("champ-semantique"))
+    post.metadata.clear()
+    post.metadata.update(metadata)
+
+    body = (post.content or "").strip()
+    if not body:
+        body = _fallback_conversation_report_markdown(
+            ConversationDetailModel(id="", title=default_title, updatedAt=datetime.now(UTC).isoformat(), draft="", messages=[]),
+            default_title=default_title,
+        )
+    elif not re.search(r"^#\s+", body, flags=re.MULTILINE):
+        body = f"# {metadata['title']}\n\n{body}"
+
+    body = _normalize_ner_section(body)
+
+    if "*Sources :*" not in body:
+        body = body.rstrip() + "\n\n*Sources :* " + (", ".join(sources) if sources else "Conversation uniquement")
+
+    post.content = sanitize_mermaid_blocks(body)
+    return frontmatter.dumps(post).strip() + "\n"
+
+
+def _coerce_frontmatter_list(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item).strip()]
+    if isinstance(value, tuple):
+        return [str(item).strip() for item in value if str(item).strip()]
+    text = str(value).strip()
+    return [text] if text else []
+
+
+def _merge_unique_values(*groups: list[str]) -> list[str]:
+    merged: list[str] = []
+    for group in groups:
+        for item in group:
+            value = str(item).strip()
+            if value and value not in merged:
+                merged.append(value)
+    return merged
+
+
+def _extract_remote_image_links(text: str, *, default_alt: str = "Illustration") -> list[tuple[str, str]]:
+    if not text:
+        return []
+
+    matches = re.findall(r"!\[([^\]]*)\]\((https?://[^\s)]+)(?:\s+\"[^\"]*\")?\)", text, flags=re.IGNORECASE)
+    images: list[tuple[str, str]] = []
+    seen_urls: set[str] = set()
+    for alt, url in matches:
+        normalized_url = str(url or "").strip()
+        if not normalized_url or normalized_url in seen_urls:
+            continue
+        seen_urls.add(normalized_url)
+        normalized_alt = str(alt or "").strip() or default_alt
+        images.append((normalized_alt, normalized_url))
+    return images
+
+
+def _load_source_note_report_images(source_path: str, *, note_title: str | None = None) -> list[tuple[str, str]]:
+    normalized_path = normalize_vault_relative_path(source_path, vault_root=settings.vault)
+    if not normalized_path:
+        return []
+
+    resolved_path = resolve_vault_path(normalized_path, vault_root=settings.vault)
+    if not resolved_path.exists() or not resolved_path.is_file():
+        return []
+
+    content = read_text_file(resolved_path, default="", errors="replace")
+    if not content:
+        return []
+
+    default_alt = str(note_title or Path(normalized_path).stem or "Illustration").strip() or "Illustration"
+    return _extract_remote_image_links(strip_frontmatter(content), default_alt=default_alt)
+
+
+def _build_theme_image_section(
+    messages: list[ChatMessageModel],
+    *,
+    seen_urls: set[str],
+    max_images: int = 4,
+) -> str:
+    image_entries: list[tuple[str, str, str | None]] = []
+
+    def append_image(alt: str, url: str, caption: str | None = None) -> None:
+        normalized_url = str(url or "").strip()
+        if not normalized_url or normalized_url in seen_urls:
+            return
+        seen_urls.add(normalized_url)
+        image_entries.append((str(alt or "").strip() or "Illustration", normalized_url, caption))
+
+    for message in messages:
+        for context in message.entityContexts:
+            image_url = str(context.imageUrl or "").strip()
+            if not image_url:
+                continue
+            append_image(
+                context.value,
+                image_url,
+                f"Image associee a {context.value} ({context.typeLabel}).",
+            )
+            if len(image_entries) >= max_images:
+                break
+
+        if len(image_entries) >= max_images:
+            break
+
+        for source in message.sources:
+            source_label = str(source.noteTitle or source.filePath or "Source").strip() or "Source"
+            for alt, url in _load_source_note_report_images(source.filePath, note_title=source.noteTitle):
+                append_image(alt, url, f"Image extraite de [[{source_label}]].")
+                if len(image_entries) >= max_images:
+                    break
+            if len(image_entries) >= max_images:
+                break
+
+        if len(image_entries) >= max_images:
+            break
+
+    if not image_entries:
+        return ""
+
+    lines = [
+        "#### Illustrations associees",
+        "",
+    ]
+    for alt, url, caption in image_entries:
+        lines.append(f"![{alt}]({url})")
+        if caption:
+            lines.append(f"*{caption}*")
+        lines.append("")
+
+    while lines and not lines[-1].strip():
+        lines.pop()
+    return "\n".join(lines)
+
+
+def _theme_heading_from_text(text: str, *, fallback: str) -> str:
+    compact = re.sub(r"\s+", " ", text or "").strip()
+    if not compact:
+        return fallback
+    if len(compact) <= 140:
+        heading = compact.rstrip(" .,:;!?-")
+        return heading or fallback
+
+    boundary = compact.rfind(" ", 0, 140)
+    if boundary < 60:
+        boundary = 140
+    heading = compact[:boundary].rstrip(" .,:;!?-")
+    return (heading + "...") if heading else fallback
+
+
+def _build_conversation_theme_coverage_section(conversation: ConversationDetailModel) -> str:
+    themes: list[tuple[str, list[ChatMessageModel]]] = []
+    current_title = "Ouverture"
+    current_messages: list[ChatMessageModel] = []
+    seen_theme_image_urls: set[str] = set()
+
+    for message in conversation.messages:
+        content = str(message.content or "").strip()
+        if not content:
+            continue
+
+        if message.role == "user":
+            if current_messages:
+                themes.append((current_title, current_messages))
+            current_title = _theme_heading_from_text(content, fallback=f"Theme {len(themes) + 1}")
+            current_messages = [message]
+            continue
+
+        if not current_messages:
+            current_messages = [message]
+        else:
+            current_messages.append(message)
+
+    if current_messages:
+        themes.append((current_title, current_messages))
+
+    if not themes:
+        return "## Corpus complet par themes\n\nAucun message exploitable n'etait disponible dans la conversation."
+
+    lines = [
+        "## Corpus complet par themes",
+        "",
+        "> [!note] Reprise integrale des messages de la conversation, reorganises par theme sans perte de contenu.",
+        "",
+    ]
+
+    for index, (title, messages) in enumerate(themes, start=1):
+        lines.extend([f"### Theme {index} - {title}", ""])
+        for message in messages:
+            role_label = "Utilisateur" if message.role == "user" else "Assistant" if message.role == "assistant" else "Systeme"
+            lines.extend([f"#### {role_label}", "", str(message.content).strip(), ""])
+
+        image_section = _build_theme_image_section(messages, seen_urls=seen_theme_image_urls)
+        if image_section:
+            lines.extend([image_section, ""])
+
+    while lines and not lines[-1].strip():
+        lines.pop()
+    return "\n".join(lines)
+
+
+def _inject_theme_coverage_section(markdown: str, conversation: ConversationDetailModel) -> str:
+    post = frontmatter.loads(markdown) if markdown else frontmatter.Post("")
+    body = (post.content or "").strip()
+    theme_section = _build_conversation_theme_coverage_section(conversation)
+
+    if "## Entites NER - Index complet" in body:
+        prefix, suffix = body.split("## Entites NER - Index complet", 1)
+        body = f"{prefix.rstrip()}\n\n{theme_section}\n\n## Entites NER - Index complet{suffix}"
+    elif "*Sources :*" in body:
+        prefix, suffix = body.split("*Sources :*", 1)
+        body = f"{prefix.rstrip()}\n\n{theme_section}\n\n*Sources :* {suffix.strip()}"
+    else:
+        body = f"{body.rstrip()}\n\n{theme_section}".strip()
+
+    post.content = sanitize_mermaid_blocks(body.strip()) + "\n"
+    return frontmatter.dumps(post).strip() + "\n"
+
+
+def _generate_conversation_report_markdown(conversation: ConversationDetailModel, svc: Any, *, default_title: str) -> str:
+    transcript = _format_conversation_report_transcript(conversation)
+    sources = _conversation_report_sources(conversation)
+    prompt = (
+        "Tu rediges un rapport Markdown pour Obsidian a partir d'une conversation.\n"
+        "Reponds uniquement avec du Markdown valide, sans texte introductif hors document.\n\n"
+        "Contraintes obligatoires :\n"
+        "- Inclure un frontmatter YAML avec les cles : title, date, type, statut, domaine, tags, aliases, sources, champ-semantique.\n"
+        "- Fixer type: rapport et statut: finalise.\n"
+        "- Rediger en francais, avec une prose analytique.\n"
+        "- Structurer le document avec un chapeau callout info, puis des sections Contexte, Analyse, Synthese, Corpus complet par themes et Entites NER - Index complet.\n"
+        "- Reprendre l'integralite du texte de la conversation: aucun message utilisateur ou assistant ne doit etre omis.\n"
+        "- Regrouper ce contenu integral par themes explicites, sans perdre les formulations originales.\n"
+        "- Annoter les entites nommees dans le corps sous la forme **Nom** (*TYPE*).\n"
+        "- Pour PERSON, ORG, GPE, LOC, EVENT, utiliser des wikilinks Obsidian [[Nom]].\n"
+        "- Utiliser des callouts Obsidian quand ils apportent un contexte utile.\n"
+        "- Tu peux inclure jusqu'a 2 diagrammes Mermaid si cela clarifie vraiment le contenu.\n"
+        "- Si tu produis du Mermaid, le code Mermaid doit utiliser uniquement des caracteres ASCII simples, sans accents ni emojis.\n"
+        "- N'invente aucune source externe absente de la conversation.\n"
+        "- Eviter les listes a puces dans le corps du texte hors index NER, tableaux, callouts ou diagrammes.\n\n"
+        f"Titre attendu : {default_title}\n"
+        f"Sources deja mentionnees : {', '.join(sources) if sources else 'Aucune source explicite'}\n\n"
+        "Conversation a analyser :\n"
+        f"{transcript}\n"
+    )
+
+    try:
+        raw_markdown = str(
+            svc.llm.chat(
+                [{"role": "user", "content": prompt}],
+                temperature=0.2,
+                max_tokens=2200,
+                operation="conversation_report",
+            )
+        ).strip()
+    except Exception:
+        raw_markdown = ""
+
+    if not raw_markdown:
+        raw_markdown = _fallback_conversation_report_markdown(conversation, default_title=default_title)
+
+    normalized = _normalize_report_markdown(raw_markdown, default_title=default_title, sources=sources)
+    return _inject_theme_coverage_section(normalized, conversation)
 
 
 def _prepare_user_message(conversation_id: str, prompt: str) -> tuple[ChatMessageModel, list[dict[str, str]]]:
@@ -1066,10 +1799,9 @@ def _sse_event(name: str, payload: dict[str, Any]) -> str:
 
 
 def _iter_answer_tokens(answer: str) -> list[str]:
-    words = answer.split()
-    if not words:
-        return [answer] if answer else []
-    return [f"{word} " for word in words[:-1]] + [words[-1]]
+    if not answer:
+        return []
+    return re.findall(r"\S+\s*|\s+", answer)
 
 
 def _decode_worker_payload(stdout: str) -> dict[str, Any]:

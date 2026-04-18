@@ -2,12 +2,16 @@ import { useQuery } from '@tanstack/react-query';
 
 import { useServerConfig } from '../auth/use-server-config';
 
-export function useSystemStatus() {
+type UseSystemStatusOptions = {
+  refetchIntervalMs?: number;
+};
+
+export function useSystemStatus(options?: UseSystemStatusOptions) {
   const { api } = useServerConfig();
 
   return useQuery({
     queryKey: ['system-status'],
     queryFn: () => api.getSystemStatus(),
-    refetchInterval: 10000,
+    refetchInterval: options?.refetchIntervalMs ?? 10000,
   });
 }

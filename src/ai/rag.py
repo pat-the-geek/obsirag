@@ -21,6 +21,7 @@ from typing import Any, Callable
 
 from loguru import logger
 from src.ai.answer_prompting import AnswerPrompting
+from src.ai.mermaid_sanitizer import contains_mermaid_fence, sanitize_mermaid_blocks
 from src.ai.retrieval_strategy import RetrievalStrategy
 from src.metrics import MetricsRecorder
 # Sentinelle locale — plus jamais levée depuis la migration vers MLX-LM,
@@ -223,6 +224,10 @@ Si la question est formulée comme une demande d'étude, de synthèse, de lien, 
     3. termine par ce que l'on peut conclure, ou ne pas conclure, sur leur relation.
 
 Cite les titres de notes sources entre [crochets] quand tu les utilises.
+Si tu produis un bloc ```mermaid```, le code Mermaid doit utiliser uniquement des caracteres ASCII simples.
+- Interdits dans le bloc Mermaid : accents, emojis, puces Unicode, guillemets typographiques, tirets typographiques et tout caractere non ASCII.
+- Ecris par exemple Resume, Reponse, Etape, Schema au lieu de Resume, Reponse, Etape avec accents.
+- Cette contrainte s'applique uniquement au code Mermaid, pas au texte explicatif hors du bloc.
 Si l'utilisateur conteste ta réponse, vérifie les extraits — si l'info n'y est toujours pas, maintiens ta position."""
 
 _VERIFIER_PROMPT = (
@@ -659,6 +664,9 @@ class RAGPipeline:
         text = (answer or "").strip()
         if not text:
             return text
+
+        if contains_mermaid_fence(text):
+            return sanitize_mermaid_blocks(text)
 
         text = self._sanitize_single_subject_answer(text, query, intent)
 

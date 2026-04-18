@@ -58,6 +58,18 @@ export function useSaveConversation() {
   });
 }
 
+export function useGenerateConversationReport() {
+  const { api } = useServerConfig();
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (conversationId: string) => api.generateConversationReport(conversationId),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['insights'] });
+    },
+  });
+}
+
 export function useDeleteConversationMessage(conversationId: string) {
   const { api } = useServerConfig();
   const queryClient = useQueryClient();
@@ -241,11 +253,18 @@ export function useStreamMessage(conversationId: string) {
             if (!current) {
               return current;
             }
+            const finalizedMessage: ChatMessage = {
+              ...assistantMessage,
+              content: assistantMessage.content?.trim() ? assistantMessage.content : streamedContent.trim(),
+              timeline: assistantMessage.timeline?.length ? assistantMessage.timeline : streamedTimeline,
+              sources: assistantMessage.sources?.length ? assistantMessage.sources : streamedSources,
+              primarySource: assistantMessage.primarySource ?? streamedPrimarySource,
+            };
             const withoutDraft = current.messages.filter((item) => item.id !== 'streaming-assistant');
             return {
               ...current,
-              messages: [...withoutDraft, assistantMessage],
-              ...(assistantMessage.stats ? { lastGenerationStats: assistantMessage.stats } : {}),
+              messages: [...withoutDraft, finalizedMessage],
+              ...(finalizedMessage.stats ? { lastGenerationStats: finalizedMessage.stats } : {}),
               updatedAt: new Date().toISOString(),
             };
           });

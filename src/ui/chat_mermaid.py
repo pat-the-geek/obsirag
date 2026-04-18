@@ -53,6 +53,18 @@ def build_mermaid_fullscreen_html(code: str, idx: int) -> str:
 (function(){{
   'use strict';
   var CODE={code_json};
+  function hasForbiddenCharacter(value){{
+    for(var index=0; index < value.length; index += 1){{
+      var current=value.charCodeAt(index);
+      if(current===9 || current===10 || current===13){{
+        continue;
+      }}
+      if(current < 32 || current > 126){{
+        return true;
+      }}
+    }}
+    return false;
+  }}
   var isDark=!window.matchMedia('(prefers-color-scheme:light)').matches;
   var TV_LIGHT={{
     fontFamily:"system-ui,-apple-system,'Segoe UI',Helvetica,Arial,sans-serif",fontSize:'14px',
@@ -82,6 +94,13 @@ def build_mermaid_fullscreen_html(code: str, idx: int) -> str:
     themeVariables:isDark?TV_DARK:TV_LIGHT
   }});
 
+  if(hasForbiddenCharacter(CODE)){{
+    var preload=document.getElementById('loading');
+    if(preload)preload.remove();
+    document.getElementById('err').textContent=CODE;
+    return;
+  }}
+
   mermaid.render('diag_{idx}',CODE).then(function(r){{
     var loading=document.getElementById('loading');
     if(loading)loading.remove();
@@ -105,7 +124,8 @@ def build_mermaid_fullscreen_html(code: str, idx: int) -> str:
   }}).catch(function(e){{
     var loading=document.getElementById('loading');
     if(loading)loading.remove();
-    document.getElementById('err').textContent='⚠ '+e.message;
+    document.getElementById('container').innerHTML='';
+    document.getElementById('err').textContent=CODE;
   }});
 }})();
 </script>
@@ -139,6 +159,18 @@ def build_mermaid_chat_preview_html(code: str, idx: int) -> str:
 (function(){{
   var CODE={code_json};
   var FS_B64="{fullscreen_b64}";
+  function hasForbiddenCharacter(value){{
+    for(var index=0; index < value.length; index += 1){{
+      var current=value.charCodeAt(index);
+      if(current===9 || current===10 || current===13){{
+        continue;
+      }}
+      if(current < 32 || current > 126){{
+        return true;
+      }}
+    }}
+    return false;
+  }}
   var isDark=!window.matchMedia('(prefers-color-scheme:light)').matches;
   var TV_LIGHT={{
     fontFamily:"system-ui,-apple-system,'Segoe UI',Helvetica,Arial,sans-serif",fontSize:'13px',
@@ -158,10 +190,15 @@ def build_mermaid_chat_preview_html(code: str, idx: int) -> str:
   }};
   mermaid.initialize({{startOnLoad:false,securityLevel:'loose',theme:'base',
     themeVariables:isDark?TV_DARK:TV_LIGHT}});
+  if(hasForbiddenCharacter(CODE)){{
+    document.getElementById('err').textContent=CODE;
+    return;
+  }}
   mermaid.render('prev_{idx}',CODE).then(function(r){{
     document.getElementById('out').innerHTML=r.svg;
   }}).catch(function(e){{
-    document.getElementById('err').textContent='⚠ '+e.message;
+    document.getElementById('out').innerHTML='';
+    document.getElementById('err').textContent=CODE;
   }});
   function openFullscreen(){{
     try{{

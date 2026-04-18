@@ -201,6 +201,21 @@ export type SystemStatus = {
   llmAvailable: boolean;
   notesIndexed: number;
   chunksIndexed: number;
+  runtime?: {
+    llmProvider: string;
+    llmModel: string;
+    embeddingModel: string;
+    vectorStore: string;
+    nerModel: string;
+    autolearnMode: string;
+  };
+  startup?: {
+    ready: boolean;
+    steps: string[];
+    currentStep?: string;
+    error?: string | null;
+    updatedAt?: string;
+  };
   indexing?: {
     running: boolean;
     processed: number;

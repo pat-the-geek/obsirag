@@ -4,6 +4,7 @@ Instancié une seule fois via @st.cache_resource dans l'UI.
 """
 import time
 import threading
+from datetime import UTC, datetime
 from loguru import logger
 
 from src.config import settings
@@ -24,10 +25,17 @@ class ServiceManager:
         on_step : callable(message: str) optionnel, appelé à chaque étape
                   pour permettre à l'UI d'afficher la progression.
         """
-        _step = on_step or (lambda msg: None)
+        self._startup_steps: list[str] = []
+
+        def _step(message: str) -> None:
+            self._record_startup_step(message)
+            if callable(on_step):
+                on_step(message)
+
         self.indexing_status = {"running": False, "processed": 0, "total": 0, "current": ""}
         self._last_ui_activity: float = 0.0
         self.metrics = MetricsRecorder(lambda: settings.data_dir / "stats" / "metrics.json")
+        self._persist_startup_status(ready=False)
         self._persist_indexing_status()
 
         configure_logging(settings.log_level, settings.log_dir)
@@ -68,6 +76,7 @@ class ServiceManager:
         self._start_background_services()
         logger.info("Tous les services sont opérationnels")
         _step("✅ Tous les services sont opérationnels")
+        self._persist_startup_status(ready=True, current_step="Tous les services sont opérationnels")
 
     def _init_data_dirs(self) -> None:
         # Données système (volume Docker)
@@ -155,6 +164,26 @@ class ServiceManager:
 
     def _status_store(self) -> JsonStateStore:
         return JsonStateStore(settings.data_dir / "stats" / "service_manager_status.json")
+
+    def _startup_store(self) -> JsonStateStore:
+        return JsonStateStore(settings.startup_status_file)
+
+    def _persist_startup_status(self, *, ready: bool, current_step: str = "", error: str | None = None) -> None:
+        payload = {
+            "ready": ready,
+            "steps": list(self._startup_steps),
+            "current_step": current_step,
+            "error": error,
+            "updated_at": datetime.now(UTC).isoformat(),
+        }
+        try:
+            self._startup_store().save(payload, ensure_ascii=False)
+        except Exception:
+            pass
+
+    def _record_startup_step(self, message: str) -> None:
+        self._startup_steps.append(message)
+        self._persist_startup_status(ready=False, current_step=message)
 
     def _persist_indexing_status(self) -> None:
         try:

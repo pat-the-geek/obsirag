@@ -40,6 +40,7 @@ class Settings(BaseSettings):
 
     # API Expo / mobile
     api_access_token: Optional[str] = None
+    api_public_base_url: str = "http://localhost:8000"
 
     # Auto-apprentissage
     autolearn_enabled: bool = True
@@ -131,6 +132,10 @@ class Settings(BaseSettings):
     @property
     def runtime_metrics_file(self) -> Path:
         return self.data_dir / "stats" / "metrics.json"
+
+    @property
+    def startup_status_file(self) -> Path:
+        return self.data_dir / "stats" / "startup_status.json"
 
     @property
     def fallback_snapshot_file(self) -> Path:

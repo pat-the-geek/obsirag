@@ -7,7 +7,7 @@ import { aggregateConversationEntityContexts, ConversationEntitySidebar } from '
 import { MessageBubble } from '../../../components/chat/message-bubble';
 import { MessageComposer } from '../../../components/chat/message-composer';
 import { Screen } from '../../../components/ui/screen';
-import { useConversation, useDeleteConversationMessage, useExplicitWebSearch, useSaveConversation, useStreamMessage } from '../../../features/chat/use-chat';
+import { useConversation, useDeleteConversationMessage, useExplicitWebSearch, useGenerateConversationReport, useSaveConversation, useStreamMessage } from '../../../features/chat/use-chat';
 import { EntityContext, ChatMessage, SourceRef } from '../../../types/domain';
 import { useAppStore } from '../../../store/app-store';
 
@@ -35,6 +35,7 @@ export default function ConversationDetailScreen() {
   const explicitWebSearch = useExplicitWebSearch(conversationId ?? '');
   const deleteConversationMessage = useDeleteConversationMessage(conversationId ?? '');
   const saveConversation = useSaveConversation();
+  const generateConversationReport = useGenerateConversationReport();
   const streamingAssistantMessage = useMemo(
     () => [...messages].reverse().find((item) => item.id === 'streaming-assistant' && item.role === 'assistant'),
     [messages],
@@ -49,6 +50,10 @@ export default function ConversationDetailScreen() {
   );
   const latestUserMessage = useMemo(
     () => [...messages].reverse().find((item) => item.role === 'user'),
+    [messages],
+  );
+  const hasReportableConversation = useMemo(
+    () => messages.some((item) => item.role === 'assistant' && item.content.trim().length > 0),
     [messages],
   );
   const quickActions = useMemo(
@@ -174,14 +179,15 @@ export default function ConversationDetailScreen() {
             </View>
 
             <View style={[styles.dock, Platform.OS === 'web' ? styles.dockWeb : null]}>
-              {streamMessage.isPending ? (
+              {(streamMessage.isPending || generateConversationReport.isPending) ? (
                 <View style={styles.progressCard}>
                   <Text style={styles.progressTitle}>Progression du traitement</Text>
                   {activeProgressLabel ? <Text style={styles.progressCurrent}>{activeProgressLabel}</Text> : null}
                   <View style={styles.progressList}>
                     {activeProgressSteps.map((step, index) => {
                       const isLast = index === activeProgressSteps.length - 1;
-                      const showGenerationActivity = isLast && isGenerationStep(step) && isGenerationStepActive;
+                      // Afficher la boucle d'activité sur la dernière étape si génération rapport
+                      const showGenerationActivity = (isLast && isGenerationStep(step) && isGenerationStepActive) || generateConversationReport.isPending;
                       return (
                         <View key={`${step}-${index}`} style={styles.progressItem}>
                           <View style={[styles.progressDot, isLast ? styles.progressDotActive : null]} />
@@ -219,6 +225,17 @@ export default function ConversationDetailScreen() {
                   });
                 }}
                 secondaryActionDisabled={saveConversation.isPending}
+                tertiaryActionLabel={hasReportableConversation ? 'Rapport' : undefined}
+                onTertiaryAction={() => {
+                  if (!conversationId) {
+                    return;
+                  }
+                  generateConversationReport.mutate(conversationId, {
+                    onSuccess: (result) => router.push(`/(tabs)/note/${encodeURIComponent(result.path)}`),
+                    onError: (error) => Alert.alert('Rapport impossible', error instanceof Error ? error.message : 'Erreur inconnue'),
+                  });
+                }}
+                tertiaryActionDisabled={generateConversationReport.isPending}
                 disabled={streamMessage.isPending || !draft.trim()}
               />
             </View>
@@ -515,22 +532,48 @@ function buildWebSearchSuggestion(userQuery: string | undefined, previousMessage
   const normalizedQuestion = userQuery.trim().replace(/\s+/g, ' ');
   const explicitSubject = resolveExplicitSubject(normalizedQuestion, recentEntities);
   const preferredSubject = explicitSubject ?? selectPreferredSubject(recentEntities);
-  const subjectTerms = preferredSubject ? [preferredSubject.value] : [];
-
   const aspectTerms = extractWebAspectTerms(normalizedQuestion, preferredSubject);
-  const enrichmentTerms = !aspectTerms.length ? defaultEnrichmentTerms(normalizedQuestion, preferredSubject) : [];
-  const parts = [...subjectTerms, ...aspectTerms, ...enrichmentTerms];
-  const dedupedParts = [...new Set(parts.map((part) => part.trim()).filter(Boolean))];
+  const needsContextualSubject = !explicitSubject && questionNeedsContextualSubject(normalizedQuestion);
+  const basedOnQuestionParts = [explicitSubject?.value, ...aspectTerms];
+  const dedupedQuestionParts = [...new Set(basedOnQuestionParts.map((part) => part?.trim()).filter(Boolean))];
 
-  if (!dedupedParts.length) {
+  if (!needsContextualSubject && dedupedQuestionParts.length) {
+    if (!/\b(19|20)\d{2}\b/.test(normalizedQuestion) && dedupedQuestionParts.some((part) => WEB_SEARCH_DYNAMIC_TERMS.has(part))) {
+      dedupedQuestionParts.push(String(new Date().getFullYear()));
+    }
+
+    return dedupedQuestionParts.join(' ');
+  }
+
+  if (preferredSubject && needsContextualSubject) {
+    const contextualParts = [preferredSubject.value, ...aspectTerms];
+    const dedupedContextualParts = [...new Set(contextualParts.map((part) => part.trim()).filter(Boolean))];
+
+    if (!dedupedContextualParts.length) {
+      return preferredSubject.value;
+    }
+
+    if (!/\b(19|20)\d{2}\b/.test(normalizedQuestion) && dedupedContextualParts.some((part) => WEB_SEARCH_DYNAMIC_TERMS.has(part))) {
+      dedupedContextualParts.push(String(new Date().getFullYear()));
+    }
+
+    return dedupedContextualParts.join(' ');
+  }
+
+  if (!normalizedQuestion) {
     return normalizedQuestion;
   }
 
-  if (!/\b(19|20)\d{2}\b/.test(normalizedQuestion) && dedupedParts.some((part) => WEB_SEARCH_DYNAMIC_TERMS.has(part))) {
-    dedupedParts.push(String(new Date().getFullYear()));
+  return normalizedQuestion;
+}
+
+function questionNeedsContextualSubject(question: string) {
+  const normalized = normalizeSearchText(question);
+  if (!normalized) {
+    return false;
   }
 
-  return dedupedParts.join(' ');
+  return /\b(son|sa|ses|sont|lui|elle|il|ils|elles|leur|leurs|ce|cet|cette|ces|cela|ca|ça|en)\b/.test(normalized);
 }
 
 function isGenerationStep(step: string) {
