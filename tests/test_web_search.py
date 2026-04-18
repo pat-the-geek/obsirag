@@ -57,6 +57,69 @@ class TestWebSearchHelpers:
         assert web_search._is_latin_text("Ada Lovelace") is True
         assert web_search._is_latin_text("纯中文内容纯中文内容") is False
 
+    def test_extract_subject_phrase_and_flatten_related_topics_cover_edge_cases(self):
+        assert web_search._extract_subject_phrase("Ada Lovelace") == "Ada Lovelace"
+        assert web_search._extract_subject_phrase("mot") is None
+        assert web_search._flatten_related_topics([
+            {"Topics": [{"FirstURL": "https://a", "Text": "Ada - mathematician"}]},
+            {"FirstURL": "https://b", "Text": "Charles Babbage - polymath"},
+        ]) == [
+            {"FirstURL": "https://a", "Text": "Ada - mathematician"},
+            {"FirstURL": "https://b", "Text": "Charles Babbage - polymath"},
+        ]
+
+    def test_build_instant_answer_results_deduplicates_heading_and_related_topics(self):
+        results = web_search._build_instant_answer_results(
+            {
+                "Heading": "Ada Lovelace",
+                "AbstractText": "English mathematician.",
+                "AbstractURL": "https://en.wikipedia.org/wiki/Ada_Lovelace",
+                "AbstractSource": "Wikipedia",
+                "RelatedTopics": [
+                    {"Text": "Ada Lovelace - English mathematician", "FirstURL": "https://en.wikipedia.org/wiki/Ada_Lovelace"},
+                    {"Topics": [{"Text": "Charles Babbage - English polymath", "FirstURL": "https://duckduckgo.com/Charles_Babbage"}]},
+                ],
+            },
+            max_results=3,
+        )
+
+        assert results == [
+            {
+                "title": "Ada Lovelace - Wikipedia",
+                "href": "https://en.wikipedia.org/wiki/Ada_Lovelace",
+                "body": "English mathematician.",
+            },
+            {
+                "title": "Charles Babbage",
+                "href": "https://duckduckgo.com/Charles_Babbage",
+                "body": "Charles Babbage - English polymath",
+            },
+        ]
+
+    def test_merge_search_results_deduplicates_urls_and_caps_length(self):
+        merged = web_search._merge_search_results(
+            [{"href": "https://a", "title": "A"}, {"href": "https://b", "title": "B"}],
+            [{"href": "https://b", "title": "B2"}, {"href": "https://c", "title": "C"}],
+            max_results=2,
+        )
+
+        assert merged == [
+            {"href": "https://a", "title": "A"},
+            {"href": "https://b", "title": "B"},
+        ]
+
+    def test_count_exact_term_matches_and_short_entity_query_helpers(self):
+        assert web_search._count_exact_term_matches(["ada", "lovelace"], "Ada Lovelace invents") == 2
+        assert web_search._count_exact_term_matches([], "Ada") == 0
+        assert web_search._is_short_entity_query("Ada Lovelace") is True
+        assert web_search._is_short_entity_query("mission Artemis II calendrier 2026") is False
+        assert web_search._is_short_entity_query("lune 2026") is False
+
+    def test_keywordize_query_and_tokenize_match_text_cover_fallback_cases(self):
+        assert web_search._tokenize_match_text("Ada-Lovelace 2026") == ["ada-lovelace", "2026"]
+        assert web_search._keywordize_query("de de de") == "de de de"
+        assert web_search._keywordize_query("Apple Apple iPhone iPhone") == "Apple iPhone"
+
 
 @pytest.mark.unit
 class TestWebSearchQueryBuilding:
@@ -451,6 +514,170 @@ class TestWebSearchPublicApi:
         assert "# Vue d'ensemble DDG" in content
         assert "# Entités détectées" in content
         assert "personne/ada-lovelace" in content
+
+    def test_save_chat_enrichment_insight_updates_existing_sections_and_frontmatter(self, tmp_settings):
+        target = tmp_settings.insights_dir / "chat_existing.md"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(
+            "---\n"
+            "tags:\n"
+            "  - insight\n"
+            "---\n\n"
+            "# Question\n\nAda\n\n"
+            "# Vue d'ensemble DDG\n\nAncienne vue\n\n"
+            "# Entités détectées\n\nAncienne entité\n",
+            encoding="utf-8",
+        )
+
+        with patch("src.ai.web_search.settings", tmp_settings):
+            path = web_search.save_chat_enrichment_insight(
+                "Qui est Ada Lovelace ?",
+                "Réponse",
+                path=target,
+                query_overview={
+                    "search_query": "Ada Lovelace biography overview",
+                    "summary": "Nouvelle vue.",
+                    "sources": [{"title": "Wikipedia", "href": "https://wikipedia.org"}],
+                },
+                entity_contexts=[
+                    {
+                        "value": "Ada Lovelace",
+                        "type_label": "Personne",
+                        "tag": "personne/ada-lovelace",
+                        "notes": [{"title": "Ada", "file_path": "People/Ada.md"}],
+                        "ddg_knowledge": {"abstract_text": "Mathématicienne anglaise."},
+                    }
+                ],
+            )
+
+        content = path.read_text(encoding="utf-8")
+        assert "Nouvelle vue." in content
+        assert "Ancienne vue" not in content
+        assert "Ancienne entité" not in content
+        assert "chat_enrichment" in content
+
+    def test_formatting_and_frontmatter_helpers_cover_empty_and_insert_paths(self):
+        assert web_search._format_query_overview_markdown({}) == ""
+        assert web_search._format_entity_contexts_markdown([]) == ""
+
+        inserted = web_search._upsert_markdown_section("# Question\n\nAda\n", "# Vue d'ensemble DDG", "# Vue d'ensemble DDG\n\nTexte")
+        assert "Texte" in inserted
+
+        replaced = web_search._upsert_markdown_section(
+            "# Vue d'ensemble DDG\n\nAncien\n\n# Entités détectées\n\nBloc\n",
+            "# Vue d'ensemble DDG",
+            "# Vue d'ensemble DDG\n\nNouveau",
+        )
+        assert "Nouveau" in replaced
+        assert "Ancien" not in replaced
+
+        merged = web_search._merge_frontmatter_tags("---\ntags:\n  - insight\n---\n\nBody\n", ["insight", "obsirag"])
+        assert "  - obsirag" in merged
+
+        created = web_search._merge_frontmatter_tags("Body\n", ["insight"])
+        assert created.startswith("---\n")
+
+    def test_synthesize_ai_overview_success_and_error_paths(self):
+        llm = MagicMock()
+        llm.chat.return_value = "Vue d'ensemble"
+
+        summary = web_search._synthesize_ai_overview(
+            "Qui est Ada Lovelace ?",
+            "Ada Lovelace biography overview",
+            [{"title": "Wikipedia", "href": "https://wikipedia.org", "body": "Ada"}],
+            llm,
+        )
+        assert summary == "Vue d'ensemble"
+
+        llm.chat.side_effect = RuntimeError("boom")
+        assert web_search._synthesize_ai_overview(
+            "Qui est Ada Lovelace ?",
+            "Ada Lovelace biography overview",
+            [{"title": "Wikipedia", "href": "https://wikipedia.org", "body": "Ada"}],
+            llm,
+        ) is None
+        assert web_search._synthesize_ai_overview("q", "s", [], MagicMock()) is None
+
+    def test_save_chat_enrichment_insight_returns_existing_path_when_no_payload(self, tmp_settings):
+        target = tmp_settings.insights_dir / "noop.md"
+        with patch("src.ai.web_search.settings", tmp_settings):
+            assert web_search.save_chat_enrichment_insight(
+                "Qui est Ada Lovelace ?",
+                "Réponse",
+                path=target,
+                entity_contexts=[],
+                query_overview={},
+            ) == target
+
+    def test_format_entity_contexts_markdown_renders_related_topics_and_plain_note_titles(self):
+        markdown = web_search._format_entity_contexts_markdown([
+            {
+                "value": "Ada Lovelace",
+                "type": "PERSON",
+                "notes": [{"title": "Ada note"}],
+                "ddg_knowledge": {
+                    "answer": "Mathématicienne.",
+                    "definition": "Pionnière du calcul.",
+                    "infobox": [{"label": "Born", "value": "1815"}, {"label": "", "value": "skip"}],
+                    "related_topics": [{"text": "Charles Babbage", "url": "https://duckduckgo.com/Charles_Babbage"}],
+                },
+            }
+        ])
+
+        assert "Ada note" in markdown
+        assert "Born : 1815" in markdown
+        assert "[Charles Babbage](https://duckduckgo.com/Charles_Babbage)" in markdown
+
+    def test_merge_frontmatter_tags_keeps_original_content_when_no_tags_block_exists(self):
+        merged = web_search._merge_frontmatter_tags("---\ntitle: Ada\n---\n\nBody\n", ["obsirag"])
+        assert merged.startswith("---\n")
+        assert "title: Ada" in merged
+        assert "obsirag" in merged
+
+    def test_build_query_overview_sync_returns_empty_when_search_or_summary_fails(self):
+        llm = MagicMock()
+
+        with (
+            patch("src.ai.web_search._build_search_query", return_value="Ada Lovelace"),
+            patch("src.ai.web_search._ddg_instant_answer_search", return_value=[]),
+            patch("src.ai.web_search._ddg_search", return_value=[]),
+        ):
+            assert web_search.build_query_overview_sync("Qui est Ada Lovelace ?", llm) == {}
+
+        with (
+            patch("src.ai.web_search._build_search_query", return_value="Ada Lovelace"),
+            patch("src.ai.web_search._ddg_instant_answer_search", return_value=[]),
+            patch("src.ai.web_search._ddg_search", return_value=[{"title": "Wiki", "href": "https://wikipedia.org", "body": "Ada"}]),
+            patch("src.ai.web_search._synthesize_ai_overview", return_value=None),
+        ):
+            assert web_search.build_query_overview_sync("Qui est Ada Lovelace ?", llm) == {}
+
+    def test_has_authoritative_exact_match_requires_single_focus_term(self):
+        assert web_search._has_authoritative_exact_match(
+            "lune",
+            [{"title": "Lune - Wikipédia", "href": "https://fr.wikipedia.org/wiki/Lune"}],
+        ) is True
+        assert web_search._has_authoritative_exact_match(
+            "Ada Lovelace",
+            [{"title": "Ada Lovelace - Wikipedia", "href": "https://en.wikipedia.org/wiki/Ada_Lovelace"}],
+        ) is False
+
+    def test_enrich_async_swallows_callback_errors(self):
+        class _ImmediateThread:
+            def __init__(self, target=None, daemon=None, name=None):
+                self.target = target
+
+            def start(self):
+                self.target()
+
+        callback = MagicMock(side_effect=RuntimeError("boom"))
+        with (
+            patch("src.ai.web_search.enrich_sync", return_value=("answer", None, [], True)),
+            patch("src.ai.web_search.threading.Thread", side_effect=lambda **kwargs: _ImmediateThread(**kwargs)),
+        ):
+            web_search.enrich_async("query", MagicMock(), on_done=callback)
+
+        callback.assert_called_once_with("answer", None, [], True)
 
     def test_enrich_sync_happy_path_returns_answer_and_path(self, tmp_settings):
         llm = MagicMock()

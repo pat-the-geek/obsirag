@@ -774,12 +774,15 @@ def _merge_frontmatter_tags(content: str, tags: list[str]) -> str:
             body = content[end + 5:]
             existing_tags = re.findall(r"^\s*-\s+(.+)$", frontmatter, flags=re.MULTILINE)
             merged = list(dict.fromkeys(existing_tags + tag_lines))
-            frontmatter = re.sub(
-                r"tags:\n(?:\s+-\s+.+\n?)+",
-                "tags:\n" + "".join(f"  - {tag}\n" for tag in merged),
-                frontmatter,
-                count=1,
-            )
+            if re.search(r"^tags:\n(?:\s+-\s+.+\n?)+", frontmatter, flags=re.MULTILINE):
+                frontmatter = re.sub(
+                    r"tags:\n(?:\s+-\s+.+\n?)+",
+                    "tags:\n" + "".join(f"  - {tag}\n" for tag in merged),
+                    frontmatter,
+                    count=1,
+                )
+            else:
+                frontmatter = frontmatter.rstrip() + "\n" + "tags:\n" + "".join(f"  - {tag}\n" for tag in merged)
             return f"---\n{frontmatter}\n---\n{body}"
 
     frontmatter = "---\ntags:\n" + "".join(f"  - {tag}\n" for tag in tag_lines) + "---\n\n"
