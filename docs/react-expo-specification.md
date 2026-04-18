@@ -108,6 +108,54 @@ ObsiRAG vNext est un compagnon conversationnel de connaissance personnelle qui p
 3. Parametrage fin des strategies de retrieval.
 4. Administration multi-vault ou multi-utilisateur.
 
+### 5.4 Reperes visuels actuels
+
+Les captures presentes dans `docs/Screen-Captures/` ne sont pas des maquettes abstraites. Elles servent de reference concrete pour les surfaces deja visibles ou deja suffisamment stabilisees pour guider le produit.
+
+- Dashboard runtime : `Screen-Captures/Dashboard.png`
+- Liste des conversations : `Screen-Captures/Chat - Conversations.png`
+- Chat RAG avec sources et note principale : `Screen-Captures/Chat - IA - RAG depuis coffre.png`
+- Chat avec viewer Mermaid : `Screen-Captures/Chat - Mermaid - integration.png` et `Screen-Captures/Chat - Mermaid - viewer.png`
+- Graphe de connaissances : `Screen-Captures/Cerveau - Coffre - Notes - Synapses.png`
+- Detail d'insight : `Screen-Captures/Insights - exemple 1 - Question - Réponse.png`
+
+Ces captures doivent etre considerees comme des exemples de niveau d'information, de hierarchy visuelle et de densite fonctionnelle a conserver dans Expo, meme si le rendu final evolue.
+
+### 5.5 Ecarts entre cible et implementation actuelle
+
+Cette specification reste un document cible. Le depot actuel couvre deja une partie significative du perimetre, mais tout n'est pas au meme niveau de maturite.
+
+Deja visible ou exploitable aujourd'hui dans le depot courant :
+
+- dashboard systeme branche au backend,
+- liste des conversations et detail de conversation,
+- streaming de reponse cote API et client Expo avec mode mock de secours,
+- affichage des sources, de la note principale et de la provenance,
+- recherche web explicite cote backend,
+- contextes d'entites NER dans les reponses,
+- vue note,
+- vue insights,
+- vue graphe avec filtres, recherche texte, spotlight et notes recentes,
+- cycle operatoire local `install_service.sh` + `start.sh` + `stop.sh` + `status.sh` pour worker, API et Expo.
+
+Partiellement implemente ou encore en stabilisation :
+
+- gestion de session simple et token backend,
+- sauvegarde et restauration de conversations selon les flows backend disponibles,
+- sous-graphes centres et experience mobile du graphe,
+- exposition homogène de toutes les actions secondaires dans chaque ecran,
+- alignement complet entre la specification cible et tous les ecrans Expo reels.
+
+Toujours au stade cible / roadmap :
+
+- notifications push,
+- mode offline reel en lecture seule,
+- parametrage fin des strategies de retrieval,
+- administration multi-vault ou multi-utilisateur,
+- finition complete de toutes les surfaces Mermaid dans Expo si un rendu natif stable est retenu.
+
+Regle de lecture : quand ce document entre en conflit avec l'etat reel du code, considerer le code et les README operationnels comme source de verite pour le present, et cette specification comme reference de convergence produit.
+
 ## 6. Utilisateurs cibles
 
 ### 6.1 Persona principal
@@ -310,7 +358,15 @@ Fonctionnalites obligatoires :
 - timeline ou statut de generation,
 - etat explicite quand l'information n'est pas dans le coffre,
 - bouton de recherche web explicite si applicable,
-- reprise correcte des relances courtes.
+- reprise correcte des relances courtes,
+- affichage des entites detectees dans la conversation avec leur type et leur contexte.
+
+Precisions sur le NER du chat :
+
+- le frontend consomme des entites detectees sur le texte combine question + reponse, pas uniquement sur la saisie utilisateur,
+- il ne re-implemente ni l'extraction ni la validation des entites,
+- il restitue les enrichissements retournes par l'API sans perdre la provenance ni le lien avec les notes source,
+- il doit pouvoir compacter la vue NER sur mobile sans faire disparaitre les informations essentielles.
 
 ### 10.4 Conversation intelligence
 
@@ -321,7 +377,8 @@ Le frontend ne doit pas reimplementer la logique conversationnelle profonde, mai
 - intent de retrieval,
 - statut sentinel,
 - fallback web,
-- provenance de la reponse.
+- provenance de la reponse,
+- `entityContexts` enrichis avec preuve, relation et contexte web compact.
 
 ### 10.5 Notes
 
@@ -413,6 +470,8 @@ Sections :
 - actions rapides,
 - alertes.
 
+Repere visuel actuel : `Screen-Captures/Dashboard.png`.
+
 ### 11.3 Liste des conversations
 
 Comportements :
@@ -422,6 +481,8 @@ Comportements :
 - creation d'un nouveau fil,
 - badge de nombre de tours,
 - preview du dernier message utile.
+
+Repere visuel actuel : `Screen-Captures/Chat - Conversations.png`.
 
 ### 11.4 Ecran de chat
 
@@ -445,6 +506,8 @@ Actions secondaires :
 - rechercher sur le web,
 - ouvrir une note citee.
 
+Reperes visuels actuels : `Screen-Captures/Chat - IA - RAG depuis coffre.png`, `Screen-Captures/Chat - Mermaid - integration.png` et `Screen-Captures/Chat - Mermaid - viewer.png`.
+
 ### 11.5 Ecran note
 
 Blocs :
@@ -467,6 +530,8 @@ Blocs :
 - liste d'artefacts,
 - lecture detaillee.
 
+Repere visuel actuel : `Screen-Captures/Insights - exemple 1 - Question - Réponse.png`.
+
 ### 11.7 Ecran graphe
 
 Blocs :
@@ -476,6 +541,8 @@ Blocs :
 - canvas graphe,
 - top noeuds,
 - fiche d'un noeud selectionne.
+
+Repere visuel actuel : `Screen-Captures/Cerveau - Coffre - Notes - Synapses.png`.
 
 ### 11.8 Ecran settings
 
@@ -541,6 +608,15 @@ type ChatMessage = {
 };
 ```
 
+Attentes de rendu pour `entityContexts` dans un `ChatMessage` :
+
+- presenter un libelle humain du type d'entite,
+- montrer les notes du coffre reliees quand elles existent,
+- exposer l'image associee quand l'API en fournit une,
+- rendre visible l'explication de relation avec le sujet,
+- afficher un contexte web compact quand `ddgKnowledge` est present,
+- proposer une version compacte mobile et une version detaillee web/desktop.
+
 ### 13.3 SourceRef
 
 ```ts
@@ -572,6 +648,8 @@ type EntityContext = {
   typeLabel: string;
   value: string;
   mentions?: number;
+  lineNumber?: number;
+  relationExplanation?: string;
   imageUrl?: string;
   tag?: string;
   notes: RelatedNote[];

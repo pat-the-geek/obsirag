@@ -41,3 +41,6 @@ src/ui/pages/__pycache__/
 
 # PID
 .obsirag.pid
+.obsirag-autolearn.pid
+.obsirag-api.pid
+.obsirag-expo.pid

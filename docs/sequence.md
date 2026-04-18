@@ -1,15 +1,18 @@
 # Séquences ObsiRAG
 
-Ce document décrit, sous forme de diagrammes de séquence simplifiés, les quatre flux principaux du système : démarrage, requête chat, cycle auto-apprenissage, et événement watcher. Il complète `architecture.md` en en détaillant les interactions runtime entre composants.
+Ce document décrit, sous forme de diagrammes de séquence simplifiés, les quatre flux principaux du système : démarrage opérationnel, requête chat, cycle auto-apprenissage, et événement watcher. Il complète `architecture.md` en en détaillant les interactions runtime entre composants.
 
 ---
 
-## 1. Démarrage de l'application
+## 1. Démarrage opérationnel
 
 ```mermaid
 sequenceDiagram
-    participant UI as UI Streamlit
-    participant SC as ServiceCache<br/>(services_cache.py)
+    participant DEV as Operateur
+    participant START as start.sh
+    participant LD as launchd<br/>(com.obsirag.autolearn)
+    participant API as FastAPI / Uvicorn
+    participant EXPO as Expo Web
     participant SM as ServiceManager<br/>(services.py)
     participant CS as ChromaStore
     participant MLX as MLXClient
@@ -18,22 +21,23 @@ sequenceDiagram
     participant AL as AutoLearner
     participant VW as VaultWatcher
 
-    UI->>SC: get_services()
-    SC->>SM: ServiceManager(settings)
+    DEV->>START: ./start.sh
+    START->>LD: verifier / charger worker autolearn
+    START->>API: lancer scripts/run_api.sh
+    API->>SM: ServiceManager(settings)
     activate SM
     SM->>CS: ChromaStore(settings)
     SM->>MLX: MLXClient(settings)
     SM->>RAG: RAGPipeline(chroma, llm)
     SM->>IDX: IndexingPipeline(chroma)
-    SM->>AL: AutoLearner(settings, chroma, llm)
+    SM->>AL: AutoLearner(chroma, rag, indexer, ...)
     SM->>VW: VaultWatcher(settings, on_change_fn)
-    SM-->>SC: instance ServiceManager
-    deactivate SM
-    SC-->>UI: svc
-    UI->>SM: svc.start()
     SM->>VW: start() [thread]
     SM->>IDX: run_initial_indexing() [thread]
-    SM->>AL: start() [thread, si activé]
+    deactivate SM
+    START->>EXPO: lancer scripts/run_expo_web.sh
+    EXPO-->>DEV: UI web disponible sur :8081
+    API-->>DEV: API disponible sur :8000
 ```
 
 ---
@@ -43,15 +47,19 @@ sequenceDiagram
 ```mermaid
 sequenceDiagram
     participant U as Utilisateur
-    participant APP as app.py
+    participant EXPO as Client Expo
+    participant API as app.py
     participant RAG as RAGPipeline
     participant RS as RetrievalStrategy
     participant CS as ChromaStore
     participant AP as AnswerPrompting
     participant MLX as MLXClient
+    participant ES as EntityServices
+    participant WS as WebSearch
 
-    U->>APP: saisie question
-    APP->>RAG: stream_answer(question, history)
+    U->>EXPO: saisie question
+    EXPO->>API: POST /api/v1/conversations/:id/messages/stream
+    API->>RAG: stream_answer(question, history)
     activate RAG
     RAG->>RAG: resolve_question(question, history)
     RAG->>RS: retrieve(resolved_question)
@@ -65,17 +73,25 @@ sequenceDiagram
     CS-->>AP: linked_chunks[]
     AP-->>RAG: messages[]
     RAG->>MLX: stream(messages)
-    MLX-->>APP: tokens (stream)
+    MLX-->>API: tokens / answer
+    API->>ES: lookup entity contexts(question, answer)
+    ES-->>API: entityContexts[]
+    opt information absente du coffre
+        API->>WS: web_search(question)
+        WS-->>API: queryOverview + sources web
+    end
     deactivate RAG
-    APP-->>U: réponse progressive
+    API-->>EXPO: SSE tokens + sources + note principale + provenance
+    EXPO-->>U: réponse progressive
 ```
 
 ---
 
-## 3. Cycle AutoLearner (traitement d'une note)
+## 3. Cycle AutoLearner (worker persistant)
 
 ```mermaid
 sequenceDiagram
+    participant LD as launchd
     participant AL as AutoLearner
     participant ES as EntityServices
     participant EC as EntityCache<br/>(WuddaiCache/GeocodeCache)
@@ -85,6 +101,7 @@ sequenceDiagram
     participant AW as ArtifactWriter
     participant CS as ChromaStore
 
+    LD->>AL: run_autolearn_worker.sh
     AL->>AL: _select_notes_to_process()
     loop pour chaque note sélectionnée
         AL->>ES: extract_validated_entities(text)
@@ -128,3 +145,9 @@ sequenceDiagram
     VW->>AL: notify_note_changed(file_path)
     Note over AL: marque la note comme non traitée<br/>pour le prochain cycle auto-apprenissage
 ```
+
+---
+
+## Note d'architecture
+
+Les séquences ci-dessus décrivent le runtime principal actuel : `launchd` pour le worker auto-learner persistant, FastAPI pour le backend applicatif, et Expo web pour l'interface principale. Les flux Streamlit historiques ne sont plus la référence opératoire du produit.

@@ -2,7 +2,15 @@
 
 Ce document suit les ameliorations recentes appliquees a ObsiRAG, leur portee fonctionnelle et leur niveau de validation.
 
+Convention de lecture :
+
+- les sections qui parlent de FastAPI, Expo web, auto-learner, Chroma, RAG ou observabilite concernent le runtime produit actuel,
+- les sections qui parlent explicitement de pages Streamlit, de hot reload Streamlit ou de `session_state` documentent un heritage encore present dans le depot, utile pour maintenance mais non representatif du point d'entree principal actuel,
+- quand un lot melange les deux, les correctifs backend et stockages restent pertinents pour le produit actuel, meme si leur validation d'origine a ete faite via l'UI Streamlit heritee.
+
 ## Mise a jour du 2026-04-12 (suite)
+
+Cette mise a jour contient surtout des ameliorations backend, stockage, learning et observabilite toujours utiles au runtime actuel. Quelques points de validation et de robustesse mentionnent encore Streamlit parce que cette surface etait alors utilisee comme UI de verification.
 
 ### Correction bug accumulation _archive_ sur les insights
 
@@ -206,6 +214,8 @@ Ce document suit les ameliorations recentes appliquees a ObsiRAG, leur portee fo
 
 ## Mise a jour du 2026-04-11
 
+Cette mise a jour documente principalement un lot de stabilisation de l'UI Streamlit heritee. Elle reste utile pour comprendre certains helpers partages et garde-fous runtime encore presents dans le depot, mais ne decrit pas l'interface produit principale actuelle, qui est desormais Expo web sur backend FastAPI.
+
 ### Experience chat
 
 - Ajout d'un etat de session par fil de discussion dans l'UI Streamlit.
@@ -262,8 +272,8 @@ Ce document suit les ameliorations recentes appliquees a ObsiRAG, leur portee fo
 
 ### Exploitation locale
 
-- Nettoyage du redemarrage local des services apres les changements UI.
-- Verification du redemarrage de l'application : reponse HTTP 200 sur `http://127.0.0.1:8501`.
+- Nettoyage du redemarrage local des services apres les changements UI herites.
+- Verification du redemarrage de l'interface legacy : reponse HTTP 200 sur `http://127.0.0.1:8501`.
 - Verification des logs de demarrage : pas de nouvelle erreur bloquante observee sur la derniere relance.
 - Verification complementaire apres reconstruction des services : la page Cerveau rebati correctement un graphe de 527 noeuds et 640 aretes apres redemarrage.
 - Documentation d'un protocole operatoire de diagnostic, purge de cache et relance locale pour les hot reload Streamlit incomplets.
@@ -281,14 +291,11 @@ Ce document suit les ameliorations recentes appliquees a ObsiRAG, leur portee fo
 
 ## Impact produit
 
-- L'UI est plus robuste face aux rechargements Streamlit.
-- Le suivi des conversations est plus coherent pour l'utilisateur.
-- Les ecrans d'administration et d'exploration s'appuient sur des API plus explicites.
-- Le risque de regression sur le rendu HTML integre est maintenant couvert par des tests dedies.
+- Les composants backend, learning, stockage et observabilite introduits dans ces lots restent directement utiles au runtime actuel FastAPI + Expo.
+- Le suivi des conversations, des artefacts et des metriques s'appuie sur des API plus explicites et plus testees.
 - Le cycle d'auto-apprentissage evite mieux de rebalayer les artefacts internes comme s'il s'agissait de notes source.
-- Un hot reload Streamlit laisse maintenant moins facilement l'UI dans un etat incoherent quand des helpers Chroma ont evolue entre deux rechargements.
-- Le diagnostic local des regressions UI liees au hot reload est plus rapide et plus reproductible grace au protocole documente.
-- La page Insights depend moins de scans filesystem implicites et davantage d'API Chroma explicites, ce qui reduit les divergences entre ecrans UI.
+- Le risque de regression sur le rendu HTML integre et sur certains helpers UI partages est mieux couvert par les tests.
+- Les correctifs cites sur le hot reload Streamlit ameliorent surtout la maintenance de l'UI legacy encore presente dans le depot.
 
 ## Prochaines ameliorations a poursuivre
 

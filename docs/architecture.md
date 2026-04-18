@@ -10,11 +10,18 @@ ObsiRAG repose sur cinq blocs principaux :
 2. `ChromaStore` fournit l'index vectoriel et les accès de récupération.
 3. `RAGPipeline` résout les requêtes utilisateur en séparant désormais mieux retrieval et prompting.
 4. `AutoLearner` traite les notes en arrière-plan pour produire insights, synapses et synthèses.
-5. L'UI Streamlit expose le chat, le graphe, les insights et le visualiseur de notes.
+5. Le backend FastAPI et le client Expo exposent le chat, la recherche web, le graphe, les insights et le visualiseur de notes.
 
 ## Flux principal
 
 ### Démarrage
+
+En exploitation locale, les points d'entrée opératoires sont désormais :
+
+1. `./install_service.sh` pour installer le worker `launchd` persistant `com.obsirag.autolearn`,
+2. `./start.sh` pour démarrer l'API FastAPI et l'interface Expo web,
+3. `./stop.sh` pour arrêter uniquement l'API et Expo,
+4. `./status.sh` pour vérifier l'état du worker, de l'API et de l'UI.
 
 `src/services.py` initialise, dans cet ordre :
 
@@ -43,7 +50,17 @@ Une requête suit ce chemin :
 3. `RetrievalStrategy` choisit une stratégie de récupération,
 4. `AnswerPrompting` prépare le contexte et les messages,
 5. le backend MLX produit une réponse,
-6. `RAGPipeline` normalise la sortie et applique les garde-fous.
+6. le backend enrichit la réponse avec les contextes d'entités NER et, si le coffre est insuffisant, une synthèse de recherche web,
+7. `RAGPipeline` normalise la sortie et applique les garde-fous.
+
+Précision importante sur le NER conversationnel :
+
+- l'extraction ne porte pas seulement sur la question utilisateur, mais sur le texte combiné question + réponse,
+- la résolution d'entités tente d'abord un appariement avec WUDD.ai pour stabiliser les noms, types et images,
+- un fallback spaCy complète les entités absentes de WUDD.ai,
+- chaque entité peut être reliée à des notes du coffre et à une ligne de preuve dans une source candidate,
+- le backend produit ensuite une explication courte de la relation entre l'entité détectée et le sujet traité,
+- ces données sont retournées dans `entityContexts` pour l'UI Expo et les autres consommateurs API.
 
 ### Auto-apprentissage
 
@@ -69,9 +86,23 @@ Responsabilité : orchestration runtime uniquement.
 - garder les composants injectés une seule fois,
 - conserver le rôle de point d'entrée unique côté UI.
 
-### UI Streamlit, hot reload et stratégie d'import
+### API FastAPI et client Expo
 
-Responsabilité : garder les pages Streamlit robustes malgré les rechargements partiels du runtime.
+Responsabilité : exposer les capacités produit réellement utilisées dans le flux courant.
+
+À préserver :
+
+- FastAPI reste la façade unique pour les conversations, le statut système, le graphe, les notes, les insights et la recherche web,
+- Expo reste une couche de présentation et d'interaction, sans logique RAG embarquée,
+- les réponses de conversation peuvent transporter des sources, une note principale, un `queryOverview`, des `entityContexts` et une provenance explicite,
+- `entityContexts` doit rester le conteneur de référence pour les enrichissements NER du chat: type, notes liées, image éventuelle, ligne de preuve, explication de relation et connaissances web compactes,
+- le graphe doit rester filtrable côté backend par texte, dossier, tag, type et profondeur de sous-graphe.
+
+### UI Streamlit héritée, hot reload et stratégie d'import
+
+Responsabilité : documenter et maintenir la surface historique encore présente dans le dépôt, sans la confondre avec le point d'entrée produit principal qui est désormais le couple FastAPI + Expo.
+
+Cette section ne décrit donc qu'un besoin de maintenance de compatibilité pour les modules UI hérités encore présents dans le dépôt.
 
 Constat pratique : en développement, Streamlit peut conserver un état de modules intermédiaire lors d'un hot reload. Cela peut produire des `ImportError` transitoires sur des imports nommés depuis des modules UI récemment modifiés, alors même qu'un import Python propre fonctionne hors runtime Streamlit.
 
@@ -91,7 +122,7 @@ Contournements déjà appliqués :
 
 ### Protocole opératoire hot reload Streamlit
 
-Quand une page UI casse juste après un refactor alors que l'import Python direct fonctionne, suivre cette séquence dans cet ordre :
+Quand une page Streamlit héritée casse juste après un refactor alors que l'import Python direct fonctionne, suivre cette séquence dans cet ordre :
 
 1. vérifier si le code source expose bien le helper ou symbole attendu via une lecture directe du fichier concerné,
 2. confirmer si l'erreur n'existe qu'en runtime Streamlit en comparant avec un import Python hors UI,

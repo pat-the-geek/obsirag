@@ -1,8 +1,6 @@
-<p align="left">
-  <img src="https://raw.githubusercontent.com/pat-the-geek/obsirag/main/src/ui/static/android-chrome-512x512.png" alt="ObsiRAG" width="120" />
-</p>
-
 # ObsiRAG
+
+![ObsiRAG logo](https://raw.githubusercontent.com/pat-the-geek/obsirag/main/src/ui/static/android-chrome-512x512.png)
 
 Un système RAG (Retrieval-Augmented Generation) local pour votre coffre Obsidian, tournant nativement en Python sur macOS et utilisant **MLX-LM** (Apple Silicon) comme moteur IA local et **ChromaDB** comme base vectorielle.
 
@@ -32,6 +30,42 @@ Exemples de requêtes :
 
 ---
 
+## Aperçu visuel
+
+Les captures principales ci-dessous donnent une vue rapide des surfaces produit aujourd'hui exposées par ObsiRAG.
+
+### Dashboard système
+
+Vue d'exploitation pour vérifier l'état du backend, l'indexation et l'activité de l'auto-learner.
+
+![Capture Expo - dashboard systeme](<docs/Screen-Captures/Dashboard.png>)
+
+### Conversations
+
+Vue de reprise des fils de discussion avec historique, navigation et recherche locale.
+
+![Capture Expo - liste des conversations](<docs/Screen-Captures/Chat - Conversations.png>)
+
+### Chat RAG
+
+Vue de conversation enrichie avec note principale, sources et provenance.
+
+![Capture ObsiRAG - chat RAG avec sources](<docs/Screen-Captures/Chat - IA - RAG depuis coffre.png>)
+
+### Graphe du cerveau
+
+Vue d'exploration du coffre par connexions, synapses et filtrage.
+
+![Capture ObsiRAG - graphe du cerveau](<docs/Screen-Captures/Cerveau - Coffre - Notes - Synapses.png>)
+
+### Insight détaillé
+
+Vue d'un artefact généré avec question, réponse, tags et provenance.
+
+![Capture ObsiRAG - detail d'un insight](<docs/Screen-Captures/Insights - exemple 1 - Question - Réponse.png>)
+
+---
+
 ## Documentation technique
 
 - [docs/architecture.md](docs/architecture.md) — architecture actuelle, frontières entre modules, invariants et flux runtime
@@ -43,7 +77,7 @@ Exemples de requêtes :
 
 ## Validation locale post-changement
 
-Pour standardiser la verification locale apres un lot de changements UI/Streamlit :
+Pour standardiser la verification locale apres un lot de changements frontend, backend ou UI heritee :
 
 ```bash
 ./scripts/validate_local.sh
@@ -107,7 +141,7 @@ pytest --no-cov
 
 ### Chat avec le coffre
 
-Interface conversationnelle connectée à **MLX-LM** (inférence locale Apple Silicon, sans serveur externe) et au moteur de recherche du coffre. Les requêtes sont traitées en combinant récupération sémantique et synthèse par l'IA.
+Interface conversationnelle connectée à **MLX-LM** (inférence locale Apple Silicon, sans serveur externe) et au moteur de recherche du coffre. Les requêtes sont traitées en combinant récupération sémantique, synthèse par l'IA, enrichissement NER et, quand nécessaire, une recherche web explicite.
 
 #### Comportement conversationnel
 
@@ -118,6 +152,28 @@ Le chat conserve maintenant un **contexte conversationnel exploitable pour la r�
 - **Sources plus lisibles** : la réponse affiche désormais la **note principale** au-dessus des sources, et cette note est marquée comme *Principale* dans la liste détaillée
 - **Garde-fou anti hors-sujet** : si une requête mono-sujet ne retrouve aucun chunk lexicalement fiable, ObsiRAG répond directement *"Cette information n'est pas dans ton coffre."* au lieu de laisser partir le modèle sur un faux contexte
 
+#### Recherche web et contextes d'entités
+
+Quand le coffre ne suffit pas, le backend peut enrichir la réponse avec une **recherche web explicite** :
+
+- **Aperçu de requête** : la réponse conserve la requête reformulée, un résumé et la liste des sources web retenues
+- **Provenance visible** : les artefacts et messages distinguent les contenus venant du coffre, du web ou d'un mode hybride
+- **Entités détectées dans la conversation** : le backend retourne des `entityContexts` enrichis (type, relation avec la réponse, notes liées, image éventuelle, connaissances DDG si disponibles)
+- **Usage côté Expo** : ces informations sont exploitées par l'interface mobile/web pour afficher les sources, les entités clés et relancer une recherche ciblée sans quitter la conversation
+
+#### Détection NER dans le chat
+
+La détection d'entités du chat ne repose pas sur la seule question utilisateur. Le backend analyse le **texte combiné de la question et de la réponse générée**, ce qui permet de capter à la fois les entités explicitement demandées et celles réellement mobilisées dans la réponse.
+
+- **Validation prioritaire WUDD.ai** : les entités reconnues sont d'abord rapprochées de l'index WUDD.ai pour obtenir un nom canonique, un type stable et, quand disponible, une image associée
+- **Fallback spaCy** : si certaines entités ne sont pas trouvées dans WUDD.ai, un fallback spaCy complète la détection pour éviter de perdre les noms saillants présents dans l'échange
+- **Limitation contrôlée** : le backend retient jusqu'à **10 entités** par échange, et associe jusqu'à **3 notes liées** par entité pour rester lisible côté interface
+- **Ancrage dans le coffre** : chaque entité est rapprochée des notes sources candidates pour retrouver une ligne de preuve, un extrait et la note la plus pertinente quand elle existe
+- **Explication de relation** : après détection, le backend génère une phrase courte expliquant pourquoi l'entité est liée au sujet de la conversation, afin d'éviter une simple liste de noms sans contexte
+- **Enrichissement UI** : l'interface peut ensuite afficher le type de l'entité, son image éventuelle, ses notes liées, son explication de relation et sa provenance dans la réponse
+
+En pratique, cela permet par exemple de faire ressortir dans le chat des **personnes, organisations, lieux ou produits** cités dans la réponse, puis de les relier directement aux notes du coffre déjà concernées par ces entités.
+
 #### Format des réponses
 
 Les réponses mono-sujet sont désormais structurées en Markdown avec des intertitres courts pour améliorer la lisibilité dans le chat :
@@ -127,8 +183,6 @@ Les réponses mono-sujet sont désormais structurées en Markdown avec des inter
 
 Les synthèses multi-thèmes conservent leur structure d'étude existante avec plusieurs chapitres.
 
-![](<docs/Screen-Captures/Chat - IA - RAG depuis coffre.png>)
-
 #### Documentation dédiée
 
 Le mécanisme de gestion des conversations, des relances et de la note dominante est documenté dans [docs/conversation-management.md](docs/conversation-management.md).
@@ -137,9 +191,9 @@ Le mécanisme de gestion des conversations, des relances et de la note dominante
 
 Lorsque la réponse du LLM contient un bloc Mermaid, le chat affiche un **bouton de visualisation intégré** qui ouvre le diagramme dans un viewer dédié — sans quitter l'interface.
 
-![](<docs/Screen-Captures/Chat - Mermaid - integration.png>)
+![Capture ObsiRAG - bouton d'ouverture Mermaid dans le chat](<docs/Screen-Captures/Chat - Mermaid - integration.png>)
 
-![](<docs/Screen-Captures/Chat - Mermaid - viewer.png>)
+![Capture ObsiRAG - viewer Mermaid integre](<docs/Screen-Captures/Chat - Mermaid - viewer.png>)
 
 ### Cerveau — graphe de connaissances
 
@@ -155,14 +209,16 @@ Visualisation interactive du réseau de vos notes sous forme de graphe interacti
 
 **Filtres disponibles (barre latérale) :**
 
+- **Recherche texte** : filtrage du graphe par texte libre sur les titres et chemins de notes
 - Par **dossier** (tous ou sélection multiple)
 - Par **tag** Obsidian (sélection multiple)
 - Par **type de note** (notes utilisateur, insights, synapses, synthèses, conversations...)
+- Par **récence** pour concentrer l'exploration sur les notes les plus récemment modifiées
 - Sélecteur de note alphabétique pour ouvrir directement une note dans le visualiseur
 
-Le graphe est mis en cache 5 minutes et recalculé à la demande via le bouton 🔄. Il est également exporté en JSON (`data/graph/knowledge_graph.json`) pour un usage externe éventuel.
+Dans l'interface Expo, le module graphe expose aussi une **recherche dans la liste de notes**, des blocs **spotlight** et **notes récentes**, ainsi que des résumés par dossier, tag et type pour accélérer l'exploration.
 
-![](<docs/Screen-Captures/Cerveau - Coffre - Notes - Synapses.png>)
+Le graphe est mis en cache 5 minutes et recalculé à la demande via le bouton 🔄. Il est également exporté en JSON (`data/graph/knowledge_graph.json`) pour un usage externe éventuel.
 
 ### Page Note — visualiseur intégré
 
@@ -212,7 +268,7 @@ Avec ce mode, un crash MLX éventuel du worker n'arrête plus l'API FastAPI.
 #### Traitements automatiques
 
 | # | Traitement | Déclenchement | Description |
-|---|-----------|---------------|-------------|
+| --- | ----------- | --------------- | ------------- |
 | 1 | **Bulk initial** | Une seule fois au 1er démarrage (après 120 s de délai) | Traite toutes les notes non-traitées (max `AUTOLEARN_BULK_MAX_NOTES`, défaut 20) : génère un insight Q&A et renomme la note avec un titre en français |
 | 2 | **Cycle autolearn** | Toutes les `AUTOLEARN_INTERVAL_MINUTES` min (défaut 60), 5 min après le démarrage, uniquement entre `AUTOLEARN_ACTIVE_HOUR_START` et `AUTOLEARN_ACTIVE_HOUR_END` (défaut 8h–22h) | Pass 1 : jusqu'à `AUTOLEARN_MAX_NOTES_PER_RUN` notes récentes (modifiées dans les 24 h). Pass 2 : jusqu'à `AUTOLEARN_FULLSCAN_PER_RUN` notes jamais traitées (full-scan) |
 | 3 | **Découverte de synapses** | À la fin de chaque cycle autolearn | Trouve `AUTOLEARN_SYNAPSE_PER_RUN` paires de notes sémantiquement proches sans lien existant et génère une note de connexion dans `obsirag/synapses/` |
@@ -239,12 +295,14 @@ Chaque insight généré est enrichi avec des **entités nommées validées** (p
 > **Dépendance externe :** WUDD.ai doit être accessible sur `WUDDAI_ENTITIES_URL` (configurable dans `.env`). En cas d'indisponibilité, l'extraction spaCy seule est utilisée en fallback — les insights sont créés mais sans validation officielle. La liste est mise en cache localement pendant 24h.
 
 Pour migrer les insights existants (tags + géolocalisation + galeries) :
+
 ```bash
 .venv/bin/python scripts/migrate_insight_tags.py --dry-run  # simulation
 .venv/bin/python scripts/migrate_insight_tags.py              # application
 ```
 
 Pour renommer en batch les insights/synapses/syntheses selon un titre court généré par le LLM :
+
 ```bash
 # Prévisualisation sans modification
 .venv/bin/python scripts/rename_insights.py --dry-run
@@ -260,6 +318,7 @@ Pour renommer en batch les insights/synapses/syntheses selon un titre court gén
 ```
 
 Le script :
+
 - Saute le frontmatter pour lire le corps de la note (évite que les tags YAML consomment le contexte LLM)
 - Propage `[[ancien_titre]]` → `[[nouveau_titre]]` dans **tout le vault**
 - Met à jour `synapse_index.json` (paires `fp_a|||fp_b`)
@@ -282,12 +341,13 @@ Le script :
 ### Page Insights
 
 Consultation des artefacts, synapses et synthèses générés, avec :
+
 - **Progression & estimation du temps restant** : widget affichant le nombre de notes traitées, restantes, et une estimation de la durée nécessaire pour compléter le traitement — avec heure du prochain cycle en heure locale
 - Historique des requêtes posées dans le chat
 
-![](<docs/Screen-Captures/Insights - Connaissances ajoutées.png>)
+![Capture ObsiRAG - liste des connaissances ajoutees dans Insights](<docs/Screen-Captures/Insights - Connaissances ajoutées.png>)
 
-![](<docs/Screen-Captures/Insights - Prompts.png>)
+Le détail d'un artefact Insight affiche ensuite les tags, la provenance, les entités clés et le contenu question/réponse enrichi.
 
 ---
 
@@ -346,7 +406,7 @@ Les fichiers synapses contiennent des wikilinks vers chacune des deux notes sour
 
 Le fichier est nommé automatiquement à partir du titre de la note source :
 
-```
+```text
 obsirag/insights/YYYY-MM/{titre_note}_{YYYYMMDD}.md
 ```
 
@@ -368,7 +428,7 @@ Si un fichier correspondant est trouvé, les nouveaux Q&A sont **ajoutés à la 
 
 ### Structure du contenu
 
-```
+```text
 ---                          ← Frontmatter YAML
 tags:
   - insight
@@ -395,9 +455,9 @@ location: [lat, lng]         ← optionnel, si entité géolocalisable
 ## Synthèse des sources web   ← si des pages web ont été analysées
 ```
 
-![](<docs/Screen-Captures/Insights - exemple - Question - Réponse.png>)
+![Capture ObsiRAG - exemple d'insight avec question et reponse](<docs/Screen-Captures/Insights - exemple - Question - Réponse.png>)
 
-![](<docs/Screen-Captures/Insights - exemple 2 - Question - Réponse.png>)
+![Capture ObsiRAG - autre exemple d'insight detaille](<docs/Screen-Captures/Insights - exemple 1 - Question - Réponse.png>)
 
 ---
 
@@ -417,7 +477,7 @@ Un **chunk** est un fragment de texte extrait d'une note, avec ses métadonnées
 
 Le chunking est implémenté en Python pur — aucune API externe, aucune dépendance réseau. C'est du découpage de chaînes de caractères (`split()`, `split("\n\n")`) : rapide, déterministe, 100% local.
 
-```
+```text
 Note Obsidian
     │
     ▼
@@ -449,12 +509,12 @@ Chaque chunk reçoit :
   - toutes les métadonnées de la note (titre, tags, dates, wikilinks, NER…)
 ```
 
-**Le principe clé : l'overlap**
+### Le principe clé : l'overlap
 
 À chaque rupture de chunk, les `overlap` derniers mots du chunk précédent sont répétés en tête du suivant. Cela évite de couper une phrase en deux et de perdre le fil du contexte lors de la recherche sémantique.
 
 | Paramètre | Rôle |
-|---|---|
+| --- | --- |
 | `chunk_size_words` | taille max d'un chunk en mots (~300) |
 | `chunk_overlap_words` | chevauchement entre chunks (~30) |
 
@@ -518,7 +578,7 @@ ObsiRAG utilise **MLX-LM** pour la génération locale, sans serveur externe. Le
 Le modèle est géré dynamiquement pour minimiser l'empreinte mémoire :
 
 | Événement | Comportement |
-|---|---|
+| --- | --- |
 | **Ouverture de l'interface web** | Chargement immédiat du modèle (~2 s sur M5) |
 | **Utilisation du chat** | Modèle maintenu en mémoire tant que l'UI est active |
 | **Inactivité UI > 2 min** | Déchargement automatique (watchdog toutes les 30 s) |
@@ -542,7 +602,7 @@ Les modèles de la communauté `mlx-community` sur HuggingFace sont déjà conve
 ### Performances observées (M5, 16 Go)
 
 | Opération | Ollama (avant) | MLX-LM (actuel) | Gain |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | Génération (tokens/s) | ~13 tok/s | ~27 tok/s | **×2** |
 | Chargement du modèle | 30–60 s | ~2 s | **×20** |
 | Dépendance serveur | Ollama daemon requis | Aucune | ✅ |
@@ -585,27 +645,27 @@ python scripts/benchmark_model_shortlist.py \
 
 ## Stack technique
 
-| Composant          | Technologie                                                        |
-| ------------------ | ------------------------------------------------------------------ |
-| Langage            | Python 3.12                                                        |
-| Déploiement        | macOS natif (launchd + Python venv)                                |
-| IA                 | MLX-LM (Apple Silicon, sans serveur)                               |
-| Base vectorielle   | ChromaDB                                                           |
-| Embeddings         | sentence-transformers — `paraphrase-multilingual-MiniLM-L12-v2` (384 dim, CPU) |
-| Interface          | Streamlit                                                          |
-| Graphe             | NetworkX + Pyvis                                                   |
-| Recherche web      | DuckDuckGo Search (sources fiables)                                |
-| Entités NER        | spaCy + validation [WUDD.ai](http://localhost:5050) (top 5 000 entités officielles) |
-| Géolocalisation    | Wikipedia Coordinates API → frontmatter `location:` (Obsidian Map View) |
-| Coffre             | Obsidian (lecture seule)                                           |
-| Artefacts générés  | `obsirag/insights/`, `obsirag/synthesis/`, `obsirag/synapses/`, `obsirag/conversations/` |
+| Composant | Technologie |
+| --- | --- |
+| Langage | Python 3.12 |
+| Déploiement | macOS natif (launchd + Python venv) |
+| IA | MLX-LM (Apple Silicon, sans serveur) |
+| Base vectorielle | ChromaDB |
+| Embeddings | sentence-transformers — `paraphrase-multilingual-MiniLM-L12-v2` (384 dim, CPU) |
+| Interface | Expo web + FastAPI (runtime actuel), Streamlit hérité |
+| Graphe | NetworkX + Pyvis |
+| Recherche web | DuckDuckGo Search (sources fiables) |
+| Entités NER | spaCy + validation [WUDD.ai](http://localhost:5050) (top 5 000 entités officielles) |
+| Géolocalisation | Wikipedia Coordinates API → frontmatter `location:` (Obsidian Map View) |
+| Coffre | Obsidian (lecture seule) |
+| Artefacts générés | `obsirag/insights/`, `obsirag/synthesis/`, `obsirag/synapses/`, `obsirag/conversations/` |
 
 ---
 
 ## Fréquence et comportement de l'auto-learner
 
 | Paramètre `.env` | Valeur par défaut | Rôle |
-|---|---|---|
+| --- | --- | --- |
 | `AUTOLEARN_ALLOW_BACKGROUND_LLM` | **false** | Autorise explicitement le chargement MLX par l'auto-learner en tâche de fond. À activer seulement si ce runtime est stable sur votre machine. |
 | `AUTOLEARN_INTERVAL_MINUTES` | **15 min** | Fréquence du cycle — l'auto-learner se réveille toutes les 15 minutes |
 | `AUTOLEARN_LOOKBACK_HOURS` | **24 h** | Fenêtre de détection — seules les notes modifiées dans les dernières 24h sont candidates |
@@ -627,7 +687,7 @@ cd obsirag
 # Configurer l'environnement
 cp .env.example .env
 # Éditer .env : renseigner VAULT_PATH, MLX_CHAT_MODEL, etc.
-# Pour un acces reseau via IP/Tailscale : STREAMLIT_SERVER_ADDRESS=0.0.0.0
+# Pour exposer aussi l'UI Streamlit heritee sur le reseau : STREAMLIT_SERVER_ADDRESS=0.0.0.0
 
 # Installer les dépendances Python et configurer le service
 ./setup.sh
@@ -636,36 +696,41 @@ cp .env.example .env
 ./start.sh
 ```
 
-L'interface est accessible sur [http://localhost:8501](http://localhost:8501).
+Les surfaces suivantes sont alors disponibles :
+
+- auto-learner ObsiRAG via `launchd` (verifie et maintenu actif)
+- API backend Expo : [http://localhost:8000](http://localhost:8000)
+- interface Expo web : [http://localhost:8081](http://localhost:8081)
 
 > Le modèle MLX est téléchargé automatiquement depuis HuggingFace au premier démarrage (~4 Go pour `Qwen2.5-7B-Instruct-4bit`).
 
-L'interface est accessible sur [http://localhost:8501](http://localhost:8501).
+`./stop.sh` arrete l'API backend Expo et l'interface Expo web, mais laisse l'auto-learner `launchd` actif.
 
-Pour installer ObsiRAG comme service macOS (démarrage automatique au login) :
+Pour afficher rapidement leur etat :
+
+```bash
+./status.sh
+```
+
+Pour installer l'auto-learner comme service macOS persistant (démarrage automatique au login) :
+
 ```bash
 ./install_service.sh
 ```
 
-Une fois le service `launchd` installé (`com.obsirag`), les commandes `./start.sh` et `./stop.sh` restent les bons points d'entrée : elles pilotent alors le service `launchd` au lieu de lancer un second processus Streamlit en parallèle. Cela évite les conflits de port sur `8501` et garde un seul PID actif côté système.
+L'auto-learner doit rester un service `launchd` persistant. `./install_service.sh` installe ce worker en lancement automatique, `./start.sh` vérifie qu'il est bien charge et relance seulement l'API backend Expo et l'interface Expo web, et `./stop.sh` n'arrête pas l'auto-learner.
 
 ## Acces reseau
 
-Pour exposer l'application sur le reseau de la machine :
+Pour exposer l'interface Expo web sur le reseau de la machine :
 
 ```bash
-echo 'STREAMLIT_SERVER_ADDRESS=0.0.0.0' >> .env
+echo 'EXPO_WEB_PORT=8081' >> .env
 ./stop.sh
 ./start.sh
 ```
 
-Si vous utilisez le service launchd, reappliquez ensuite l'installation pour regenerer le plist :
-
-```bash
-./install_service.sh
-```
-
-Vous pourrez alors acceder a ObsiRAG via `http://IP_DE_LA_MACHINE:8501`.
+Vous pourrez alors acceder a l'interface Expo web via `http://IP_DE_LA_MACHINE:8081`.
 
 ---
 

@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # =============================================================
-# ObsiRAG — Exécution au premier plan (utilisé par launchd)
-# Ne pas appeler directement, utiliser start.sh ou install_service.sh
+# ObsiRAG — Lanceur de l'UI Streamlit heritee au premier plan
+# Surface legacy conservee pour maintenance locale, distincte du runtime principal Expo + FastAPI
+# Ne pas appeler directement, utiliser start.sh ou install_service.sh seulement si cette UI legacy doit etre executee
 # =============================================================
 set -euo pipefail
 
@@ -13,7 +14,7 @@ VENV_PYTHON="$SCRIPT_DIR/.venv/bin/python"
 VENV_STREAMLIT="$SCRIPT_DIR/.venv/bin/streamlit"
 
 if [ ! -x "$VENV_STREAMLIT" ]; then
-  echo "ERREUR : streamlit introuvable dans .venv. Exécute ./setup.sh"
+  echo "ERREUR : streamlit introuvable dans .venv pour l'UI legacy. Exécute ./setup.sh"
   exit 1
 fi
 
@@ -40,7 +41,7 @@ mkdir -p "$APP_DATA_DIR" "$LOG_DIR"
 # Remplace l'icône statique par défaut de Streamlit avant le démarrage.
 "$VENV_PYTHON" -m src.ui.streamlit_branding || true
 
-# ---- Streamlit (premier plan — launchd gère le cycle de vie) -
+# ---- Streamlit legacy (premier plan) ------------------------
 exec "$VENV_STREAMLIT" run src/ui/app.py \
   --server.address="$STREAMLIT_SERVER_ADDRESS" \
   --server.port=8501 \
