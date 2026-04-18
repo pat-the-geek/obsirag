@@ -936,8 +936,7 @@ def enrich_sync(query: str, llm) -> tuple[str | None, Path | None, list[dict], b
     ddg_results = _ddg_search(search_query)
     results = _merge_search_results(instant_results, ddg_results)
     if not results:
-        failure_msg = "🌐 Aucun résultat web trouvé pour cette question."
-        return failure_msg, None, [], False
+        return None, None, [], False
     answer = _synthesize(query, results, llm)
     if not answer:
         return None, None, results, False

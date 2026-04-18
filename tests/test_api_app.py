@@ -13,6 +13,7 @@ from src.api.app import _iter_answer_tokens
 from src.api.app import _lookup_conversation_entity_contexts
 from src.api.app import _normalize_report_markdown
 from src.api.conversation_store import ApiConversationStore
+from src.api.schemas import ChatMessageModel
 from src.api.schemas import ConversationDetailModel
 
 
@@ -59,6 +60,10 @@ class _StubServiceManager:
                 "score": 0.93,
             }
         ]
+
+
+def _message(payload: dict) -> ChatMessageModel:
+    return ChatMessageModel.model_validate(payload)
 
 
 def test_create_session_open_mode(tmp_settings):
@@ -156,32 +161,32 @@ def test_delete_conversation_message_removes_target_message_and_previous_questio
     conversation = store.create("Test suppression")
     conversation.id = "conv-delete-message"
     conversation.messages = [
-        {
+        _message({
             "id": "user-1",
             "role": "user",
             "content": "Question",
             "createdAt": "2026-04-17T12:00:00Z",
-        },
-        {
+        }),
+        _message({
             "id": "assistant-1",
             "role": "assistant",
             "content": "Premiere reponse",
             "createdAt": "2026-04-17T12:00:01Z",
             "stats": {"tokens": 10, "ttft": 0.3, "total": 1.0, "tps": 10.0},
-        },
-        {
+        }),
+        _message({
             "id": "user-2",
             "role": "user",
             "content": "Question suivante",
             "createdAt": "2026-04-17T12:00:02Z",
-        },
-        {
+        }),
+        _message({
             "id": "assistant-2",
             "role": "assistant",
             "content": "Seconde reponse",
             "createdAt": "2026-04-17T12:00:03Z",
             "stats": {"tokens": 20, "ttft": 0.4, "total": 2.0, "tps": 10.0},
-        },
+        }),
     ]
     store.upsert(conversation)
 
@@ -223,25 +228,25 @@ def test_get_conversation_removes_unanswered_trailing_question(tmp_path: Path, t
     conversation = store.create("Fil incomplet")
     conversation.id = "conv-repair-tail"
     conversation.messages = [
-        {
+        _message({
             "id": "user-1",
             "role": "user",
             "content": "Question 1",
             "createdAt": "2026-04-17T12:00:00Z",
-        },
-        {
+        }),
+        _message({
             "id": "assistant-1",
             "role": "assistant",
             "content": "Reponse 1",
             "createdAt": "2026-04-17T12:00:01Z",
             "stats": {"tokens": 10, "ttft": 0.3, "total": 1.0, "tps": 10.0},
-        },
-        {
+        }),
+        _message({
             "id": "user-2",
             "role": "user",
             "content": "Question restee sans reponse",
             "createdAt": "2026-04-17T12:00:02Z",
-        },
+        }),
     ]
     store.upsert(conversation)
 
@@ -273,13 +278,13 @@ def test_generate_conversation_report_creates_and_indexes_insight(tmp_path: Path
     conversation = store.create("Mission Artemis")
     conversation.id = "conv-report"
     conversation.messages = [
-        {
+        _message({
             "id": "user-1",
             "role": "user",
             "content": "Fais une synthese de la mission Artemis II.",
             "createdAt": "2026-04-18T12:00:00Z",
-        },
-        {
+        }),
+        _message({
             "id": "assistant-1",
             "role": "assistant",
             "content": "Artemis II valide Orion avant les prochaines missions lunaires.\n\n```mermaid\nflowchart TD\nA[Préparation] --> B[Vol circumlunaire]\n```",
@@ -298,9 +303,10 @@ def test_generate_conversation_report_creates_and_indexes_insight(tmp_path: Path
                     "imageUrl": "https://example.com/nasa.png",
                 }
             ],
-        },
+        }),
     ]
     store.upsert(conversation)
+
 
     service_manager = _StubServiceManager()
     service_manager.llm.chat.return_value = "# Rapport Artemis\n\n## Synthese\n\nMission de validation avant retour lunaire.\n"

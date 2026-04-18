@@ -51,6 +51,7 @@ class TestAutoLearner:
         chroma = MagicMock()
         rag = MagicMock()
         indexer = MagicMock()
+        tmp_settings.autolearn_allow_background_llm = True
 
         with patch("src.learning.autolearn.settings", tmp_settings):
             learner = AutoLearner(chroma, rag, indexer)
@@ -923,6 +924,7 @@ class TestAutoLearner:
         learner = AutoLearner(MagicMock(), MagicMock(), MagicMock())
         learner._scheduler = MagicMock()
         learner._scheduler.running = True
+        tmp_settings.autolearn_allow_background_llm = True
         created_threads: list[_FakeThread] = []
 
         def _thread_factory(*, target=None, daemon=None, name=None):
