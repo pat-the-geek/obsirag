@@ -7,8 +7,10 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 AUTOLEARN_LABEL="com.obsirag.autolearn"
+API_LABEL="com.obsirag.api"
 API_PID_FILE=".obsirag-api.pid"
 EXPO_PID_FILE=".obsirag-expo.pid"
+EXPO_DIST_INDEX="obsirag-expo/dist/index.html"
 API_PORT="${OBSIRAG_API_PORT:-8000}"
 EXPO_PORT="${EXPO_WEB_PORT:-8081}"
 
@@ -70,10 +72,22 @@ rm -f /tmp/obsirag_autolearn_status.$$
 
 echo ""
 echo "== API backend"
+if launchctl print "gui/$(id -u)/$API_LABEL" >/tmp/obsirag_api_status.$$ 2>&1; then
+  awk '/state =|pid =|last exit code =|path =/ {print}' /tmp/obsirag_api_status.$$
+else
+  echo "state = not-loaded"
+fi
+rm -f /tmp/obsirag_api_status.$$
 _print_pid_file_status "api pid file" "$API_PID_FILE"
 _print_port_status "api" "$API_PORT" "http://127.0.0.1:${API_PORT}/api/v1/health"
 
 echo ""
 echo "== Expo web"
-_print_pid_file_status "expo pid file" "$EXPO_PID_FILE"
-_print_port_status "expo" "$EXPO_PORT" "http://127.0.0.1:${EXPO_PORT}"
+if [ -f "$EXPO_DIST_INDEX" ]; then
+  echo "expo static build: PRESENT"
+  http_code="$(curl -sS -m 5 -o /dev/null -w '%{http_code}' "http://127.0.0.1:${API_PORT}/" || true)"
+  echo "expo static build: HTTP $http_code via http://127.0.0.1:${API_PORT}/"
+else
+  _print_pid_file_status "expo pid file" "$EXPO_PID_FILE"
+  _print_port_status "expo" "$EXPO_PORT" "http://127.0.0.1:${EXPO_PORT}"
+fi

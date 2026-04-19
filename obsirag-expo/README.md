@@ -69,6 +69,13 @@ Pour lancer directement le GUI web depuis la racine du depot :
 ./scripts/run_expo_web.sh
 ```
 
+Pour produire un build web statique servi ensuite par l'API FastAPI :
+
+```bash
+cd obsirag-expo
+npm run web:export
+```
+
 URL du GUI web : `http://localhost:8081`
 
 URL du backend API : `http://localhost:8000`
@@ -81,7 +88,38 @@ Depuis la racine du depot, le cycle de vie recommande est :
 ./stop.sh
 ```
 
-`./start.sh` relance l'API FastAPI et l'interface Expo web. L'auto-learner reste gere a part via `launchd` et `./install_service.sh`.
+`./start.sh` relance l'API FastAPI. Si `obsirag-expo/dist/index.html` existe, l'API sert directement le frontend web statique sur le meme port que le backend. Sinon, le script garde le mode de developpement Expo web sur `:8081`. L'auto-learner reste gere a part via `launchd` et `./install_service.sh`.
+
+## Build iOS / TestFlight
+
+Le projet inclut maintenant une base `eas.json` et une config Expo dynamique via `app.config.js` pour preparer les builds iOS.
+
+Avant un build TestFlight, ajuste au minimum :
+
+- `OBSIRAG_IOS_BUNDLE_IDENTIFIER`,
+- `OBSIRAG_IOS_BUILD_NUMBER`,
+- `EXPO_PUBLIC_DEFAULT_BACKEND_URL` ou `API_PUBLIC_BASE_URL`,
+- les credentials Apple relies a ton compte developpeur.
+
+Exemple local :
+
+```bash
+cd obsirag-expo
+export OBSIRAG_IOS_BUNDLE_IDENTIFIER=com.ton-domaine.obsirag
+export OBSIRAG_IOS_BUILD_NUMBER=1
+export EXPO_PUBLIC_DEFAULT_BACKEND_URL=https://obsirag.ton-domaine.tld
+```
+
+Exemples :
+
+```bash
+cd obsirag-expo
+eas build --platform ios --profile preview
+eas build --platform ios --profile production
+eas submit --platform ios --profile production
+```
+
+Pour iOS, il est recommande d'utiliser une URL backend distante stable plutot que `localhost`.
 
 ## Session et backend
 

@@ -61,6 +61,31 @@ const AnimatedLine = Animated.createAnimatedComponent(Line);
 const AnimatedCircle = Animated.createAnimatedComponent(Circle);
 const AnimatedSvgText = Animated.createAnimatedComponent(SvgText);
 
+function withAlpha(color: string, alpha: number): string {
+  const clampedAlpha = Math.max(0, Math.min(1, alpha));
+  const normalized = color.trim();
+
+  if (normalized.startsWith('#')) {
+    const hex = normalized.slice(1);
+    const expanded = hex.length === 3 ? hex.split('').map((part) => part + part).join('') : hex;
+    if (expanded.length === 6) {
+      const red = Number.parseInt(expanded.slice(0, 2), 16);
+      const green = Number.parseInt(expanded.slice(2, 4), 16);
+      const blue = Number.parseInt(expanded.slice(4, 6), 16);
+      return `rgba(${red}, ${green}, ${blue}, ${clampedAlpha})`;
+    }
+  }
+
+  const rgbMatch = normalized.match(/^rgba?\(([^)]+)\)$/i);
+  if (rgbMatch) {
+    const channels = (rgbMatch[1] ?? '').split(',').map((part) => part.trim());
+    const [red = '0', green = '0', blue = '0'] = channels;
+    return `rgba(${red}, ${green}, ${blue}, ${clampedAlpha})`;
+  }
+
+  return normalized;
+}
+
 export function KnowledgeGraph({ data, isActive: _isActive = true, focusedNodeId, onSelectNode, onOpenNode, onDetectSynapses, zoom = 1, onZoomChange: _onZoomChange, onZoomIn, onZoomOut, onZoomReset }: KnowledgeGraphProps) {
   const windowDimensions = useWindowDimensions();
   const edgeReveal = useRef(new Animated.Value(0)).current;

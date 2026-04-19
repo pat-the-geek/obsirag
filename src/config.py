@@ -3,6 +3,7 @@ from typing import Optional
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _ENV_FILE = Path(__file__).resolve().parent.parent / ".env"
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 
 class Settings(BaseSettings):
@@ -222,6 +223,14 @@ class Settings(BaseSettings):
     @property
     def knowledge_dir(self) -> Path:
         return self.insights_dir
+
+    @property
+    def project_root(self) -> Path:
+        return _PROJECT_ROOT
+
+    @property
+    def expo_web_dist_dir(self) -> Path:
+        return self.project_root / "obsirag-expo" / "dist"
 
 
 settings = Settings()

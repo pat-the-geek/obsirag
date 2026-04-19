@@ -19,6 +19,8 @@ import networkx as nx
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
+from fastapi.staticfiles import StaticFiles
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from src.ai.mermaid_sanitizer import sanitize_mermaid_blocks
 from src.ai.web_search import (
@@ -97,6 +99,16 @@ STREAM_ENRICHMENT_STEPS: list[tuple[str, str]] = [
     ("web", "Recherche sur le web en cours..."),
     ("finalize", "Finalisation de la reponse"),
 ]
+
+
+class _SinglePageAppFiles(StaticFiles):
+    async def get_response(self, path: str, scope):
+        try:
+            return await super().get_response(path, scope)
+        except StarletteHTTPException as exc:
+            if exc.status_code != 404:
+                raise
+        return await super().get_response("index.html", scope)
 
 
 def _slugify_note_candidate(value: str) -> str:
@@ -2438,6 +2450,16 @@ def _graph_to_model(
             for option in get_note_type_options()
         ],
     )
+
+
+def _mount_expo_web_if_available() -> None:
+    dist_dir = settings.expo_web_dist_dir
+    if not dist_dir.exists():
+        return
+    app.mount("/", _SinglePageAppFiles(directory=str(dist_dir), html=True), name="expo-web")
+
+
+_mount_expo_web_if_available()
 
 
 def _notes_with_graph_context(notes: list[dict]) -> list[dict]:

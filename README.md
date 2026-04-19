@@ -135,6 +135,18 @@ source .venv/bin/activate
 pytest --no-cov
 ```
 
+## Runtime macOS et frontend web statique
+
+Le runtime macOS peut maintenant fonctionner avec un frontend Expo web statique servi directement par l'API FastAPI, ce qui evite de garder un serveur Expo de developpement resident pour l'usage quotidien.
+
+Pour generer ce build :
+
+```bash
+./scripts/build_expo_web.sh
+```
+
+Ensuite `./start.sh` detecte automatiquement `obsirag-expo/dist/index.html` et sert l'interface sur le meme port que l'API.
+
 ## Acces reseau local ou Tailscale
 
 Le runtime principal Expo + FastAPI peut etre utilise depuis une autre machine du reseau local ou via Tailscale, a condition d'annoncer une URL publique cohérente au client.

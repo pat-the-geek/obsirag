@@ -14,22 +14,27 @@
 # =============================================================
 set -euo pipefail
 
+API_LABEL="com.obsirag.api"
+API_PLIST_DST="$HOME/Library/LaunchAgents/${API_LABEL}.plist"
 AUTOLEARN_LABEL="com.obsirag.autolearn"
 AUTOLEARN_PLIST_DST="$HOME/Library/LaunchAgents/${AUTOLEARN_LABEL}.plist"
 PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
 LOG_DIR="$HOME/Library/Logs/ObsiRAG"
 
-# Binaire Python Homebrew (hors Documents, pas bloqué par TCC)
-PYTHON_BIN="$(readlink -f "$PROJECT_DIR/.venv/bin/python3.12")"
-VENV_SITE_PACKAGES="$PROJECT_DIR/.venv/lib/python3.12/site-packages"
+# Python du venv courant. On évite toute version figée pour rester compatible
+# avec les reconstructions du virtualenv (3.12, 3.14, etc.).
+PYTHON_BIN="$PROJECT_DIR/.venv/bin/python"
+VENV_SITE_PACKAGES=""
 
 # ---- Désinstallation ----------------------------------------
 if [[ "${1:-}" == "uninstall" ]]; then
   echo "==> Désinstallation du service ObsiRAG..."
+  launchctl unload "$API_PLIST_DST" 2>/dev/null || true
   launchctl unload "$AUTOLEARN_PLIST_DST" 2>/dev/null || true
   rm -f "$HOME/Library/LaunchAgents/com.obsirag.plist"
+  rm -f "$API_PLIST_DST"
   rm -f "$AUTOLEARN_PLIST_DST"
-  echo "    Service supprimé."
+  echo "    Services supprimés."
   exit 0
 fi
 
@@ -46,6 +51,12 @@ fi
 
 if [ ! -x "$PYTHON_BIN" ]; then
   echo "ERREUR : Python introuvable à $PYTHON_BIN"
+  exit 1
+fi
+
+VENV_SITE_PACKAGES="$($PYTHON_BIN -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')"
+if [ -z "$VENV_SITE_PACKAGES" ] || [ ! -d "$VENV_SITE_PACKAGES" ]; then
+  echo "ERREUR : site-packages introuvable pour $PYTHON_BIN"
   exit 1
 fi
 
@@ -76,9 +87,88 @@ AUTOLEARN_ALLOW_BACKGROUND_LLM="$(_env_val AUTOLEARN_ALLOW_BACKGROUND_LLM)"
 AUTOLEARN_ALLOW_BACKGROUND_LLM="${AUTOLEARN_ALLOW_BACKGROUND_LLM:-false}"
 AUTOLEARN_INTERVAL_MINUTES="$(_env_val AUTOLEARN_INTERVAL_MINUTES)"
 AUTOLEARN_INTERVAL_MINUTES="${AUTOLEARN_INTERVAL_MINUTES:-60}"
+API_PORT="$(_env_val OBSIRAG_API_PORT)"
+API_PORT="${API_PORT:-8000}"
 # APP_DATA_DIR par défaut
 APP_DATA_DIR="${APP_DATA_DIR:-$HOME/Library/Application Support/ObsiRAG}"
 mkdir -p "$APP_DATA_DIR"
+
+cat > "$API_PLIST_DST" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>${API_LABEL}</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>${PYTHON_BIN}</string>
+    <string>-m</string>
+    <string>uvicorn</string>
+    <string>src.api.main:app</string>
+    <string>--host</string>
+    <string>0.0.0.0</string>
+    <string>--port</string>
+    <string>${API_PORT}</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>${PROJECT_DIR}</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PYTHONPATH</key>
+    <string>${PROJECT_DIR}:${VENV_SITE_PACKAGES}</string>
+    <key>VIRTUAL_ENV</key>
+    <string>${PROJECT_DIR}/.venv</string>
+    <key>PATH</key>
+    <string>${PROJECT_DIR}/.venv/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    <key>HOME</key>
+    <string>${HOME}</string>
+    <key>APP_DATA_DIR</key>
+    <string>${APP_DATA_DIR}</string>
+    <key>VAULT_PATH</key>
+    <string>${VAULT_PATH}</string>
+    <key>LOG_DIR</key>
+    <string>${PROJECT_DIR}/logs</string>
+    <key>LOG_LEVEL</key>
+    <string>${LOG_LEVEL}</string>
+    <key>MLX_CHAT_MODEL</key>
+    <string>${MLX_CHAT_MODEL}</string>
+    <key>OLLAMA_EMBED_MODEL</key>
+    <string>${OLLAMA_EMBED_MODEL}</string>
+    <key>EMBEDDING_MODEL</key>
+    <string>${EMBEDDING_MODEL}</string>
+    <key>OBSIDIAN_VAULT_NAME</key>
+    <string>${OBSIDIAN_VAULT_NAME}</string>
+    <key>OBSIRAG_API_PORT</key>
+    <string>${API_PORT}</string>
+    <key>TRANSFORMERS_CACHE</key>
+    <string>${HOME}/.cache/huggingface/transformers</string>
+    <key>HF_HOME</key>
+    <string>${HOME}/.cache/huggingface</string>
+    <key>TZ</key>
+    <string>Europe/Zurich</string>
+  </dict>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <key>KeepAlive</key>
+  <dict>
+    <key>SuccessfulExit</key>
+    <false/>
+  </dict>
+
+  <key>StandardOutPath</key>
+  <string>${LOG_DIR}/api.stdout.log</string>
+  <key>StandardErrorPath</key>
+  <string>${LOG_DIR}/api.stderr.log</string>
+</dict>
+</plist>
+PLIST
 
 cat > "$AUTOLEARN_PLIST_DST" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -159,13 +249,15 @@ PLIST
 # ---- Charger le service -------------------------------------
 launchctl unload "$HOME/Library/LaunchAgents/com.obsirag.plist" 2>/dev/null || true
 rm -f "$HOME/Library/LaunchAgents/com.obsirag.plist"
+launchctl unload "$API_PLIST_DST" 2>/dev/null || true
 launchctl unload "$AUTOLEARN_PLIST_DST" 2>/dev/null || true
+launchctl load "$API_PLIST_DST"
 if [ "$AUTOLEARN_ENABLED" = "true" ]; then
   launchctl load "$AUTOLEARN_PLIST_DST"
 fi
 
 echo ""
-echo "✓ Service auto-learner ObsiRAG installé."
+echo "✓ Services launchd ObsiRAG installés."
 echo ""
 echo "  ⚠️  ACTION REQUISE — Full Disk Access pour Python :"
 echo "  macOS bloque l'accès à ~/Documents pour les services en arrière-plan."
@@ -177,9 +269,12 @@ echo "       $PYTHON_BIN"
 echo "    3. Relance ensuite le service :"
 echo "       launchctl kickstart -k gui/\$(id -u)/$AUTOLEARN_LABEL"
 echo ""
-echo "  → L'auto-learner restera actif via launchd tant que la session utilisateur est ouverte"
+echo "  → L'API et l'auto-learner resteront actifs via launchd tant que la session utilisateur est ouverte"
 echo ""
 echo "  Commandes utiles :"
+echo "    Logs API      : tail -f $LOG_DIR/api.stdout.log"
+echo "    Redémarrer API   : launchctl kickstart -k gui/\$(id -u)/$API_LABEL"
+echo "    Arrêter API      : launchctl unload $API_PLIST_DST"
 echo "    Logs worker   : tail -f $LOG_DIR/autolearn.stdout.log"
 echo "    Redémarrer worker : launchctl kickstart -k gui/\$(id -u)/$AUTOLEARN_LABEL"
 echo "    Arrêter worker    : launchctl unload $AUTOLEARN_PLIST_DST"

@@ -540,6 +540,10 @@ export class ObsiRagApi {
         return rawBackendUrl;
       }
 
+      if (typeof window !== 'undefined' && typeof window.location?.origin === 'string' && window.location.origin) {
+        return window.location.origin.replace(/\/$/, '');
+      }
+
       const scriptUrl = NativeModules?.SourceCode?.scriptURL;
       if (typeof scriptUrl !== 'string' || !scriptUrl) {
         return rawBackendUrl;
@@ -558,7 +562,7 @@ export class ObsiRagApi {
   }
 
   private isLoopbackHost(hostname: string): boolean {
-    return hostname === 'localhost' || hostname === '127.0.0.1';
+    return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '0.0.0.0' || hostname === '::1';
   }
 
   private getAuthHeaders(): Record<string, string> {

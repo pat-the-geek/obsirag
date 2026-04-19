@@ -8,8 +8,10 @@ AUTOLEARN_PID_FILE=".obsirag-autolearn.pid"
 API_PID_FILE=".obsirag-api.pid"
 EXPO_PID_FILE=".obsirag-expo.pid"
 LABEL="com.obsirag"
+API_LABEL="com.obsirag.api"
 AUTOLEARN_LABEL="com.obsirag.autolearn"
 PLIST_DST="$HOME/Library/LaunchAgents/${LABEL}.plist"
+API_PLIST_DST="$HOME/Library/LaunchAgents/${API_LABEL}.plist"
 AUTOLEARN_PLIST_DST="$HOME/Library/LaunchAgents/${AUTOLEARN_LABEL}.plist"
 
 _launchd_is_loaded() {
@@ -18,6 +20,10 @@ _launchd_is_loaded() {
 
 _autolearn_launchd_is_loaded() {
   launchctl print "gui/$(id -u)/$AUTOLEARN_LABEL" >/dev/null 2>&1
+}
+
+_api_launchd_is_loaded() {
+  launchctl print "gui/$(id -u)/$API_LABEL" >/dev/null 2>&1
 }
 
 _stop_pid_file() {
@@ -48,6 +54,11 @@ fi
 
 if [ -f "$AUTOLEARN_PLIST_DST" ] && _autolearn_launchd_is_loaded; then
   echo "==> Auto-learner launchd laissé actif (${AUTOLEARN_LABEL})."
+fi
+
+if [ -f "$API_PLIST_DST" ] && _api_launchd_is_loaded; then
+  echo "==> Arrêt du service API launchd (${API_LABEL})..."
+  launchctl unload "$API_PLIST_DST" 2>/dev/null || true
 fi
 
 _stop_pid_file "l'API backend" "$API_PID_FILE"

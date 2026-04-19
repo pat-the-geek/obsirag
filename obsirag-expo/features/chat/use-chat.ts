@@ -15,8 +15,8 @@ function buildPendingAssistantMessage(id: string, provenance: ChatMessage['prove
     role: 'assistant',
     content: '',
     createdAt: new Date().toISOString(),
-    provenance,
     timeline,
+    ...(provenance ? { provenance } : {}),
   };
 }
 
@@ -210,10 +210,10 @@ export function useExplicitWebSearch(conversationId: string) {
           content: result.content,
           createdAt: new Date().toISOString(),
           provenance: 'web',
-          stats: result.stats,
           queryOverview: result.queryOverview,
           entityContexts: result.entityContexts,
           timeline: ['Réponse en préparation', WEB_SEARCH_PROGRESS_LABEL],
+          ...(result.stats ? { stats: result.stats } : {}),
         };
 
         const baseMessages = current.messages.filter((item) => item.id !== PENDING_WEB_ASSISTANT_ID);

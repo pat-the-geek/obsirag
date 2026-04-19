@@ -4,7 +4,7 @@ import { createJSONStorage, persist } from 'zustand/middleware';
 
 import { normalizeBackendUrlInput } from '../features/auth/backend-url';
 
-const DEFAULT_BACKEND_URL = 'http://localhost:8000';
+const DEFAULT_BACKEND_URL = normalizeBackendUrlInput(process.env.EXPO_PUBLIC_DEFAULT_BACKEND_URL ?? process.env.API_PUBLIC_BASE_URL ?? '') || 'http://localhost:8000';
 
 function migrateBackendUrl(value: unknown): string {
   if (typeof value !== 'string') {

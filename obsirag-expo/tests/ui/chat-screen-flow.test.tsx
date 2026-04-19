@@ -274,7 +274,12 @@ describe('ConversationDetailScreen', () => {
     expect(mockSetDraft).toHaveBeenCalledWith('conv-1', '');
     expect(mockScrollToEnd).toHaveBeenCalled();
     expect(mockStreamMessageMutate).toHaveBeenCalledWith('Nouvelle question sur Artemis II');
-    expect(mockSetDraft.mock.invocationCallOrder.at(-1)).toBeLessThan(mockStreamMessageMutate.mock.invocationCallOrder[0]);
+    const lastDraftCallOrder = mockSetDraft.mock.invocationCallOrder.at(-1);
+    const firstStreamCallOrder = mockStreamMessageMutate.mock.invocationCallOrder[0];
+
+    expect(lastDraftCallOrder).toBeDefined();
+    expect(firstStreamCallOrder).toBeDefined();
+    expect(lastDraftCallOrder!).toBeLessThan(firstStreamCallOrder!);
   });
 
   it('generates a report insight and opens it in the note viewer', () => {

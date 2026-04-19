@@ -1,4 +1,4 @@
-import { PropsWithChildren, RefObject } from 'react';
+import { PropsWithChildren, Ref } from 'react';
 import { RefreshControl, ScrollView, StyleProp, StyleSheet, View, ViewStyle } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -11,7 +11,7 @@ type ScreenProps = PropsWithChildren<{
   backgroundColor?: string;
   contentStyle?: StyleProp<ViewStyle>;
   scrollContentStyle?: StyleProp<ViewStyle>;
-  scrollRef?: RefObject<ScrollView | null>;
+  scrollRef?: Ref<ScrollView>;
 }>;
 
 export function Screen({ children, scroll = true, refreshing = false, onRefresh, backgroundColor, contentStyle, scrollContentStyle, scrollRef }: ScreenProps) {

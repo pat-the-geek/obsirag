@@ -22,6 +22,11 @@
     "web": {
       "bundler": "metro",
       "favicon": "./assets/app-icon.png"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.obsirag.mobile",
+      "buildNumber": "1"
     }
   }
 }
