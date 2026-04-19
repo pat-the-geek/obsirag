@@ -128,7 +128,7 @@ describe('MessageBubble', () => {
     expect(markdownNodes[0]?.props.markdown).not.toContain('- **Un court paragraphe d\'ensemble :**');
   });
 
-  it('does not render completed-response helper metadata and action buttons', () => {
+  it('renders compact generation stats for completed assistant responses', () => {
     const message: ChatMessage = {
       id: 'assistant-5',
       role: 'assistant',
@@ -155,7 +155,8 @@ describe('MessageBubble', () => {
     expect(joined).not.toMatch(/Analyse de la requete/);
     expect(joined).not.toMatch(/Preparation du contexte/);
     expect(joined).not.toMatch(/Reponse de repli/);
-    expect(joined).not.toMatch(/tokens/);
+    expect(joined).toMatch(/7 tokens/);
+    expect(joined).toMatch(/0 tok\/s/);
     expect(joined).not.toMatch(/Relancer/);
     expect(joined).not.toMatch(/Partager/);
     expect(joined).not.toMatch(/Web/);
@@ -195,6 +196,45 @@ describe('MessageBubble', () => {
     sourcePressable?.props.onPress();
 
     expect(noteCalls).toEqual(['Notes/Ada.md']);
+  });
+
+  it('deduplicates repeated assistant sources before rendering the list', () => {
+    const message: ChatMessage = {
+      id: 'assistant-sources-deduped',
+      role: 'assistant',
+      content: 'Voici la reponse associee a ses sources.',
+      createdAt: '2026-04-16T12:00:00Z',
+      provenance: 'vault',
+      sources: [
+        {
+          filePath: 'Notes/Ada.md',
+          noteTitle: 'Ada',
+          score: 0.42,
+        },
+        {
+          filePath: './Notes/Ada.md',
+          noteTitle: ' Ada ',
+          score: 0.99,
+          isPrimary: true,
+        },
+        {
+          filePath: 'Notes/Charles.md',
+          noteTitle: 'Charles',
+        },
+      ],
+    };
+
+    const tree = renderer.create(<MessageBubble message={message} />);
+
+    act(() => {
+      tree.root.findByProps({ testID: 'sources-panel-toggle' }).props.onPress();
+    });
+
+    const texts = tree.root.findAllByType(Text).flatMap((node) => collectText(node.props.children));
+    const joined = texts.join('');
+    expect(texts.filter((value) => value === 'Ada')).toHaveLength(1);
+    expect(joined).toContain('2 sources');
+    expect(texts).toContain('Notes/Charles.md');
   });
 
   it('uses a light assistant bubble palette', () => {
@@ -406,6 +446,25 @@ describe('MessageBubble', () => {
     );
 
     expect(tree.root.findAllByProps({ testID: 'message-web-search-action' })).toHaveLength(0);
+  });
+
+  it('renders an explicit pending assistant state before any response content is available', () => {
+    const message: ChatMessage = {
+      id: 'streaming-assistant',
+      role: 'assistant',
+      content: '',
+      createdAt: '2026-04-17T12:00:00Z',
+      provenance: 'vault',
+      timeline: ['Réponse en préparation', 'Recherche dans le coffre'],
+    };
+
+    const tree = renderer.create(<MessageBubble message={message} />);
+    const texts = tree.root.findAllByType(Text).flatMap((node) => collectText(node.props.children));
+    const joined = texts.join(' ');
+
+    expect(tree.root.findByProps({ testID: 'assistant-pending-state' })).toBeTruthy();
+    expect(joined).toMatch(/Réponse en préparation/);
+    expect(joined).toMatch(/Recherche dans le coffre/);
   });
 
   it('highlights detected entity names in assistant messages with a type-based color', () => {

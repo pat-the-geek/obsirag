@@ -5,6 +5,71 @@ import { useAppStore } from '../../store/app-store';
 import { ChatMessage, ConversationDetail, SourceRef } from '../../types/domain';
 import { removeMessageTurn } from './message-turns';
 
+const STREAMING_ASSISTANT_ID = 'streaming-assistant';
+const PENDING_WEB_ASSISTANT_ID = 'pending-web-assistant';
+const WEB_SEARCH_PROGRESS_LABEL = 'Recherche sur le web en cours...';
+
+function buildPendingAssistantMessage(id: string, provenance: ChatMessage['provenance'], timeline: string[]): ChatMessage {
+  return {
+    id,
+    role: 'assistant',
+    content: '',
+    createdAt: new Date().toISOString(),
+    provenance,
+    timeline,
+  };
+}
+
+function appendTimelineStep(current: string[], next: string): string[] {
+  if (!next.trim()) {
+    return current;
+  }
+  if (current[current.length - 1] === next) {
+    return current;
+  }
+  return [...current, next];
+}
+
+function isTransientExplicitWebMessage(message: ChatMessage): boolean {
+  return message.id === PENDING_WEB_ASSISTANT_ID || message.id.startsWith('web-user-') || (message.id.startsWith('web-') && message.provenance === 'web');
+}
+
+function mergeConversationWithTransientMessages(remote: ConversationDetail, cached?: ConversationDetail): ConversationDetail {
+  if (!cached?.messages.length) {
+    return remote;
+  }
+
+  const remoteMessagesById = new Map(remote.messages.map((message) => [message.id, message]));
+  const mergedMessages: ChatMessage[] = [];
+  const consumedRemoteIds = new Set<string>();
+
+  for (const cachedMessage of cached.messages) {
+    const remoteMessage = remoteMessagesById.get(cachedMessage.id);
+    if (remoteMessage) {
+      mergedMessages.push(remoteMessage);
+      consumedRemoteIds.add(remoteMessage.id);
+      continue;
+    }
+
+    if (isTransientExplicitWebMessage(cachedMessage)) {
+      mergedMessages.push(cachedMessage);
+    }
+  }
+
+  for (const remoteMessage of remote.messages) {
+    if (!consumedRemoteIds.has(remoteMessage.id)) {
+      mergedMessages.push(remoteMessage);
+    }
+  }
+
+  return {
+    ...remote,
+    messages: mergedMessages,
+    draft: cached.draft ?? remote.draft,
+    ...(cached.lastGenerationStats ? { lastGenerationStats: cached.lastGenerationStats } : {}),
+  };
+}
+
 export function useConversations() {
   const { api } = useServerConfig();
 
@@ -16,10 +81,15 @@ export function useConversations() {
 
 export function useConversation(conversationId?: string) {
   const { api } = useServerConfig();
+  const queryClient = useQueryClient();
 
   return useQuery({
     queryKey: ['conversation', conversationId],
-    queryFn: () => api.getConversation(conversationId as string),
+    queryFn: async () => {
+      const remoteConversation = await api.getConversation(conversationId as string);
+      const cachedConversation = queryClient.getQueryData<ConversationDetail>(['conversation', conversationId]);
+      return mergeConversationWithTransientMessages(remoteConversation, cachedConversation);
+    },
     enabled: Boolean(conversationId),
   });
 }
@@ -106,9 +176,13 @@ export function useExplicitWebSearch(conversationId: string) {
       const userMessage: ChatMessage = {
         id: `web-user-${Date.now()}`,
         role: 'user',
-        content: `🌐 Recherche web : ${query}`,
+        content: `🌐 Recherche sur le web : ${query}`,
         createdAt: new Date().toISOString(),
       };
+      const pendingAssistant = buildPendingAssistantMessage(PENDING_WEB_ASSISTANT_ID, 'web', [
+        'Réponse en préparation',
+        WEB_SEARCH_PROGRESS_LABEL,
+      ]);
 
       queryClient.setQueryData<ConversationDetail | undefined>(['conversation', conversationId], (current) => {
         if (!current) {
@@ -117,14 +191,14 @@ export function useExplicitWebSearch(conversationId: string) {
 
         return {
           ...current,
-          messages: [...current.messages, userMessage],
+          messages: [...current.messages.filter((item) => item.id !== PENDING_WEB_ASSISTANT_ID), userMessage, pendingAssistant],
           updatedAt: new Date().toISOString(),
         };
       });
 
-      return { userMessageId: userMessage.id };
+      return { userMessageId: userMessage.id, pendingAssistantId: pendingAssistant.id };
     },
-    onSuccess: (result) => {
+    onSuccess: (result, _query, context) => {
       queryClient.setQueryData<ConversationDetail | undefined>(['conversation', conversationId], (current) => {
         if (!current) {
           return current;
@@ -136,14 +210,21 @@ export function useExplicitWebSearch(conversationId: string) {
           content: result.content,
           createdAt: new Date().toISOString(),
           provenance: 'web',
+          stats: result.stats,
           queryOverview: result.queryOverview,
           entityContexts: result.entityContexts,
-          timeline: ['Recherche web explicite'],
+          timeline: ['Réponse en préparation', WEB_SEARCH_PROGRESS_LABEL],
         };
+
+        const baseMessages = current.messages.filter((item) => item.id !== PENDING_WEB_ASSISTANT_ID);
+        const userMessage = context?.userMessageId ? baseMessages.find((item) => item.id === context.userMessageId) : undefined;
+        const withoutAssistantReplacement = userMessage
+          ? baseMessages.filter((item) => item.id !== userMessage.id)
+          : baseMessages;
 
         return {
           ...current,
-          messages: [...current.messages, assistantMessage],
+          messages: userMessage ? [...withoutAssistantReplacement, userMessage, assistantMessage] : [...baseMessages, assistantMessage],
           updatedAt: new Date().toISOString(),
         };
       });
@@ -158,7 +239,7 @@ export function useExplicitWebSearch(conversationId: string) {
 
         return {
           ...current,
-          messages: current.messages.filter((item) => item.id !== context?.userMessageId),
+          messages: current.messages.filter((item) => item.id !== context?.userMessageId && item.id !== context?.pendingAssistantId),
         };
       });
     },
@@ -187,25 +268,29 @@ export function useStreamMessage(conversationId: string) {
         }
         return {
           ...safeCurrent,
-          messages: [...safeCurrent.messages, userMessage],
+          messages: [
+            ...safeCurrent.messages.filter((item) => item.id !== STREAMING_ASSISTANT_ID),
+            userMessage,
+            buildPendingAssistantMessage(STREAMING_ASSISTANT_ID, 'vault', ['Réponse en préparation']),
+          ],
           draft: '',
           updatedAt: new Date().toISOString(),
         };
       });
 
       let streamedContent = '';
-      let streamedTimeline: string[] = [];
+      let streamedTimeline: string[] = ['Réponse en préparation'];
       let streamedSources: NonNullable<ChatMessage['sources']> = [];
       let streamedPrimarySource: SourceRef | null = null;
       const message = await api.streamConversationResponse(conversationId, prompt, {
         onStatus: (status) => {
-          streamedTimeline = [...streamedTimeline, status];
+          streamedTimeline = appendTimelineStep(streamedTimeline, status);
           queryClient.setQueryData<ConversationDetail | undefined>(['conversation', conversationId], (current) => {
             if (!current) {
               return current;
             }
             const draftAssistant: ChatMessage = {
-              id: 'streaming-assistant',
+              id: STREAMING_ASSISTANT_ID,
               role: 'assistant',
               content: streamedContent.trim(),
               createdAt: new Date().toISOString(),
@@ -214,7 +299,7 @@ export function useStreamMessage(conversationId: string) {
               sources: streamedSources,
               primarySource: streamedPrimarySource,
             };
-            const withoutDraft = current.messages.filter((item) => item.id !== 'streaming-assistant');
+            const withoutDraft = current.messages.filter((item) => item.id !== STREAMING_ASSISTANT_ID);
             return {
               ...current,
               messages: [...withoutDraft, draftAssistant],
@@ -228,7 +313,7 @@ export function useStreamMessage(conversationId: string) {
               return current;
             }
             const draftAssistant: ChatMessage = {
-              id: 'streaming-assistant',
+              id: STREAMING_ASSISTANT_ID,
               role: 'assistant',
               content: streamedContent.trim(),
               createdAt: new Date().toISOString(),
@@ -237,7 +322,7 @@ export function useStreamMessage(conversationId: string) {
               sources: streamedSources,
               primarySource: streamedPrimarySource,
             };
-            const withoutDraft = current.messages.filter((item) => item.id !== 'streaming-assistant');
+            const withoutDraft = current.messages.filter((item) => item.id !== STREAMING_ASSISTANT_ID);
             return {
               ...current,
               messages: [...withoutDraft, draftAssistant],
@@ -260,7 +345,7 @@ export function useStreamMessage(conversationId: string) {
               sources: assistantMessage.sources?.length ? assistantMessage.sources : streamedSources,
               primarySource: assistantMessage.primarySource ?? streamedPrimarySource,
             };
-            const withoutDraft = current.messages.filter((item) => item.id !== 'streaming-assistant');
+            const withoutDraft = current.messages.filter((item) => item.id !== STREAMING_ASSISTANT_ID);
             return {
               ...current,
               messages: [...withoutDraft, finalizedMessage],
@@ -282,7 +367,7 @@ export function useStreamMessage(conversationId: string) {
         }
         return {
           ...current,
-          messages: current.messages.filter((item) => item.id !== 'streaming-assistant'),
+          messages: current.messages.filter((item) => item.id !== STREAMING_ASSISTANT_ID),
         };
       });
     },

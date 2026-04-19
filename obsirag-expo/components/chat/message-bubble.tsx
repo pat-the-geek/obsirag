@@ -44,9 +44,21 @@ export function MessageBubble({
   const shouldHideAssistantMainBubble = Boolean(
     !isUser && hasRenderableQueryOverview && !hasMermaidContent && (message.sentinel || message.provenance === 'web'),
   );
-  const showWebSearchAction = Boolean(!isUser && message.id !== 'streaming-assistant' && webSearchSuggestion && onSuggestWebSearch);
-  const showDeleteAction = Boolean(!isUser && message.id !== 'streaming-assistant' && onDeleteMessage);
+  const isPendingAssistant = Boolean(!isUser && (message.id === 'streaming-assistant' || message.id === 'pending-web-assistant'));
+  const showWebSearchAction = Boolean(!isUser && !isPendingAssistant && webSearchSuggestion && onSuggestWebSearch);
+  const showDeleteAction = Boolean(!isUser && !isPendingAssistant && onDeleteMessage);
   const ddgMarkdown = buildDdgMarkdown(message);
+  const targetAssistantContent = shouldHideAssistantMainBubble ? ddgMarkdown : message.content;
+  const statsLabel = !isUser && !isPendingAssistant ? formatGenerationStats(message.stats) : null;
+  const [displayedAssistantContent, setDisplayedAssistantContent] = useState(
+    isUser || process.env.NODE_ENV === 'test' ? targetAssistantContent : '',
+  );
+  const displayedAssistantContentRef = useRef(displayedAssistantContent);
+  const [pendingFrameIndex, setPendingFrameIndex] = useState(0);
+
+  useEffect(() => {
+    displayedAssistantContentRef.current = displayedAssistantContent;
+  }, [displayedAssistantContent]);
 
   useEffect(() => {
     if (isUser || process.env.NODE_ENV === 'test') {
@@ -65,6 +77,55 @@ export function MessageBubble({
     animation.start();
     return () => animation.stop();
   }, [isUser, message.id, revealProgress]);
+
+  useEffect(() => {
+    if (isUser || process.env.NODE_ENV === 'test') {
+      setDisplayedAssistantContent(targetAssistantContent);
+      return undefined;
+    }
+
+    if (!targetAssistantContent) {
+      setDisplayedAssistantContent('');
+      return undefined;
+    }
+
+    const currentValue = displayedAssistantContentRef.current;
+    const nextStart = targetAssistantContent.startsWith(currentValue) ? currentValue : '';
+    if (nextStart !== currentValue) {
+      setDisplayedAssistantContent(nextStart);
+    }
+
+    let visibleLength = nextStart.length;
+    if (visibleLength >= targetAssistantContent.length) {
+      setDisplayedAssistantContent(targetAssistantContent);
+      return undefined;
+    }
+
+    const timer = setInterval(() => {
+      const remaining = targetAssistantContent.length - visibleLength;
+      const step = Math.max(1, Math.ceil(remaining / 12));
+      visibleLength = Math.min(targetAssistantContent.length, visibleLength + step);
+      setDisplayedAssistantContent(targetAssistantContent.slice(0, visibleLength));
+      if (visibleLength >= targetAssistantContent.length) {
+        clearInterval(timer);
+      }
+    }, 16);
+
+    return () => clearInterval(timer);
+  }, [isUser, targetAssistantContent]);
+
+  useEffect(() => {
+    if (process.env.NODE_ENV === 'test' || !isPendingAssistant || targetAssistantContent.trim()) {
+      setPendingFrameIndex(0);
+      return undefined;
+    }
+
+    const timer = setInterval(() => {
+      setPendingFrameIndex((current) => (current + 1) % PENDING_RESPONSE_FRAMES.length);
+    }, 220);
+
+    return () => clearInterval(timer);
+  }, [isPendingAssistant, targetAssistantContent]);
 
   const assistantRevealStyle = !isUser
     ? {
@@ -90,9 +151,17 @@ export function MessageBubble({
           <View style={[styles.base, isUser ? styles.userBubble : styles.assistantBubble]}>
             {isUser ? (
               <Text style={styles.userContent}>{renderEntityHighlightedText(message.content, 'dark', highlightEntities, undefined, `user-${message.id}`)}</Text>
+            ) : isPendingAssistant && !displayedAssistantContent.trim() ? (
+              <View testID="assistant-pending-state" style={styles.pendingState}>
+                <View style={styles.pendingTitleRow}>
+                  <Text style={styles.pendingTitle}>Réponse en préparation</Text>
+                  <Text style={styles.pendingGlyph}>{PENDING_RESPONSE_FRAMES[pendingFrameIndex]}</Text>
+                </View>
+                <Text style={styles.pendingCaption}>{message.timeline?.[message.timeline.length - 1] ?? 'Traitement en cours'}</Text>
+              </View>
             ) : (
               <MarkdownNote
-                markdown={message.content}
+                markdown={displayedAssistantContent}
                 variant="article"
                 tone="light"
                 {...(highlightEntities ? { entityHighlights: highlightEntities } : {})}
@@ -127,7 +196,7 @@ export function MessageBubble({
             </View>
             <View style={styles.queryOverviewBox}>
               <MarkdownNote
-                markdown={ddgMarkdown}
+                markdown={displayedAssistantContent}
                 tone="light"
                 {...(highlightEntities ? { entityHighlights: highlightEntities } : {})}
                 {...(onOpenNote ? { onOpenNote } : {})}
@@ -159,9 +228,12 @@ export function MessageBubble({
           ) : null}
         </View>
       ) : null}
+      {statsLabel ? <Text testID="message-generation-stats" style={styles.statsText}>{statsLabel}</Text> : null}
     </View>
   );
 }
+
+const PENDING_RESPONSE_FRAMES = ['·  ', '·· ', '···'];
 
 const styles = StyleSheet.create({
   stack: {
@@ -240,6 +312,31 @@ const styles = StyleSheet.create({
     fontSize: 15,
     lineHeight: 22,
   },
+  pendingState: {
+    gap: 6,
+    paddingVertical: 4,
+  },
+  pendingTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  pendingTitle: {
+    color: '#2f2419',
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  pendingGlyph: {
+    color: '#7f6b55',
+    fontSize: 16,
+    fontWeight: '700',
+    minWidth: 24,
+  },
+  pendingCaption: {
+    color: '#6f5d49',
+    fontSize: 13,
+    lineHeight: 18,
+  },
   queryOverviewBox: {
     borderRadius: 12,
     backgroundColor: '#fbf8f3',
@@ -281,6 +378,12 @@ const styles = StyleSheet.create({
     color: '#7a2f22',
     fontSize: 12,
     fontWeight: '800',
+  },
+  statsText: {
+    color: '#8b7864',
+    fontSize: 11,
+    lineHeight: 14,
+    paddingHorizontal: 4,
   },
 });
 
@@ -377,4 +480,23 @@ function extractBulletHeading(line: string): string | null {
   }
 
   return heading;
+}
+
+function formatGenerationStats(stats?: ChatMessage['stats']): string | null {
+  if (!stats) {
+    return null;
+  }
+
+  const tokens = Number.isFinite(stats.tokens) ? Math.max(0, Math.round(stats.tokens)) : 0;
+  const tps = Number.isFinite(stats.tps) ? stats.tps : 0;
+  return `${tokens} tokens · ${formatRate(tps)} tok/s`;
+}
+
+function formatRate(value: number): string {
+  if (!Number.isFinite(value)) {
+    return '0';
+  }
+
+  const rounded = Math.round(value * 10) / 10;
+  return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1);
 }

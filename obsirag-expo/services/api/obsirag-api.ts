@@ -305,6 +305,12 @@ export class ObsiRagApi {
             notes: [],
           },
         ],
+        stats: {
+          tokens: query.trim().split(/\s+/).length + 12,
+          ttft: 0.0,
+          total: 0.4,
+          tps: 30,
+        },
       };
     }
 

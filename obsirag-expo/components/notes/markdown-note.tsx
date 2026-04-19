@@ -191,7 +191,7 @@ export function MarkdownNote({ markdown, onOpenNote, onOpenTag, variant = 'defau
 }
 
 function parseMarkdownBlocks(markdown: string): MarkdownBlock[] {
-  const lines = markdown.split('\n');
+  const lines = normalizeMarkdownTableBlocks(markdown).split('\n');
   const blocks: MarkdownBlock[] = [];
   let inCode = false;
   let codeFenceLanguage = '';
@@ -212,7 +212,14 @@ function parseMarkdownBlocks(markdown: string): MarkdownBlock[] {
     if (line.trim().startsWith('```')) {
       if (inCode) {
         flushParagraph();
-        blocks.push({ type: codeFenceLanguage === 'mermaid' ? 'mermaid' : 'code', content: codeBuffer.join('\n') });
+        const fencedContent = codeBuffer.join('\n');
+        if (codeFenceLanguage === 'mermaid') {
+          blocks.push({ type: 'mermaid', content: fencedContent });
+        } else if (codeFenceLanguage === 'markdown' || codeFenceLanguage === 'md') {
+          blocks.push(...parseMarkdownBlocks(fencedContent));
+        } else {
+          blocks.push({ type: 'code', content: fencedContent });
+        }
         codeBuffer = [];
         codeFenceLanguage = '';
       } else {
@@ -300,7 +307,12 @@ function parseMarkdownBlocks(markdown: string): MarkdownBlock[] {
   }
 
   if (inCode) {
-    blocks.push({ type: codeFenceLanguage === 'mermaid' ? 'mermaid' : 'code', content: codeBuffer.join('\n') });
+    const fencedContent = codeBuffer.join('\n');
+    if (codeFenceLanguage === 'mermaid') {
+      blocks.push({ type: 'mermaid', content: fencedContent });
+    } else {
+      blocks.push({ type: 'code', content: fencedContent });
+    }
   }
 
   flushParagraph();
@@ -310,6 +322,38 @@ function parseMarkdownBlocks(markdown: string): MarkdownBlock[] {
 function isMarkdownTableRow(line: string): boolean {
   const trimmed = line.trim();
   return trimmed.length >= 3 && trimmed.includes('|') && /^\|?.+\|.+\|?$/.test(trimmed);
+}
+
+function normalizeMarkdownTableBlocks(markdown: string): string {
+  const lines = markdown.split('\n');
+  const normalized: string[] = [];
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index] ?? '';
+    const nextLine = lines[index + 1] ?? '';
+    if (isMarkdownTableRow(line) && isMarkdownTableSeparator(nextLine)) {
+      const headers = splitMarkdownTableRow(line);
+      const width = Math.max(headers.length, 1);
+      normalized.push(toMarkdownTableRow(normalizeMarkdownTableRow(headers, width)));
+      normalized.push(toMarkdownTableRow(normalizeMarkdownTableRow(splitMarkdownTableRow(nextLine), width)));
+      index += 2;
+
+      while (index < lines.length) {
+        const rowLine = lines[index] ?? '';
+        if (!isMarkdownTableRow(rowLine)) {
+          index -= 1;
+          break;
+        }
+        normalized.push(toMarkdownTableRow(normalizeMarkdownTableRow(splitMarkdownTableRow(rowLine), width)));
+        index += 1;
+      }
+      continue;
+    }
+
+    normalized.push(line);
+  }
+
+  return normalized.join('\n');
 }
 
 function isMarkdownTableSeparator(line: string): boolean {
@@ -334,6 +378,10 @@ function normalizeMarkdownTableRow(cells: string[], width: number): string[] {
     return cells.slice(0, width);
   }
   return [...cells, ...Array.from({ length: width - cells.length }, () => '')];
+}
+
+function toMarkdownTableRow(cells: string[]): string {
+  return `| ${cells.map((cell) => cell.trim()).join(' | ')} |`;
 }
 
 function normalizeMarkdownTableCellContent(value: string): string {

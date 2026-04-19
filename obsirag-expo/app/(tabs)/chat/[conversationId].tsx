@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, Alert, KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { ActivityIndicator, Alert, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -10,6 +10,8 @@ import { Screen } from '../../../components/ui/screen';
 import { useConversation, useDeleteConversationMessage, useExplicitWebSearch, useGenerateConversationReport, useSaveConversation, useStreamMessage } from '../../../features/chat/use-chat';
 import { EntityContext, ChatMessage, SourceRef } from '../../../types/domain';
 import { useAppStore } from '../../../store/app-store';
+
+const PENDING_ASSISTANT_IDS = new Set(['streaming-assistant', 'pending-web-assistant']);
 
 const DEFAULT_CHAT_SUGGESTIONS = [
   'Resume la note principale sur Artemis II',
@@ -36,12 +38,13 @@ export default function ConversationDetailScreen() {
   const deleteConversationMessage = useDeleteConversationMessage(conversationId ?? '');
   const saveConversation = useSaveConversation();
   const generateConversationReport = useGenerateConversationReport();
-  const streamingAssistantMessage = useMemo(
-    () => [...messages].reverse().find((item) => item.id === 'streaming-assistant' && item.role === 'assistant'),
+  const pendingAssistantMessage = useMemo(
+    () => [...messages].reverse().find((item) => item.role === 'assistant' && PENDING_ASSISTANT_IDS.has(item.id)),
     [messages],
   );
-  const activeProgressSteps = streamMessage.isPending
-    ? (streamingAssistantMessage?.timeline?.length ? streamingAssistantMessage.timeline : ['Initialisation du traitement'])
+  const responseActionPending = streamMessage.isPending || explicitWebSearch.isPending;
+  const activeProgressSteps = responseActionPending
+    ? (pendingAssistantMessage?.timeline?.length ? pendingAssistantMessage.timeline : ['Réponse en préparation'])
     : [];
   const activeProgressLabel = activeProgressSteps[activeProgressSteps.length - 1] ?? null;
   const latestAssistantMessage = useMemo(
@@ -66,6 +69,18 @@ export default function ConversationDetailScreen() {
   const showEntityCompact = !showEntityAside && aggregatedEntityContexts.length > 0;
   const asideEntityMaxHeight = Math.max(360, height - Math.max(24, insets.top + 18) - 18);
   const isGenerationStepActive = streamMessage.isPending && activeProgressSteps.some((step) => isGenerationStep(step));
+  const scrollRef = useRef<ScrollView | null>(null);
+
+  const scrollThreadToBottom = () => {
+    if (process.env.NODE_ENV === 'test' || typeof requestAnimationFrame !== 'function') {
+      scrollRef.current?.scrollToEnd({ animated: true });
+      return;
+    }
+
+    requestAnimationFrame(() => {
+      scrollRef.current?.scrollToEnd({ animated: true });
+    });
+  };
 
   useEffect(() => {
     if (!isGenerationStepActive) {
@@ -79,6 +94,13 @@ export default function ConversationDetailScreen() {
 
     return () => clearInterval(timer);
   }, [isGenerationStepActive]);
+
+  useEffect(() => {
+    if (!messages.length) {
+      return;
+    }
+    scrollThreadToBottom();
+  }, [messages.length]);
 
   const confirmDeleteMessage = (messageId: string) => {
     const executeDelete = () =>
@@ -122,7 +144,7 @@ export default function ConversationDetailScreen() {
   }
 
   return (
-    <Screen scroll refreshing={isRefetching} onRefresh={refetch} backgroundColor="#f4f1ea" contentStyle={styles.screenContent}>
+    <Screen scroll scrollRef={scrollRef} refreshing={isRefetching} onRefresh={refetch} backgroundColor="#f4f1ea" contentStyle={styles.screenContent}>
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} keyboardVerticalOffset={Math.max(12, insets.bottom)} style={styles.keyboardShell}>
       <View style={[styles.shell, { paddingBottom: Math.max(14, insets.bottom + 8) }]}>
         <View style={styles.header}>
@@ -182,7 +204,7 @@ export default function ConversationDetailScreen() {
             </View>
 
             <View style={[styles.dock, Platform.OS === 'web' ? styles.dockWeb : null]}>
-              {(streamMessage.isPending || generateConversationReport.isPending) ? (
+              {(responseActionPending || generateConversationReport.isPending) ? (
                 <View style={styles.progressCard}>
                   <Text style={styles.progressTitle}>Progression du traitement</Text>
                   {activeProgressLabel ? <Text style={styles.progressCurrent}>{activeProgressLabel}</Text> : null}
@@ -206,7 +228,7 @@ export default function ConversationDetailScreen() {
                   </View>
                 </View>
               ) : null}
-              {explicitWebSearch.isPending ? <Text style={styles.statusText}>Recherche web en cours...</Text> : null}
+              {explicitWebSearch.isPending ? <Text style={styles.statusText}>Recherche sur le web en cours...</Text> : null}
               {streamMessage.error ? (
                 <Text style={styles.errorText}>
                   Erreur: {streamMessage.error instanceof Error ? streamMessage.error.message : 'generation indisponible'}
@@ -216,7 +238,15 @@ export default function ConversationDetailScreen() {
               <MessageComposer
                 value={draft}
                 onChangeText={(value) => setDraft(conversationId, value)}
-                onSubmit={() => streamMessage.mutate(draft.trim())}
+                onSubmit={() => {
+                  const trimmedDraft = draft.trim();
+                  if (!trimmedDraft) {
+                    return;
+                  }
+                  setDraft(conversationId, '');
+                  scrollThreadToBottom();
+                  streamMessage.mutate(trimmedDraft);
+                }}
                 secondaryActionLabel="Sauvegarder"
                 onSecondaryAction={() => {
                   if (!conversationId) {

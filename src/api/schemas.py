@@ -107,6 +107,7 @@ class WebSearchResponseModel(BaseModel):
     content: str
     queryOverview: QueryOverviewModel
     entityContexts: list[EntityContextModel] = Field(default_factory=list)
+    stats: GenerationStatsModel | None = None
     provenance: Literal["web"] = "web"
 
 

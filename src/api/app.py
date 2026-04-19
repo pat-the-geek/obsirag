@@ -21,7 +21,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
 from src.ai.mermaid_sanitizer import sanitize_mermaid_blocks
-from src.ai.web_search import _format_query_overview_markdown, build_query_overview_sync, is_not_in_vault
+from src.ai.web_search import (
+    _format_query_overview_markdown,
+    build_query_overview_from_results_sync,
+    build_query_overview_sync,
+    is_not_in_vault,
+)
 from src.api.conversation_store import ApiConversationStore
 from src.api.runtime import ensure_service_manager_started, get_service_manager
 from src.api.schemas import (
@@ -89,9 +94,178 @@ STREAM_PREPARATION_STEPS: list[tuple[str, str]] = [
 
 STREAM_ENRICHMENT_STEPS: list[tuple[str, str]] = [
     ("entities", "Extraction des entites NER"),
-    ("web", "Recherche DDG"),
+    ("web", "Recherche sur le web en cours..."),
     ("finalize", "Finalisation de la reponse"),
 ]
+
+
+def _build_generation_stats(answer: str, started_at: float, *, ttft: float = 0.0) -> dict[str, float | int]:
+    elapsed = max(time.perf_counter() - started_at, 0.001)
+    token_count = len(answer.split())
+    return {
+        "tokens": token_count,
+        "ttft": round(ttft, 3),
+        "total": round(elapsed, 3),
+        "tps": round(token_count / elapsed, 3),
+    }
+
+
+def _normalize_assistant_provenance(provenance: str | None) -> str:
+    value = str(provenance or "").strip().lower()
+    if value in {"web + coffre", "coffre + web", "coffre et web", "hybrid"}:
+        return "hybrid"
+    if value == "web":
+        return "web"
+    return "vault"
+
+
+def _should_attempt_web_answer(answer: str, svc) -> bool:
+    if is_not_in_vault(answer):
+        return True
+
+    learner = getattr(svc, "learner", None)
+    is_weak_answer = getattr(learner, "_is_weak_answer", None)
+    if callable(is_weak_answer):
+        try:
+            result = is_weak_answer(answer)
+            return result if isinstance(result, bool) else False
+        except Exception:
+            return False
+    return False
+
+
+def _lookup_autolearn_web_results(user_text: str, svc) -> tuple[str, list[dict[str, Any]]]:
+    if not user_text or len(user_text.strip()) < 3:
+        return user_text, []
+
+    learner = getattr(svc, "learner", None)
+    autolearn_web_search = getattr(learner, "_web_search", None)
+    if not callable(autolearn_web_search):
+        return user_text, []
+
+    search_query_builder = getattr(learner, "_build_web_search_query", None)
+    search_query = user_text
+    if callable(search_query_builder):
+        built_query = str(search_query_builder(user_text) or "").strip()
+        if built_query:
+            search_query = built_query
+
+    try:
+        autolearn_results = autolearn_web_search(user_text)
+    except Exception:
+        return search_query, []
+    return search_query, autolearn_results if isinstance(autolearn_results, list) else []
+
+
+def _build_query_overview_from_autolearn_results(
+    user_text: str,
+    svc,
+    web_results: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    search_query, autolearn_results = _lookup_autolearn_web_results(user_text, svc)
+    candidate_results = web_results if isinstance(web_results, list) and web_results else autolearn_results
+    if not candidate_results:
+        return {}
+
+    try:
+        result = build_query_overview_from_results_sync(
+            user_text,
+            search_query,
+            candidate_results,
+            svc.llm,
+        )
+        return result if isinstance(result, dict) else {}
+    except Exception:
+        return {}
+
+
+def _compose_assistant_web_answer(
+    *,
+    prompt: str,
+    answer: str,
+    sources: list[dict],
+    svc,
+    force: bool = False,
+) -> dict[str, Any]:
+    payload = {
+        "answer": answer,
+        "sources": list(sources or []),
+        "query_overview": {},
+        "provenance": "vault",
+        "enrichment_path": None,
+    }
+    if not force and not _should_attempt_web_answer(answer, svc):
+        return payload
+
+    search_query, web_results = _lookup_autolearn_web_results(prompt, svc)
+    if not web_results:
+        return payload
+
+    learner = getattr(svc, "learner", None)
+    snippets_relevant = getattr(learner, "_snippets_relevant", None)
+    question_answering = getattr(learner, "_question_answering", None)
+    build_rag_context = getattr(question_answering, "_build_rag_context", None)
+    compose_web_answer = getattr(question_answering, "_compose_web_answer", None)
+    grounded_check = getattr(question_answering, "_is_grounded_web_answer", None)
+    is_weak_answer = getattr(learner, "_is_weak_answer", None)
+
+    snippets = [
+        str(item.get("full_text") or item.get("body") or "").strip()
+        for item in web_results
+        if str(item.get("full_text") or item.get("body") or "").strip()
+    ]
+    payload["query_overview"] = _build_query_overview_from_autolearn_results(prompt, svc, web_results)
+
+    if not snippets:
+        return payload
+
+    if callable(snippets_relevant):
+        try:
+            if not snippets_relevant(prompt, snippets):
+                return payload
+        except Exception:
+            return payload
+
+    if not callable(build_rag_context) or not callable(compose_web_answer):
+        return payload
+
+    try:
+        rag_context, rag_sources = build_rag_context(prompt)
+        compose_sources = list(sources or rag_sources or [])
+        enriched_answer, enriched_sources, used_web_results, provenance = compose_web_answer(
+            prompt,
+            rag_context,
+            compose_sources,
+            snippets,
+            web_results,
+        )
+    except Exception:
+        return payload
+
+    if not str(enriched_answer or "").strip():
+        return payload
+
+    if callable(grounded_check):
+        try:
+            if str(provenance or "").strip() != "Coffre" and not grounded_check(enriched_answer, snippets):
+                return payload
+        except Exception:
+            return payload
+
+    if callable(is_weak_answer):
+        try:
+            if is_weak_answer(enriched_answer):
+                return payload
+        except Exception:
+            return payload
+
+    final_web_results = used_web_results if isinstance(used_web_results, list) and used_web_results else web_results
+    payload["query_overview"] = _build_query_overview_from_autolearn_results(prompt, svc, final_web_results)
+    payload["answer"] = str(enriched_answer)
+    payload["sources"] = list(enriched_sources or sources or [])
+    payload["provenance"] = _normalize_assistant_provenance(provenance)
+    payload["enrichment_path"] = f"autolearn-web:{search_query}"
+    return payload
 
 
 def _load_processing_status() -> dict[str, Any]:
@@ -101,7 +275,26 @@ def _load_processing_status() -> dict[str, Any]:
 
 def _load_indexing_status() -> dict[str, Any]:
     default = {"running": False, "processed": 0, "total": 0, "current": ""}
-    return JsonStateStore(settings.data_dir / "stats" / "service_manager_status.json").load(default)
+    payload = JsonStateStore(settings.data_dir / "stats" / "service_manager_status.json").load(default)
+    return _normalize_indexing_status(payload)
+
+
+def _normalize_indexing_status(payload: dict[str, Any] | None) -> dict[str, Any]:
+    status = dict(payload or {})
+    running = bool(status.get("running", False))
+    processed = int(status.get("processed") or 0)
+    total = int(status.get("total") or 0)
+    current = str(status.get("current") or "").strip()
+
+    if not running:
+        current = "Indexation terminee" if total > 0 or processed > 0 else ""
+
+    return {
+        "running": running,
+        "processed": processed,
+        "total": total,
+        "current": current,
+    }
 
 
 def _load_index_state() -> dict[str, str]:
@@ -400,8 +593,18 @@ async def create_message(
 
     answer = str(result.get("answer") or "")
     sources = list(result.get("sources") or [])
+    enriched_result = _compose_assistant_web_answer(
+        prompt=payload.prompt,
+        answer=answer,
+        sources=sources,
+        svc=svc,
+    )
+    answer = str(enriched_result.get("answer") or answer)
+    sources = list(enriched_result.get("sources") or sources)
+    provenance = str(enriched_result.get("provenance") or "vault")
+    enrichment_path = str(enriched_result.get("enrichment_path") or "") or None
     sentinel = is_not_in_vault(answer)
-    source_models = [_source_from_chunk(chunk) for chunk in sources]
+    source_models = _build_source_models(sources)
     primary_source = next((item for item in source_models if item.isPrimary), None)
     entity_contexts = _enrich_entity_contexts(
         user_text=payload.prompt,
@@ -411,7 +614,7 @@ async def create_message(
         primary_source=primary_source,
         svc=svc,
     )
-    query_overview = _lookup_query_overview(payload.prompt, svc) if sentinel else {}
+    query_overview = enriched_result.get("query_overview") or (_lookup_query_overview(payload.prompt, svc) if sentinel else {})
     assistant_message = _build_assistant_message(
         answer=answer,
         sources=sources,
@@ -419,6 +622,8 @@ async def create_message(
         timeline=[],
         query_overview=query_overview,
         entity_contexts=entity_contexts,
+        provenance=provenance,
+        enrichment_path=enrichment_path,
     )
     conversation_store.append_messages(
         conversation_id,
@@ -475,7 +680,9 @@ async def stream_message(
         answer = str(result.get("answer") or "")
         sources = list(result.get("sources") or [])
         sentinel = is_not_in_vault(answer)
-        source_models = [_source_from_chunk(chunk) for chunk in sources]
+        provenance = "vault"
+        enrichment_path: str | None = None
+        source_models = _build_source_models(sources)
         primary_source = next((item for item in source_models if item.isPrimary), None)
 
         _append_timeline_step(timeline, "Réponse générée par le worker API")
@@ -483,15 +690,32 @@ async def stream_message(
 
         entity_contexts: list[dict[str, Any]] = []
         query_overview: dict[str, Any] = {}
+        should_attempt_web = _should_attempt_web_answer(answer, svc)
         enrichment_steps = [
+            *([("web", "Recherche DDG")] if should_attempt_web else []),
             ("entities", "Extraction des entites NER"),
-            *([("web", "Recherche DDG")] if sentinel else []),
             ("finalize", "Finalisation de la reponse"),
         ]
         for phase, status_message in enrichment_steps:
             _append_timeline_step(timeline, status_message)
             yield _sse_event("retrieval_status", {"phase": phase, "message": status_message})
-            if phase == "entities":
+            if phase == "web":
+                enriched_result = _compose_assistant_web_answer(
+                    prompt=payload.prompt,
+                    answer=answer,
+                    sources=sources,
+                    svc=svc,
+                    force=should_attempt_web,
+                )
+                answer = str(enriched_result.get("answer") or answer)
+                sources = list(enriched_result.get("sources") or sources)
+                provenance = str(enriched_result.get("provenance") or "vault")
+                enrichment_path = str(enriched_result.get("enrichment_path") or "") or None
+                sentinel = is_not_in_vault(answer)
+                query_overview = enriched_result.get("query_overview") or query_overview
+                source_models = _build_source_models(sources)
+                primary_source = next((item for item in source_models if item.isPrimary), None)
+            elif phase == "entities":
                 entity_contexts = _enrich_entity_contexts(
                     user_text=payload.prompt,
                     answer=answer,
@@ -500,8 +724,8 @@ async def stream_message(
                     primary_source=primary_source,
                     svc=svc,
                 )
-            elif phase == "web":
-                query_overview = _lookup_query_overview(payload.prompt, svc)
+                if sentinel and not query_overview:
+                    query_overview = _lookup_query_overview(payload.prompt, svc)
 
         for token in _iter_answer_tokens(answer):
             yield _sse_event("token", {"token": token})
@@ -515,6 +739,8 @@ async def stream_message(
             timeline=timeline,
             query_overview=query_overview,
             entity_contexts=entity_contexts,
+            provenance=provenance,
+            enrichment_path=enrichment_path,
         )
         conversation_store.append_messages(
             conversation_id,
@@ -750,7 +976,8 @@ def explicit_web_search(
 ) -> WebSearchResponseModel:
     svc = get_service_manager()
     svc.signal_ui_active()
-    overview = build_query_overview_sync(payload.query, svc.llm)
+    started_at = time.perf_counter()
+    overview = _lookup_query_overview(payload.query, svc)
     if not overview:
         raise HTTPException(status_code=404, detail="No web results found")
 
@@ -774,6 +1001,7 @@ def explicit_web_search(
         content=content,
         queryOverview=query_overview,
         entityContexts=_entity_context_models(entity_contexts),
+        stats=_build_generation_stats(content, started_at),
         provenance="web",
     )
 
@@ -1462,11 +1690,11 @@ def _build_assistant_message(
     timeline: list[str],
     query_overview: dict[str, Any] | None = None,
     entity_contexts: list[dict[str, Any]] | None = None,
+    provenance: str = "vault",
+    enrichment_path: str | None = None,
 ) -> ChatMessageModel:
-    elapsed = max(time.perf_counter() - started_at, 0.001)
-    source_models = [_source_from_chunk(chunk) for chunk in sources]
+    source_models = _build_source_models(sources)
     primary_source = next((item for item in source_models if item.isPrimary), None)
-    token_count = len(answer.split())
     return ChatMessageModel(
         id=f"assistant-{datetime.now(UTC).timestamp()}",
         role="assistant",
@@ -1477,14 +1705,10 @@ def _build_assistant_message(
         timeline=timeline,
         queryOverview=_query_overview_model(query_overview),
         entityContexts=_entity_context_models(entity_contexts),
-        provenance="vault",
+        enrichmentPath=enrichment_path,
+        provenance=_normalize_assistant_provenance(provenance),
         sentinel=is_not_in_vault(answer),
-        stats={
-            "tokens": token_count,
-            "ttft": 0.0,
-            "total": round(elapsed, 3),
-            "tps": round(token_count / elapsed, 3),
-        },
+        stats=_build_generation_stats(answer, started_at),
     )
 
 
@@ -1502,6 +1726,11 @@ def _lookup_conversation_entity_contexts(user_text: str, assistant_text: str, sv
 def _lookup_query_overview(user_text: str, svc) -> dict[str, Any]:
     if not user_text or len(user_text.strip()) < 3:
         return {}
+
+    autolearn_overview = _build_query_overview_from_autolearn_results(user_text, svc)
+    if autolearn_overview:
+        return autolearn_overview
+
     try:
         result = build_query_overview_sync(user_text, svc.llm)
         return result if isinstance(result, dict) else {}
@@ -1891,6 +2120,57 @@ def _source_from_chunk(chunk: dict) -> SourceRefModel:
         dateModified=str(metadata.get("date_modified") or "") or None,
         score=float(chunk.get("score", 0.0) or 0.0),
         isPrimary=bool(metadata.get("is_primary")),
+    )
+
+
+def _build_source_models(sources: list[dict]) -> list[SourceRefModel]:
+    deduped: dict[str, SourceRefModel] = {}
+    for chunk in sources:
+        source = _source_from_chunk(chunk)
+        source_key = _source_identity_key(source)
+        if not source_key:
+            continue
+        current = deduped.get(source_key)
+        if current is None:
+            deduped[source_key] = source
+            continue
+        deduped[source_key] = _merge_source_refs(current, source)
+    return list(deduped.values())
+
+
+def _source_identity_key(source: SourceRefModel) -> str:
+    normalized_path = ""
+    if source.filePath:
+        normalized_path = normalize_vault_relative_path(source.filePath, vault_root=settings.vault).lower()
+    note_title = " ".join(str(source.noteTitle or "").lower().split())
+    if normalized_path and note_title:
+        return f"{normalized_path}|{note_title}"
+    if normalized_path:
+        return normalized_path
+    if note_title:
+        return f"title:{note_title}"
+    return ""
+
+
+def _merge_source_refs(current: SourceRefModel, incoming: SourceRefModel) -> SourceRefModel:
+    merged_score: float | None = None
+    if current.score is not None and incoming.score is not None:
+        merged_score = max(current.score, incoming.score)
+    elif current.score is not None:
+        merged_score = current.score
+    elif incoming.score is not None:
+        merged_score = incoming.score
+
+    merged_date = current.dateModified or incoming.dateModified
+    if current.dateModified and incoming.dateModified:
+        merged_date = max(current.dateModified, incoming.dateModified)
+
+    return SourceRefModel(
+        filePath=current.filePath or incoming.filePath,
+        noteTitle=current.noteTitle or incoming.noteTitle or incoming.filePath or current.filePath or "Source",
+        dateModified=merged_date,
+        score=merged_score,
+        isPrimary=bool(current.isPrimary or incoming.isPrimary),
     )
 
 

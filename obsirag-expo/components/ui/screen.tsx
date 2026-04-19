@@ -1,4 +1,4 @@
-import { PropsWithChildren } from 'react';
+import { PropsWithChildren, RefObject } from 'react';
 import { RefreshControl, ScrollView, StyleProp, StyleSheet, View, ViewStyle } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -9,9 +9,10 @@ type ScreenProps = PropsWithChildren<{
   backgroundColor?: string;
   contentStyle?: StyleProp<ViewStyle>;
   scrollContentStyle?: StyleProp<ViewStyle>;
+  scrollRef?: RefObject<ScrollView | null>;
 }>;
 
-export function Screen({ children, scroll = true, refreshing = false, onRefresh, backgroundColor, contentStyle, scrollContentStyle }: ScreenProps) {
+export function Screen({ children, scroll = true, refreshing = false, onRefresh, backgroundColor, contentStyle, scrollContentStyle, scrollRef }: ScreenProps) {
   const insets = useSafeAreaInsets();
   const content = <View style={[styles.content, contentStyle]}>{children}</View>;
 
@@ -19,6 +20,7 @@ export function Screen({ children, scroll = true, refreshing = false, onRefresh,
     <SafeAreaView edges={['top', 'right', 'bottom', 'left']} style={[styles.safeArea, backgroundColor ? { backgroundColor } : null]}>
       {scroll ? (
         <ScrollView
+          ref={scrollRef}
           contentContainerStyle={[styles.scroll, { paddingBottom: 20 + insets.bottom }, scrollContentStyle]}
           refreshControl={onRefresh ? <RefreshControl refreshing={refreshing} onRefresh={onRefresh} /> : undefined}
         >

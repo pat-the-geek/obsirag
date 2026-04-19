@@ -11,8 +11,8 @@ type WebSearchPromptProps = {
 export function WebSearchPrompt({ value, onChangeText, onSubmit, onUseInChat, disabled }: WebSearchPromptProps) {
   return (
     <View style={styles.container}>
-      <Text style={styles.title}>Recherche web explicite</Text>
-      <Text style={styles.caption}>Ajustez la requete avant de lancer une recherche hors coffre.</Text>
+      <Text style={styles.title}>Recherche sur le web</Text>
+      <Text style={styles.caption}>Ajustez la requete avant de lancer une recherche sur le web.</Text>
       <TextInput
         value={value}
         onChangeText={onChangeText}

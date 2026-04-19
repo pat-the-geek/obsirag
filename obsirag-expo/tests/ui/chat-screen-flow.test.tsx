@@ -34,10 +34,13 @@ const mockDeleteConversationMessageMutate = jest.fn();
 const mockExplicitWebSearchMutate = jest.fn();
 const mockStreamMessageMutate = jest.fn();
 const mockSetDraft = jest.fn();
+const mockScrollToEnd = jest.fn();
 const alertSpy = jest.spyOn(Alert, 'alert');
 const originalConfirm = globalThis.confirm;
 const mockConfirm = jest.fn();
+let mockDraftValue = '';
 let mockStreamMessageState = { mutate: mockStreamMessageMutate, isPending: false, error: null as Error | null };
+let mockExplicitWebSearchState = { mutate: mockExplicitWebSearchMutate, isPending: false };
 let mockConversationData: ConversationDetail | undefined = {
   id: 'conv-1',
   title: 'Conversation test',
@@ -95,7 +98,7 @@ jest.mock('../../features/chat/use-chat', () => ({
     refetch: jest.fn(),
   }),
   useDeleteConversationMessage: () => ({ mutate: mockDeleteConversationMessageMutate, isPending: false }),
-  useExplicitWebSearch: () => ({ mutate: mockExplicitWebSearchMutate, isPending: false }),
+  useExplicitWebSearch: () => mockExplicitWebSearchState,
   useGenerateConversationReport: () => ({ mutate: mockGenerateConversationReportMutate, isPending: false }),
   useSaveConversation: () => ({ mutate: mockSaveConversationMutate }),
   useStreamMessage: () => mockStreamMessageState,
@@ -104,10 +107,29 @@ jest.mock('../../features/chat/use-chat', () => ({
 jest.mock('../../store/app-store', () => ({
   useAppStore: (selector: (state: Record<string, unknown>) => unknown) =>
     selector({
-      drafts: { 'conv-1': '' },
-      setDraft: mockSetDraft,
+      drafts: { 'conv-1': mockDraftValue },
+      setDraft: (conversationId: string, value: string) => {
+        mockSetDraft(conversationId, value);
+        if (conversationId === 'conv-1') {
+          mockDraftValue = value;
+        }
+      },
     }),
 }));
+
+jest.mock('../../components/ui/screen', () => {
+  const ReactLocal = require('react');
+  const { View: ViewLocal } = require('react-native');
+
+  return {
+    Screen: ({ children, scrollRef }: { children: React.ReactNode; scrollRef?: { current: { scrollToEnd: (options?: unknown) => void } | null } }) => {
+      if (scrollRef) {
+        scrollRef.current = { scrollToEnd: mockScrollToEnd };
+      }
+      return ReactLocal.createElement(ViewLocal, { testID: 'mock-screen' }, children);
+    },
+  };
+});
 
 import ConversationDetailScreen from '../../app/(tabs)/chat/[conversationId]';
 
@@ -205,9 +227,12 @@ describe('ConversationDetailScreen', () => {
     mockExplicitWebSearchMutate.mockReset();
     mockStreamMessageMutate.mockReset();
     mockSetDraft.mockReset();
+    mockScrollToEnd.mockReset();
+    mockDraftValue = '';
     alertSpy.mockReset();
     mockConfirm.mockReset();
     mockStreamMessageState = { mutate: mockStreamMessageMutate, isPending: false, error: null };
+    mockExplicitWebSearchState = { mutate: mockExplicitWebSearchMutate, isPending: false };
   });
 
   it('renders save in the composer area and keeps the per-response web search action', () => {
@@ -223,6 +248,29 @@ describe('ConversationDetailScreen', () => {
 
     expect(mockSaveConversationMutate).toHaveBeenCalled();
     expect(mockSaveConversationMutate.mock.calls[0][0]).toBe('conv-1');
+  });
+
+  it('clears the draft immediately and scrolls to the bottom when sending a question', () => {
+    const tree = renderer.create(<ConversationDetailScreen />);
+    const input = tree.root.findByProps({ testID: 'message-composer-input' });
+
+    act(() => {
+      input.props.onChangeText('Nouvelle question sur Artemis II');
+    });
+
+    act(() => {
+      tree.update(<ConversationDetailScreen />);
+    });
+
+    act(() => {
+      tree.root.findByProps({ testID: 'message-composer-submit' }).props.onPress();
+    });
+
+    expect(mockSetDraft).toHaveBeenCalledWith('conv-1', 'Nouvelle question sur Artemis II');
+    expect(mockSetDraft).toHaveBeenCalledWith('conv-1', '');
+    expect(mockScrollToEnd).toHaveBeenCalled();
+    expect(mockStreamMessageMutate).toHaveBeenCalledWith('Nouvelle question sur Artemis II');
+    expect(mockSetDraft.mock.invocationCallOrder.at(-1)).toBeLessThan(mockStreamMessageMutate.mock.invocationCallOrder[0]);
   });
 
   it('generates a report insight and opens it in the note viewer', () => {
@@ -626,6 +674,38 @@ describe('ConversationDetailScreen', () => {
     expect(textTreeContains(tree, 'Recherche dans le coffre')).toBe(true);
     expect(textTreeContains(tree, 'Generation MLX')).toBe(true);
     expect(textTreeContains(tree, 'Generation en cours...')).toBe(false);
+  });
+
+  it('shows a response preparation indicator for pending explicit web search', () => {
+    mockConversationData = {
+      id: 'conv-1',
+      title: 'Conversation test',
+      updatedAt: '2026-04-16T12:00:00Z',
+      draft: '',
+      messages: [
+        {
+          id: 'web-user-1',
+          role: 'user',
+          content: '🌐 Recherche sur le web : Ada Lovelace',
+          createdAt: '2026-04-16T12:00:00Z',
+        },
+        {
+          id: 'pending-web-assistant',
+          role: 'assistant',
+          content: '',
+          createdAt: '2026-04-16T12:00:01Z',
+          timeline: ['Réponse en préparation', 'Recherche sur le web en cours...'],
+          provenance: 'web',
+        },
+      ],
+    };
+    mockExplicitWebSearchState = { mutate: mockExplicitWebSearchMutate, isPending: true };
+
+    const tree = renderer.create(<ConversationDetailScreen />);
+
+    expect(textTreeContains(tree, 'Progression du traitement')).toBe(true);
+    expect(textTreeContains(tree, 'Réponse en préparation')).toBe(true);
+    expect(textTreeContains(tree, 'Recherche sur le web en cours...')).toBe(true);
   });
 
 });

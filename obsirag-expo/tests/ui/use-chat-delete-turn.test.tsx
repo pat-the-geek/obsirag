@@ -53,7 +53,7 @@ describe('removeMessageTurn', () => {
       {
         id: 'web-user-1',
         role: 'user',
-        content: '🌐 Recherche web : Mermaid table features',
+        content: '🌐 Recherche sur le web : Mermaid table features',
         createdAt: '2026-04-17T12:00:02Z',
       },
       {

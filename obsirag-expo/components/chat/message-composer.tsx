@@ -30,6 +30,7 @@ export function MessageComposer({
   return (
     <View style={styles.container}>
       <TextInput
+        testID="message-composer-input"
         value={value}
         onChangeText={onChangeText}
         multiline
@@ -71,7 +72,7 @@ export function MessageComposer({
           ) : null}
           {!secondaryActionLabel && !tertiaryActionLabel ? <View style={styles.spacer} /> : null}
         </View>
-        <Pressable disabled={!canSubmit} onPress={onSubmit} style={[styles.button, !canSubmit && styles.buttonDisabled]}>
+        <Pressable testID="message-composer-submit" disabled={!canSubmit} onPress={onSubmit} style={[styles.button, !canSubmit && styles.buttonDisabled]}>
           <Text style={styles.buttonLabel}>Envoyer</Text>
         </Pressable>
       </View>

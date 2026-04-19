@@ -21,7 +21,7 @@ Le backend RAG Python n'est pas reimplementé ici. Le projet est concu pour etre
 - liste des conversations
 - detail de conversation avec streaming SSE backend ou fallback mock
 - affichage des sources, de la note principale et de la provenance coffre/web/hybride
-- recherche web explicite via le backend avec resume de requete et sources DDG
+- recherche sur le web via le backend avec resume de requete et sources DDG
 - affichage des contextes d'entites detectees (NER) renvoyes par l'API
 - liste des insights
 - detail d'insight

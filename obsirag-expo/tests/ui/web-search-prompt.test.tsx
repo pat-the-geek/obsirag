@@ -54,7 +54,7 @@ describe('WebSearchPrompt', () => {
     });
     const joined = texts.filter((value): value is string => typeof value === 'string').join(' ');
 
-    expect(joined).toMatch(/Recherche web explicite/);
+    expect(joined).toMatch(/Recherche sur le web/);
     expect(joined).toMatch(/Lancer la recherche/);
     expect(joined).toMatch(/Utiliser dans le chat/);
   });

@@ -20,11 +20,22 @@ jest.mock('../../components/markdown/mermaid-diagram', () => ({
 
 import { MarkdownNote } from '../../components/notes/markdown-note';
 
+function collectText(value: unknown): string[] {
+  if (typeof value === 'string' || typeof value === 'number') {
+    return [String(value)];
+  }
+  if (Array.isArray(value)) {
+    return value.flatMap((item) => collectText(item));
+  }
+  if (value && typeof value === 'object' && 'props' in value) {
+    return collectText((value as { props?: { children?: unknown } }).props?.children);
+  }
+  return [];
+}
+
 function textTreeContains(tree: renderer.ReactTestRenderer, expected: string) {
   return tree.root.findAllByType(Text).some((node) => {
-    const value = node.props.children;
-    const parts = Array.isArray(value) ? value : [value];
-    return parts.join('').includes(expected);
+    return collectText(node.props.children).join('').includes(expected);
   });
 }
 
@@ -113,6 +124,50 @@ describe('MarkdownNote', () => {
 
     expect(tree.root.findByProps({ testID: 'markdown-table' })).toBeTruthy();
     expect(tree.root.findAllByProps({ testID: 'markdown-table-cell-multiline' }).length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('renders irregular markdown tables from assistant responses with missing trailing pipes', () => {
+    const tree = renderer.create(
+      <MarkdownNote
+        markdown={[
+          '| Nom                | Nationalité | Fonction                                | Expérience Spatiale                        |',
+          '|--------------------|-------------|-----------------------------------------|--------------------------------------------|',
+          '| Reid Wiseman        | Américain   | Commandant de mission                    | Expérimenté dans les vols spatiaux, ancien commandant de la Station spatiale internationale |',
+          '| Victor Glover      | Américain   | Pilote                                   | Premier astronaute afro-américain à participer à une mission lunaire                 |',
+          '| Christina Koch      | Américaine  | Spécialiste de mission                    | Détenante du record de durée de mission féminine en orbite (328 jours)                |',
+          '| Jeremy Hansen      | Canadien    | Spécialiste de mission                    | Premier Canadien à voyager vers la Lune',
+        ].join('\n')}
+      />,
+    );
+
+    expect(tree.root.findByProps({ testID: 'markdown-table' })).toBeTruthy();
+    expect(textTreeContains(tree, 'Jeremy Hansen')).toBe(true);
+    expect(textTreeContains(tree, 'Premier Canadien à voyager vers la Lune')).toBe(true);
+  });
+
+  it('renders fenced markdown tables as formatted content instead of code blocks', () => {
+    const tree = renderer.create(
+      <MarkdownNote
+        markdown={[
+          "Voici un tableau Markdown résumant les informations sur l'équipage de la mission Artemis II :",
+          '',
+          '```markdown',
+          '| Nom | Nationalité | Fonction | Expérience Spatiale |',
+          '| --- | --- | --- | --- |',
+          '| Reid Wiseman | Américain | Commandant de mission | Vétéran de la Station spatiale internationale |',
+          '| Jeremy Hansen | Canadien | Spécialiste de mission | Premier Canadien à voyager vers la Lune |',
+          '```',
+          '',
+          "Ce tableau résume les informations disponibles sur l'équipage de la mission Artemis II.",
+        ].join('\n')}
+      />,
+    );
+
+    expect(tree.root.findByProps({ testID: 'markdown-table' })).toBeTruthy();
+    expect(textTreeContains(tree, "Voici un tableau Markdown résumant les informations sur l'équipage")).toBe(true);
+    expect(textTreeContains(tree, 'Reid Wiseman')).toBe(true);
+    expect(textTreeContains(tree, 'Premier Canadien à voyager vers la Lune')).toBe(true);
+    expect(textTreeContains(tree, "Ce tableau résume les informations disponibles sur l'équipage")).toBe(true);
   });
 
   it('renders inline hashtags as styled tags inside note text', () => {

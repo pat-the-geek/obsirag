@@ -255,5 +255,6 @@ export type WebSearchResponse = {
   content: string;
   queryOverview: QueryOverview;
   entityContexts: EntityContext[];
+  stats?: GenerationStats;
   provenance: 'web';
 };
