@@ -1,6 +1,6 @@
 import React from 'react';
-import renderer from 'react-test-renderer';
-import { Text } from 'react-native';
+import renderer, { act } from 'react-test-renderer';
+import { Pressable, Text } from 'react-native';
 
 const mockPush = jest.fn();
 const mockReplace = jest.fn();
@@ -8,6 +8,18 @@ const mockInvalidateQueries = jest.fn();
 const mockUseServerConfig = jest.fn();
 const mockUseSessionStatus = jest.fn();
 const mockUseSystemStatus = jest.fn();
+const mockSetThemeMode = jest.fn();
+
+jest.mock('../../store/app-store', () => ({
+  useAppStore: (selector: (state: {
+    themeMode: 'system' | 'light' | 'dark' | 'quiet' | 'abyss';
+    setThemeMode: typeof mockSetThemeMode;
+  }) => unknown) =>
+    selector({
+      themeMode: 'system',
+      setThemeMode: mockSetThemeMode,
+    }),
+}));
 
 jest.mock('expo-router', () => ({
   useRouter: () => ({ push: mockPush, replace: mockReplace }),
@@ -77,6 +89,7 @@ describe('settings screen', () => {
         },
       },
     });
+    mockSetThemeMode.mockReset();
   });
 
   it('shows live runtime mode and active model details', () => {
@@ -93,5 +106,51 @@ describe('settings screen', () => {
     expect(renderedText).toContain('Source runtime: API FastAPI live');
     expect(renderedText).toContain('Modele actif: mlx-community/Qwen2.5-7B-Instruct-4bit');
     expect(renderedText).toContain('Provider LLM: MLX');
+  });
+
+  it('renders theme choices at the top and allows selecting Dark+', () => {
+    const tree = renderer.create(<SettingsScreen />);
+    const renderedText = tree.root
+      .findAllByType(Text)
+      .map((node) => {
+        const children = node.props.children;
+        return Array.isArray(children) ? children.join('') : String(children ?? '');
+      })
+      .join('\n');
+
+    expect(renderedText).toContain('Affichage');
+    expect(renderedText).toContain('Automatique');
+    expect(renderedText).toContain('Light+');
+    expect(renderedText).toContain('Dark+');
+    expect(renderedText).toContain('Atelier');
+    expect(renderedText).toContain('Noctis');
+
+    const darkOption = tree.root.findAllByType(Pressable).find((node) =>
+      node.findAllByType(Text).some((textNode) => textNode.props.children === 'Dark+'),
+    );
+
+    expect(darkOption).toBeTruthy();
+
+    act(() => {
+      darkOption?.props.onPress();
+    });
+
+    expect(mockSetThemeMode).toHaveBeenCalledWith('dark');
+  });
+
+  it('allows selecting the new Noctis theme', () => {
+    const tree = renderer.create(<SettingsScreen />);
+
+    const abyssOption = tree.root.findAllByType(Pressable).find((node) =>
+      node.findAllByType(Text).some((textNode) => textNode.props.children === 'Noctis'),
+    );
+
+    expect(abyssOption).toBeTruthy();
+
+    act(() => {
+      abyssOption?.props.onPress();
+    });
+
+    expect(mockSetThemeMode).toHaveBeenCalledWith('abyss');
   });
 });

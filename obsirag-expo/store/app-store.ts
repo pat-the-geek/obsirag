@@ -29,7 +29,7 @@ type AppStoreState = {
   accessToken: string;
   useMockServer: boolean;
   activeConversationId: string | undefined;
-  themeMode: 'system' | 'light' | 'dark';
+  themeMode: 'system' | 'light' | 'dark' | 'quiet' | 'abyss';
   drafts: Record<string, string>;
   sourcePanels: Record<string, boolean>;
   mermaidViewer: {
@@ -40,7 +40,7 @@ type AppStoreState = {
   setAccessToken: (value: string) => void;
   setUseMockServer: (value: boolean) => void;
   setActiveConversationId: (value?: string) => void;
-  setThemeMode: (value: 'system' | 'light' | 'dark') => void;
+  setThemeMode: (value: 'system' | 'light' | 'dark' | 'quiet' | 'abyss') => void;
   setDraft: (conversationId: string, value: string) => void;
   clearDraft: (conversationId: string) => void;
   setSourcePanelOpen: (conversationId: string, value: boolean) => void;
@@ -92,7 +92,7 @@ export const useAppStore = create<AppStoreState>()(
     }),
     {
       name: 'obsirag-expo-store',
-      version: 3,
+      version: 4,
       storage: createJSONStorage(() => AsyncStorage),
       migrate: (persistedState) => {
         const state = (persistedState ?? {}) as Partial<AppStoreState>;

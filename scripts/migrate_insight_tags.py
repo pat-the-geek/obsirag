@@ -9,9 +9,9 @@ Script de reprise — migration des tags NER et ajout géolocalisation dans les 
   - Injecte `location: [lat, lng]` dans le frontmatter pour les entités GPE/LOC
   - Ajoute la galerie d'images si absente
 
-Usage (dans Docker) :
-  docker exec obsirag python3 /app/scripts/migrate_insight_tags.py
-  docker exec obsirag python3 /app/scripts/migrate_insight_tags.py --dry-run
+Usage :
+    .venv/bin/python scripts/migrate_insight_tags.py
+    .venv/bin/python scripts/migrate_insight_tags.py --dry-run
 """
 from __future__ import annotations
 
@@ -25,7 +25,7 @@ import urllib.request
 from datetime import datetime, timedelta
 from pathlib import Path
 
-sys.path.insert(0, "/app")
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from src.config import settings
 
 # ── Constantes ────────────────────────────────────────────────────────────────

@@ -7,6 +7,7 @@ import { GraphData } from '../../types/domain';
 
 type KnowledgeGraphProps = {
   data: GraphData;
+  isActive?: boolean;
   focusedNodeId?: string;
   onSelectNode?: (nodeId: string) => void;
   onOpenNode?: (nodeId: string) => void;
@@ -82,25 +83,32 @@ const MIN_GRAPH_ZOOM = 0.2;
 const MAX_GRAPH_ZOOM = 10;
 const MIN_BASE_SCALE = 0.01;
 
-export function KnowledgeGraph({ data, focusedNodeId, onSelectNode, onOpenNode, onDetectSynapses, zoom = 1, onZoomChange, onZoomIn, onZoomOut, onZoomReset }: KnowledgeGraphProps) {
+export function KnowledgeGraph({ data, isActive = true, focusedNodeId, onSelectNode, onOpenNode, onDetectSynapses, zoom = 1, onZoomChange, onZoomIn, onZoomOut, onZoomReset }: KnowledgeGraphProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const networkRef = useRef<Network | null>(null);
   const zoomSyncTimerRef = useRef<number | null>(null);
   const redrawTimerRef = useRef<number | null>(null);
   const focusTimerRef = useRef<number | null>(null);
+  const activeNodeIdRef = useRef<string | null>(focusedNodeId ?? null);
+  const applyNeighborhoodFocusRef = useRef<((nodeId: string | null) => void) | null>(null);
+  const fitOverviewRef = useRef<(() => void) | null>(null);
   const suppressZoomSyncRef = useRef(false);
   const fitScaleRef = useRef(1);
   const preferredScaleRef = useRef(clamp(zoom, MIN_GRAPH_ZOOM, MAX_GRAPH_ZOOM));
   const windowDimensions = useWindowDimensions();
   const scene = useMemo(() => buildGraphScene(data, windowDimensions.width), [data, windowDimensions.width]);
   const viewportHeight = scene.height;
-  const preparedGraph = useMemo(() => buildPreparedGraph(data, focusedNodeId), [data, focusedNodeId]);
+  const preparedGraph = useMemo(() => buildPreparedGraph(data), [data]);
 
   useEffect(() => {
     preferredScaleRef.current = clamp(zoom, MIN_GRAPH_ZOOM, MAX_GRAPH_ZOOM);
   }, [zoom]);
 
   useEffect(() => {
+    if (!isActive) {
+      return undefined;
+    }
+
     const network = networkRef.current;
     if (!network) {
       return undefined;
@@ -137,9 +145,20 @@ export function KnowledgeGraph({ data, focusedNodeId, onSelectNode, onOpenNode, 
         zoomSyncTimerRef.current = null;
       }
     };
-  }, [zoom]);
+  }, [isActive, zoom]);
 
   useEffect(() => {
+    if (!isActive) {
+      if (networkRef.current) {
+        networkRef.current.destroy();
+        networkRef.current = null;
+      }
+      applyNeighborhoodFocusRef.current = null;
+      fitOverviewRef.current = null;
+      activeNodeIdRef.current = focusedNodeId ?? null;
+      return undefined;
+    }
+
     if (!containerRef.current) {
       return undefined;
     }
@@ -157,7 +176,8 @@ export function KnowledgeGraph({ data, focusedNodeId, onSelectNode, onOpenNode, 
 
     const physics = buildVisPhysics(preparedGraph.nodes.length);
     const performanceProfile = buildGraphPerformanceProfile(preparedGraph.nodes.length);
-    const hoverEnabled = performanceProfile.enableHover || performanceProfile.enableTooltipHover;
+    const ambientMotion = buildAmbientMotionProfile(preparedGraph.nodes.length);
+    const hoverEnabled = isActive && (performanceProfile.enableHover || performanceProfile.enableTooltipHover);
     const labelBehavior = buildLabelBehavior(preparedGraph.nodes.length);
     const neighborhoodFade = buildNeighborhoodFade(preparedGraph.nodes.length);
     const emitZoomChange = (value: number) => {
@@ -165,7 +185,7 @@ export function KnowledgeGraph({ data, focusedNodeId, onSelectNode, onOpenNode, 
       const multiplier = clamp(value / baseScale, MIN_GRAPH_ZOOM, MAX_GRAPH_ZOOM);
       onZoomChange?.(Number(multiplier.toFixed(2)));
     };
-    let activeNodeId = focusedNodeId ?? null;
+    let activeNodeId = activeNodeIdRef.current;
     let hoveredNodeId: string | null = null;
 
     const baseNodes = preparedGraph.nodes;
@@ -173,6 +193,9 @@ export function KnowledgeGraph({ data, focusedNodeId, onSelectNode, onOpenNode, 
     const nodesData = new DataSet(baseNodes);
     const edgesData = new DataSet(baseEdges);
     let overviewStateDirty = false;
+    let ambientAnimationFrame: number | null = null;
+    let ambientLastTick = 0;
+    let ambientTimeMs = 0;
     const tooltipByNodeId = new Map(baseNodes.map((node) => [node.id, node.tooltipHtml]));
 
     const network = new Network(
@@ -330,7 +353,8 @@ export function KnowledgeGraph({ data, focusedNodeId, onSelectNode, onOpenNode, 
       return scaleValue >= labelBehavior.globalThreshold;
     };
 
-    const applyVisualState = () => {
+    const applyVisualState = (animationTimeMs = ambientTimeMs) => {
+      ambientTimeMs = animationTimeMs;
       const emphasizedNodeId = hoveredNodeId ?? activeNodeId;
       if (performanceProfile.skipIdleVisualRefresh && !emphasizedNodeId) {
         if (overviewStateDirty) {
@@ -350,10 +374,12 @@ export function KnowledgeGraph({ data, focusedNodeId, onSelectNode, onOpenNode, 
         const isHovered = baseNode.id === hoveredNodeId;
         const isRelated = relatedNodeIds ? relatedNodeIds.has(baseNode.id) : true;
         const isMuted = !isRelated;
+        const ambientState = !emphasizedNodeId ? describeAmbientNodeMotion(baseNode.id, ambientTimeMs, ambientMotion) : null;
         nodesData.update({
           id: baseNode.id,
           label: shouldShowLabel(baseNode, scaleValue, relatedNodeIds, emphasizedNodeId) ? baseNode.fullLabel : '',
-          borderWidth: isActive ? 5 : isHovered ? 4 : isRelated ? 2.5 : 1,
+          borderWidth: isActive ? 5 : isHovered ? 4 : isRelated ? 2.5 + (ambientState?.borderDelta ?? 0) : 1,
+          value: baseNode.value + (ambientState?.radiusDelta ?? 0),
           color: {
             background: isMuted ? fadeColor(baseNode.color.background, neighborhoodFade.nodeOpacity) : baseNode.color.background,
             border: isMuted ? fadeColor(baseNode.color.border, neighborhoodFade.fontOpacity) : baseNode.color.border,
@@ -372,7 +398,9 @@ export function KnowledgeGraph({ data, focusedNodeId, onSelectNode, onOpenNode, 
             ? { enabled: true, color: 'rgba(255,255,255,0.45)', size: 32, x: 0, y: 0 }
             : isHovered
               ? { enabled: true, color: 'rgba(96,165,250,0.32)', size: 24, x: 0, y: 0 }
-              : { enabled: false, color: 'rgba(0,0,0,0.55)', size: 10, x: 0, y: 0 },
+              : ambientState
+                ? { enabled: true, color: fadeColor(baseNode.color.background, ambientState.shadowOpacity), size: ambientState.shadowSize + 12, x: 0, y: 0 }
+                : { enabled: false, color: 'rgba(0,0,0,0.55)', size: 10, x: 0, y: 0 },
         });
       }
 
@@ -396,6 +424,17 @@ export function KnowledgeGraph({ data, focusedNodeId, onSelectNode, onOpenNode, 
           width: isConnectedToActive ? 2.2 : isConnectedToHovered ? 1.8 : isRelated ? 1 : neighborhoodFade.edgeWidth,
         });
       }
+    };
+
+    const runAmbientMotion = (frameTime: number) => {
+      if (!ambientMotion.enabled || destroyed || networkRef.current !== network) {
+        return;
+      }
+      if (!activeNodeId && !hoveredNodeId && frameTime - ambientLastTick >= ambientMotion.frameIntervalMs) {
+        ambientLastTick = frameTime;
+        applyVisualState(frameTime);
+      }
+      ambientAnimationFrame = window.requestAnimationFrame(runAmbientMotion);
     };
 
     const fitOverview = () => {
@@ -431,6 +470,7 @@ export function KnowledgeGraph({ data, focusedNodeId, onSelectNode, onOpenNode, 
     };
 
     const applyNeighborhoodFocus = (nodeId: string | null) => {
+      activeNodeIdRef.current = nodeId;
       if (!nodeId) {
         activeNodeId = null;
         applyVisualState();
@@ -450,6 +490,9 @@ export function KnowledgeGraph({ data, focusedNodeId, onSelectNode, onOpenNode, 
         },
       });
     };
+
+    applyNeighborhoodFocusRef.current = applyNeighborhoodFocus;
+    fitOverviewRef.current = fitOverview;
 
     network.on('click', (params) => {
       const nodes = params.nodes as string[];
@@ -527,7 +570,7 @@ export function KnowledgeGraph({ data, focusedNodeId, onSelectNode, onOpenNode, 
       }
       fitOverview();
       applyVisualState();
-      if (focusedNodeId) {
+      if (activeNodeIdRef.current) {
         if (focusTimerRef.current) {
           window.clearTimeout(focusTimerRef.current);
         }
@@ -535,8 +578,11 @@ export function KnowledgeGraph({ data, focusedNodeId, onSelectNode, onOpenNode, 
           if (destroyed || networkRef.current !== network) {
             return;
           }
-          applyNeighborhoodFocus(focusedNodeId);
+          applyNeighborhoodFocus(activeNodeIdRef.current);
         }, 120);
+      }
+      if (ambientMotion.enabled) {
+        ambientAnimationFrame = window.requestAnimationFrame(runAmbientMotion);
       }
     });
 
@@ -555,6 +601,8 @@ export function KnowledgeGraph({ data, focusedNodeId, onSelectNode, onOpenNode, 
       destroyed = true;
       networkInstance?.destroy();
       networkRef.current = null;
+      applyNeighborhoodFocusRef.current = null;
+      fitOverviewRef.current = null;
       hideTooltip();
       if (zoomSyncTimerRef.current) {
         window.clearTimeout(zoomSyncTimerRef.current);
@@ -568,6 +616,10 @@ export function KnowledgeGraph({ data, focusedNodeId, onSelectNode, onOpenNode, 
         window.clearTimeout(focusTimerRef.current);
         focusTimerRef.current = null;
       }
+      if (ambientAnimationFrame) {
+        window.cancelAnimationFrame(ambientAnimationFrame);
+        ambientAnimationFrame = null;
+      }
       tooltipElement.removeEventListener('mouseenter', keepTooltipOpen);
       tooltipElement.removeEventListener('mouseleave', scheduleHideTooltip);
       tooltipElement.removeEventListener('click', handleTooltipClick);
@@ -579,7 +631,36 @@ export function KnowledgeGraph({ data, focusedNodeId, onSelectNode, onOpenNode, 
         tooltipElement.parentElement.removeChild(tooltipElement);
       }
     };
-  }, [focusedNodeId, onDetectSynapses, onOpenNode, onSelectNode, onZoomChange, preparedGraph]);
+  }, [isActive, onDetectSynapses, onOpenNode, onSelectNode, onZoomChange, preparedGraph]);
+
+  useEffect(() => {
+    activeNodeIdRef.current = focusedNodeId ?? null;
+
+    if (!isActive || !networkRef.current) {
+      return;
+    }
+
+    if (focusTimerRef.current) {
+      window.clearTimeout(focusTimerRef.current);
+    }
+
+    focusTimerRef.current = window.setTimeout(() => {
+      if (!networkRef.current) {
+        return;
+      }
+      applyNeighborhoodFocusRef.current?.(focusedNodeId ?? null);
+      if (!focusedNodeId) {
+        fitOverviewRef.current?.();
+      }
+    }, focusedNodeId ? 20 : 0);
+
+    return () => {
+      if (focusTimerRef.current) {
+        window.clearTimeout(focusTimerRef.current);
+        focusTimerRef.current = null;
+      }
+    };
+  }, [focusedNodeId, isActive, preparedGraph]);
 
   return (
     <div style={styles.container}>
@@ -601,7 +682,7 @@ export function KnowledgeGraph({ data, focusedNodeId, onSelectNode, onOpenNode, 
   );
 }
 
-function buildPreparedGraph(data: GraphData, focusedNodeId?: string) {
+function buildPreparedGraph(data: GraphData) {
   const groupColors = buildGroupColorMap(data.nodes.map((node) => node.group));
   const labelBehavior = buildLabelBehavior(data.nodes.length);
   const heavyProfile = buildGraphPerformanceProfile(data.nodes.length);
@@ -611,12 +692,12 @@ function buildPreparedGraph(data: GraphData, focusedNodeId?: string) {
     tooltipHtml: buildNodeTooltipHtml(node),
     label: shouldRenderInitialLabel(
       node.degree,
-      focusedNodeId ? 0 : heavyProfile.skipIdleVisualRefresh ? Math.max(labelBehavior.priorityDegree + 2, 12) : labelBehavior.priorityDegree,
+      heavyProfile.skipIdleVisualRefresh ? Math.max(labelBehavior.priorityDegree + 2, 12) : labelBehavior.priorityDegree,
     ) ? node.label : '',
     title: ' ',
     color: {
       background: node.noteType ? (NOTE_TYPE_COLORS[node.noteType] ?? '#60a5fa') : (groupColors.get(node.group) ?? '#2a5f95'),
-      border: focusedNodeId === node.id ? '#f8fafc' : 'rgba(15, 23, 42, 0.82)',
+      border: 'rgba(15, 23, 42, 0.82)',
       highlight: {
         background: node.noteType ? (NOTE_TYPE_COLORS[node.noteType] ?? '#93c5fd') : (groupColors.get(node.group) ?? '#60a5fa'),
         border: '#f8fafc',
@@ -627,7 +708,7 @@ function buildPreparedGraph(data: GraphData, focusedNodeId?: string) {
     font: { color: '#e2e8f0', size: 13, face: 'Inter, system-ui, sans-serif' },
     labelHighlightBold: true,
     shadow: {
-      enabled: focusedNodeId === node.id,
+      enabled: false,
       color: 'rgba(255,255,255,0.35)',
       size: 28,
       x: 0,
@@ -777,6 +858,48 @@ function buildGraphPerformanceProfile(nodeCount: number) {
   };
 }
 
+function buildAmbientMotionProfile(nodeCount: number) {
+  if (nodeCount > 180) {
+    return {
+      enabled: false,
+      cycleMs: 6400,
+      frameIntervalMs: 120,
+      radiusAmplitude: 0,
+      borderAmplitude: 0,
+      shadowBase: 10,
+      shadowAmplitude: 0,
+      haloOpacityBase: 0,
+      haloOpacityAmplitude: 0,
+    };
+  }
+
+  if (nodeCount > 96) {
+    return {
+      enabled: true,
+      cycleMs: 7600,
+      frameIntervalMs: 96,
+      radiusAmplitude: 0.42,
+      borderAmplitude: 0.5,
+      shadowBase: 12,
+      shadowAmplitude: 12,
+      haloOpacityBase: 0.24,
+      haloOpacityAmplitude: 0.26,
+    };
+  }
+
+  return {
+    enabled: true,
+    cycleMs: 6900,
+    frameIntervalMs: 80,
+    radiusAmplitude: 0.58,
+    borderAmplitude: 0.56,
+    shadowBase: 14,
+    shadowAmplitude: 16,
+    haloOpacityBase: 0.28,
+    haloOpacityAmplitude: 0.32,
+  };
+}
+
 function shouldRenderInitialLabel(degree: number, threshold: number) {
   return degree >= threshold;
 }
@@ -906,19 +1029,19 @@ function ensureVisTooltipStyles() {
     .obsirag-graph-tooltip__card {
       display: flex;
       flex-direction: column;
-      gap: 10px;
-      padding: 14px 16px;
-    }
-    .obsirag-graph-tooltip__title {
-      font-size: 17px;
-      line-height: 1.35;
-      font-weight: 700;
-      color: #f8fafc;
-      word-break: break-word;
-    }
-    .obsirag-graph-tooltip__meta {
-      display: flex;
-      align-items: center;
+  if (nodeCount > 96) {
+    return {
+      heavy: false,
+      enableHover: true,
+      enableNodeDrag: true,
+      enableEdgeSmoothing: true,
+      disablePhysicsAfterStabilization: false,
+      skipIdleVisualRefresh: false,
+      hideEdgesWhileInteracting: false,
+      enableAnimatedFit: true,
+      enableTooltipHover: true,
+    };
+  }
       flex-wrap: wrap;
       gap: 8px;
       color: #cbd5e1;
@@ -1018,6 +1141,38 @@ function extractPointerEvent(event: unknown) {
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
+}
+
+function stableHash(value: string) {
+  let hash = 2166136261;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0) / 4294967295;
+}
+
+function describeAmbientNodeMotion(
+  nodeId: string,
+  timeMs: number,
+  ambientMotion: ReturnType<typeof buildAmbientMotionProfile>,
+) {
+  if (!ambientMotion.enabled) {
+    return { radiusDelta: 0, shadowSize: ambientMotion.shadowBase, borderDelta: 0, shadowOpacity: 0 };
+  }
+
+  const basePhase = stableHash(nodeId) * Math.PI * 2;
+  const progress = (timeMs / ambientMotion.cycleMs) * Math.PI * 2;
+  const pulse = Math.sin(progress + basePhase);
+  const undertow = Math.sin(progress * 0.53 + basePhase * 1.31);
+  const sway = Math.cos(progress * 0.71 + basePhase * 1.67);
+  const halo = Math.max(0, Math.min(1, ((pulse * 0.58) + (undertow * 0.28) + (sway * 0.14) + 1) / 2));
+  return {
+    radiusDelta: ((pulse * 0.72) + (undertow * 0.28)) * ambientMotion.radiusAmplitude,
+    shadowSize: ambientMotion.shadowBase + halo * ambientMotion.shadowAmplitude,
+    borderDelta: halo * ambientMotion.borderAmplitude,
+    shadowOpacity: ambientMotion.haloOpacityBase + halo * ambientMotion.haloOpacityAmplitude,
+  };
 }
 
 function escapeHtml(value: string) {

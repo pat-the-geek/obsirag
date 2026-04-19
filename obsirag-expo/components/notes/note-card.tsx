@@ -1,6 +1,8 @@
 import { StyleSheet, Text, View } from 'react-native';
 
 import { NoteDetail } from '../../types/domain';
+import { useAppTheme } from '../../theme/app-theme';
+import { formatMetadataDate, formatSizeBytes, joinMetadataParts } from '../../utils/format-display';
 import { MarkdownNote } from './markdown-note';
 import { TagPill } from '../ui/tag-pill';
 
@@ -11,18 +13,27 @@ type NoteCardProps = {
 };
 
 export function NoteCard({ note, onOpenNote, onOpenTag }: NoteCardProps) {
+  const theme = useAppTheme();
+  const metadata = joinMetadataParts([
+    note.noteType ? `Type: ${note.noteType}` : null,
+    note.dateModified ? `Modifie le ${formatMetadataDate(note.dateModified)}` : null,
+    formatSizeBytes(note.sizeBytes),
+  ]);
+
   return (
-    <View style={styles.card}>
-      <Text style={styles.title}>{note.title}</Text>
+    <View style={[styles.card, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }] }>
+      <Text style={[styles.title, { color: theme.colors.text }]}>{note.title}</Text>
+      <Text style={[styles.path, { color: theme.colors.textSubtle }]}>{note.filePath}</Text>
       <View style={styles.tagsRow}>
         {(note.tags || []).map((tag) => (
           <TagPill key={tag} label={tag} {...(onOpenTag ? { onPress: () => onOpenTag(tag) } : {})} />
         ))}
       </View>
-      <View style={styles.metaRow}>
-        {note.noteType ? <Text style={styles.metaText}>Type: {note.noteType}</Text> : null}
-        {note.dateModified ? <Text style={styles.metaText}>Modifiee: {note.dateModified.slice(0, 10)}</Text> : null}
-      </View>
+      {metadata ? (
+        <View style={styles.metaRow}>
+          <Text style={[styles.metaText, { color: theme.colors.textMuted }]}>{metadata}</Text>
+        </View>
+      ) : null}
       <MarkdownNote markdown={note.bodyMarkdown} {...(onOpenNote ? { onOpenNote } : {})} {...(onOpenTag ? { onOpenTag } : {})} />
     </View>
   );
@@ -31,16 +42,16 @@ export function NoteCard({ note, onOpenNote, onOpenTag }: NoteCardProps) {
 const styles = StyleSheet.create({
   card: {
     borderRadius: 18,
-    backgroundColor: '#fffdfa',
     borderWidth: 1,
-    borderColor: '#d8cfc0',
     padding: 16,
     gap: 12,
   },
   title: {
     fontSize: 22,
     fontWeight: '800',
-    color: '#1f160c',
+  },
+  path: {
+    fontSize: 12,
   },
   tagsRow: {
     flexDirection: 'row',
@@ -53,7 +64,6 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   metaText: {
-    color: '#6f5d49',
     fontSize: 12,
   },
 });

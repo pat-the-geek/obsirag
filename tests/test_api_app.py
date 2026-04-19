@@ -9,9 +9,14 @@ from fastapi.testclient import TestClient
 
 from src.api.app import app
 from src.api.app import _build_conversation_theme_coverage_section
+from src.api.app import _build_source_models
+from src.api.app import _conversation_size_bytes
+from src.api.app import _artifact_size_bytes
 from src.api.app import _iter_answer_tokens
 from src.api.app import _lookup_conversation_entity_contexts
+from src.api.app import _normalize_indexing_status
 from src.api.app import _normalize_report_markdown
+from src.api.app import _related_note_from_note
 from src.api.conversation_store import ApiConversationStore
 from src.api.schemas import ChatMessageModel
 from src.api.schemas import ConversationDetailModel
@@ -154,6 +159,89 @@ def test_system_status_infers_ready_startup_when_status_file_is_missing(tmp_sett
     assert payload["startup"]["ready"] is True
     assert payload["startup"]["currentStep"] == "Tous les services sont opérationnels"
     assert payload["startup"]["steps"][-1] == "Tous les services sont opérationnels"
+
+
+def test_normalize_indexing_status_replaces_stale_current_when_not_running():
+    normalized = _normalize_indexing_status({
+        "running": False,
+        "processed": 789,
+        "total": 789,
+        "current": "OK-ia.ch/Valeurs - Vision/OK-ia.ch — quelles valeurs pour moi.md",
+    })
+
+    assert normalized == {
+        "running": False,
+        "processed": 789,
+        "total": 789,
+        "current": "Indexation terminee",
+    }
+
+
+def test_conversation_size_bytes_returns_positive_value():
+    conversation = ConversationDetailModel(
+        id="conv-1",
+        title="Conversation de test",
+        updatedAt="2026-04-19T12:00:00Z",
+        draft="",
+        messages=[],
+    )
+
+    assert _conversation_size_bytes(conversation) > 0
+
+
+def test_artifact_size_bytes_returns_file_size_for_existing_vault_file(tmp_settings):
+    artifact_path = tmp_settings.vault / "obsirag" / "insights" / "demo.md"
+    artifact_path.parent.mkdir(parents=True, exist_ok=True)
+    artifact_path.write_text("demo insight", encoding="utf-8")
+
+    with patch("src.api.app.settings", tmp_settings):
+        assert _artifact_size_bytes("obsirag/insights/demo.md") == len("demo insight".encode("utf-8"))
+
+
+def test_get_note_resolves_short_slug_to_matching_file_path(tmp_settings):
+    service_manager = _StubServiceManager()
+    canonical_path = "Rapports-WUDD-ai/2026-04-11_les-dernieres-a_et-si-la-matiere-noire-n-etait-pas-nee-l.md"
+    note_payload = {
+        "file_path": canonical_path,
+        "title": "Second Big Bang noir",
+        "tags": ["Big-Bang-noir"],
+        "wikilinks": [],
+        "date_modified": "2026-04-11T09:35:59.334720",
+    }
+    service_manager.chroma.get_note_by_file_path.side_effect = lambda path: note_payload if path == canonical_path else None
+    service_manager.chroma.list_notes.return_value = [note_payload]
+    service_manager.chroma.get_backlinks.return_value = []
+
+    note_path = tmp_settings.vault / canonical_path
+    note_path.parent.mkdir(parents=True, exist_ok=True)
+    note_path.write_text("# Second Big Bang noir\n", encoding="utf-8")
+
+    with (
+        patch("src.api.app.settings", tmp_settings),
+        patch("src.api.app.get_service_manager", return_value=service_manager),
+    ):
+        client = TestClient(app)
+        response = client.get("/api/v1/notes/2026-04-11_les-dernieres-a_et-si-la-matiere-noire-n-etait-pas-nee-l")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["filePath"] == canonical_path
+    assert payload["title"] == "Second Big Bang noir"
+
+
+def test_related_note_from_note_includes_size_bytes(tmp_settings):
+    note_path = tmp_settings.vault / "Space" / "Artemis II.md"
+    note_path.parent.mkdir(parents=True, exist_ok=True)
+    note_path.write_text("Artemis II", encoding="utf-8")
+
+    with patch("src.api.app.settings", tmp_settings):
+        related = _related_note_from_note({
+            "file_path": "Space/Artemis II.md",
+            "title": "Artemis II",
+            "date_modified": "2026-04-19T14:35:00Z",
+        })
+
+    assert related.sizeBytes == len("Artemis II".encode("utf-8"))
 
 
 def test_delete_conversation_message_removes_target_message_and_previous_question(tmp_path: Path, tmp_settings):
@@ -655,6 +743,43 @@ def test_iter_answer_tokens_preserves_mermaid_markdown_whitespace():
     assert tokens[-1] == "```\n"
 
 
+def test_build_source_models_deduplicates_duplicate_sources_and_promotes_primary(tmp_settings):
+    sources = [
+        {
+            "metadata": {
+                "file_path": "Space/Artemis II.md",
+                "note_title": "Artemis II",
+                "is_primary": False,
+            },
+            "score": 0.61,
+        },
+        {
+            "metadata": {
+                "file_path": "./Space/Artemis II.md",
+                "note_title": " Artemis   II ",
+                "is_primary": True,
+            },
+            "score": 0.93,
+        },
+        {
+            "metadata": {
+                "file_path": "Space/Orion.md",
+                "note_title": "Orion",
+                "is_primary": False,
+            },
+            "score": 0.52,
+        },
+    ]
+
+    with patch("src.api.app.settings", tmp_settings):
+        source_models = _build_source_models(sources)
+
+    assert len(source_models) == 2
+    assert [item.filePath for item in source_models] == ["Space/Artemis II.md", "Space/Orion.md"]
+    assert source_models[0].isPrimary is True
+    assert source_models[0].score == 0.93
+
+
 def test_create_message_uses_fallback_worker_when_primary_worker_crashes(tmp_path: Path, tmp_settings):
     store = ApiConversationStore(tmp_path / "api" / "conversations.json")
     service_manager = _StubServiceManager()
@@ -709,6 +834,66 @@ def test_create_message_uses_fallback_worker_when_primary_worker_crashes(tmp_pat
     assert stored is not None
     assert len(stored.messages) == 2
     assert stored.messages[1].content == "Réponse via fallback lexical"
+
+
+def test_create_message_deduplicates_duplicate_sources_in_response(tmp_path: Path, tmp_settings):
+    store = ApiConversationStore(tmp_path / "api" / "conversations.json")
+    service_manager = _StubServiceManager()
+    worker_payload = {
+        "answer": "Réponse avec sources dédupliquées",
+        "sources": [
+            {
+                "metadata": {
+                    "file_path": "Space/Artemis II.md",
+                    "note_title": "Artemis II",
+                    "is_primary": False,
+                },
+                "score": 0.74,
+            },
+            {
+                "metadata": {
+                    "file_path": "./Space/Artemis II.md",
+                    "note_title": "Artemis II",
+                    "is_primary": True,
+                },
+                "score": 0.91,
+            },
+            {
+                "metadata": {
+                    "file_path": "Space/Orion.md",
+                    "note_title": "Orion",
+                    "is_primary": False,
+                },
+                "score": 0.67,
+            },
+        ],
+    }
+
+    with (
+        patch("src.api.app.settings", tmp_settings),
+        patch("src.api.app.conversation_store", store),
+        patch("src.api.app.get_service_manager", return_value=service_manager),
+        patch(
+            "src.api.app.subprocess.run",
+            return_value=subprocess.CompletedProcess(
+                args=["python", "-m", "src.api.chat_worker"],
+                returncode=0,
+                stdout=json.dumps(worker_payload, ensure_ascii=False),
+                stderr="",
+            ),
+        ),
+    ):
+        client = TestClient(app)
+        response = client.post("/api/v1/conversations/conv-source-dedupe/messages", json={"prompt": "Parle-moi d'Artemis II"})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert [item["filePath"] for item in payload["sources"]] == ["Space/Artemis II.md", "Space/Orion.md"]
+    assert payload["primarySource"]["filePath"] == "Space/Artemis II.md"
+
+    stored = store.get("conv-source-dedupe")
+    assert stored is not None
+    assert [item.filePath for item in stored.messages[1].sources] == ["Space/Artemis II.md", "Space/Orion.md"]
 
 
 def test_create_message_returns_streamlit_style_enrichment_panels(tmp_path: Path, tmp_settings):
@@ -848,6 +1033,84 @@ def test_create_message_keeps_ner_without_ddg_for_vault_answer(tmp_path: Path, t
     overview_mock.assert_not_called()
 
 
+def test_create_message_uses_autolearn_hybrid_answer_when_vault_response_is_weak(tmp_path: Path, tmp_settings):
+    store = ApiConversationStore(tmp_path / "api" / "conversations.json")
+    service_manager = _StubServiceManager()
+    worker_sources = [
+        {
+            "metadata": {
+                "file_path": "People/Ada.md",
+                "note_title": "Ada",
+                "is_primary": True,
+            },
+            "score": 0.87,
+        }
+    ]
+    service_manager.learner._is_weak_answer.side_effect = [True, False]
+    service_manager.learner._web_search.return_value = [
+        {
+            "title": "Britannica",
+            "href": "https://example.com/ada",
+            "body": "Ada Lovelace a publie des notes sur la machine analytique.",
+            "full_text": "Ada Lovelace a publie en 1843 des notes sur la machine analytique de Babbage.",
+            "date": "2026-04-16",
+        }
+    ]
+    service_manager.learner._build_web_search_query.return_value = "Ada Lovelace explication analyse histoire contexte"
+    service_manager.learner._snippets_relevant.return_value = True
+    service_manager.learner._question_answering._build_rag_context.return_value = ("Contexte coffre Ada", worker_sources)
+    service_manager.learner._question_answering._compose_web_answer.return_value = (
+        "Ada Lovelace a documente la machine analytique avec un apport hybride coffre et web.",
+        worker_sources,
+        service_manager.learner._web_search.return_value,
+        "Web + Coffre",
+    )
+    service_manager.learner._question_answering._is_grounded_web_answer.return_value = True
+
+    with (
+        patch("src.api.app.settings", tmp_settings),
+        patch("src.api.app.conversation_store", store),
+        patch("src.api.app.get_service_manager", return_value=service_manager),
+        patch(
+            "src.api.app.build_query_overview_from_results_sync",
+            return_value={
+                "query": "Ada Lovelace",
+                "search_query": "Ada Lovelace explication analyse histoire contexte",
+                "summary": "Vue hybride issue du pipeline autolearner.",
+                "sources": [{"title": "Britannica", "href": "https://example.com/ada", "body": "Ada Lovelace", "date": "2026-04-16"}],
+            },
+        ),
+        patch(
+            "src.api.app.subprocess.run",
+            return_value=subprocess.CompletedProcess(
+                args=["python", "-m", "src.api.chat_worker"],
+                returncode=0,
+                stdout=json.dumps(
+                    {
+                        "answer": "Je ne peux pas répondre de manière exhaustive à partir du coffre seul.",
+                        "sources": worker_sources,
+                    },
+                    ensure_ascii=False,
+                ),
+                stderr="",
+            ),
+        ),
+    ):
+        client = TestClient(app)
+        response = client.post("/api/v1/conversations/conv-hybrid/messages", json={"prompt": "Ada Lovelace"})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["content"].startswith("Ada Lovelace a documente")
+    assert payload["provenance"] == "hybrid"
+    assert payload["queryOverview"]["summary"] == "Vue hybride issue du pipeline autolearner."
+    assert payload["enrichmentPath"].startswith("autolearn-web:")
+
+    stored = store.get("conv-hybrid")
+    assert stored is not None
+    assert stored.messages[1].provenance == "hybrid"
+
+
 def test_stream_message_emits_streamlit_style_enrichment_panels(tmp_path: Path, tmp_settings):
     store = ApiConversationStore(tmp_path / "api" / "conversations.json")
     service_manager = _StubServiceManager()
@@ -917,6 +1180,82 @@ def test_stream_message_emits_streamlit_style_enrichment_panels(tmp_path: Path, 
         "Extraction des entites NER",
         "Finalisation de la reponse",
     ]
+
+
+def test_stream_message_uses_autolearn_hybrid_answer_when_web_enrichment_is_needed(tmp_path: Path, tmp_settings):
+    store = ApiConversationStore(tmp_path / "api" / "conversations.json")
+    service_manager = _StubServiceManager()
+    worker_sources = [
+        {
+            "metadata": {
+                "file_path": "People/Ada.md",
+                "note_title": "Ada",
+                "is_primary": True,
+            },
+            "score": 0.87,
+        }
+    ]
+    service_manager.learner._web_search.return_value = [
+        {
+            "title": "Britannica",
+            "href": "https://example.com/ada",
+            "body": "Ada Lovelace mathematician.",
+            "full_text": "Ada Lovelace published analytical engine notes in 1843.",
+            "date": "2026-04-16",
+        }
+    ]
+    service_manager.learner._build_web_search_query.return_value = "Ada Lovelace explication analyse histoire contexte"
+    service_manager.learner._snippets_relevant.return_value = True
+    service_manager.learner._is_weak_answer.side_effect = [True, False]
+    service_manager.learner._question_answering._build_rag_context.return_value = ("Contexte coffre Ada", worker_sources)
+    service_manager.learner._question_answering._compose_web_answer.return_value = (
+        "Ada Lovelace a lie le coffre et le web dans cette reponse enrichie.",
+        worker_sources,
+        service_manager.learner._web_search.return_value,
+        "Web + Coffre",
+    )
+    service_manager.learner._question_answering._is_grounded_web_answer.return_value = True
+
+    with (
+        patch("src.api.app.settings", tmp_settings),
+        patch("src.api.app.conversation_store", store),
+        patch("src.api.app.get_service_manager", return_value=service_manager),
+        patch(
+            "src.api.app.build_query_overview_from_results_sync",
+            return_value={
+                "query": "Ada Lovelace",
+                "search_query": "Ada Lovelace explication analyse histoire contexte",
+                "summary": "Vue hybride issue du pipeline autolearner.",
+                "sources": [{"title": "Britannica", "href": "https://example.com/ada", "body": "Ada Lovelace", "date": "2026-04-16"}],
+            },
+        ),
+        patch(
+            "src.api.app.subprocess.run",
+            return_value=subprocess.CompletedProcess(
+                args=["python", "-m", "src.api.chat_worker"],
+                returncode=0,
+                stdout=json.dumps(
+                    {
+                        "answer": "Je ne peux pas répondre de manière exhaustive à partir du coffre seul.",
+                        "sources": worker_sources,
+                    },
+                    ensure_ascii=False,
+                ),
+                stderr="",
+            ),
+        ),
+    ):
+        client = TestClient(app)
+        response = client.post("/api/v1/conversations/conv-stream-hybrid/messages/stream", json={"prompt": "Ada Lovelace"})
+
+    assert response.status_code == 200
+    assert "Recherche DDG" in response.text
+    assert "Ada Lovelace a lie le coffre et le web" in response.text
+
+    stored = store.get("conv-stream-hybrid")
+    assert stored is not None
+    assert stored.messages[1].provenance == "hybrid"
+    assert stored.messages[1].queryOverview is not None
 
 
 def test_graph_subgraph_returns_focused_neighbors(tmp_settings):
@@ -1054,6 +1393,59 @@ def test_explicit_web_search_returns_overview_and_entity_contexts(tmp_settings):
     assert payload["queryOverview"]["sources"][0]["domain"] == "example.com"
     assert payload["queryOverview"]["sources"][0]["publishedAt"] == "2026-04-16"
     assert payload["entityContexts"][0]["value"] == "Ada Lovelace"
+    assert payload["stats"]["tokens"] > 0
+    assert payload["stats"]["tps"] >= 0
+
+
+def test_explicit_web_search_prefers_autolearn_web_pipeline_when_available(tmp_settings):
+    service_manager = _StubServiceManager()
+    service_manager.learner.lookup_wuddai_entity_contexts.return_value = []
+    service_manager.learner._web_search.return_value = [
+        {
+            "title": "Britannica",
+            "href": "https://example.com/ada",
+            "body": "Ada Lovelace mathematician.",
+            "full_text": "Ada Lovelace full text from a trusted source.",
+            "date": "2026-04-16",
+        }
+    ]
+    service_manager.learner._build_web_search_query.return_value = "Ada Lovelace explication analyse histoire contexte"
+
+    with (
+        patch("src.api.app.settings", tmp_settings),
+        patch("src.api.app.get_service_manager", return_value=service_manager),
+        patch(
+            "src.api.app.build_query_overview_from_results_sync",
+            return_value={
+                "query": "Ada Lovelace",
+                "search_query": "Ada Lovelace explication analyse histoire contexte",
+                "summary": "Vue issue du pipeline autolearner.",
+                "sources": [{"title": "Britannica", "href": "https://example.com/ada", "body": "Ada Lovelace mathematician.", "date": "2026-04-16"}],
+            },
+        ) as autolearn_overview_mock,
+        patch("src.api.app.build_query_overview_sync") as ddg_overview_mock,
+    ):
+        client = TestClient(app)
+        response = client.post("/api/v1/web-search", json={"query": "Ada Lovelace"})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["queryOverview"]["summary"] == "Vue issue du pipeline autolearner."
+    autolearn_overview_mock.assert_called_once()
+    ddg_overview_mock.assert_not_called()
+
+
+def test_lookup_query_overview_falls_back_to_ddg_when_autolearn_returns_non_list(tmp_settings):
+    service_manager = _StubServiceManager()
+    service_manager.learner._web_search.return_value = MagicMock()
+
+    with (
+        patch("src.api.app.build_query_overview_sync", return_value={"summary": "fallback"}) as overview_mock,
+    ):
+        result = __import__("src.api.app", fromlist=["_lookup_query_overview"])._lookup_query_overview("Ada Lovelace", service_manager)
+
+    assert result == {"summary": "fallback"}
+    overview_mock.assert_called_once_with("Ada Lovelace", service_manager.llm)
 
 
 def test_create_message_enriches_entity_contexts_with_line_number_and_relation_explanation(tmp_path: Path, tmp_settings):

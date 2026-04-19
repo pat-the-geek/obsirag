@@ -1,6 +1,7 @@
 import { Fragment } from 'react';
 import { Linking, ScrollView, StyleSheet, Text, View } from 'react-native';
 
+import { AppTheme, buildAppTheme, useAppTheme } from '../../theme/app-theme';
 import { EntityContext } from '../../types/domain';
 import { HttpMarkdownImage } from '../markdown/http-markdown-image';
 import { MermaidDiagram } from '../markdown/mermaid-diagram';
@@ -39,6 +40,8 @@ type InlineChunk =
   | { type: 'inline-code'; value: string };
 
 export function MarkdownNote({ markdown, onOpenNote, onOpenTag, variant = 'default', tone = 'light', entityHighlights }: MarkdownNoteProps) {
+  const activeTheme = useAppTheme();
+  const theme = activeTheme.resolvedMode === tone ? activeTheme : buildAppTheme(tone === 'dark' ? 'dark' : 'light');
   const blocks = parseMarkdownBlocks(markdown);
 
   return (
@@ -56,7 +59,7 @@ export function MarkdownNote({ markdown, onOpenNote, onOpenTag, variant = 'defau
               key={`md-${index}`}
               style={[
                 styles.heading,
-                tone === 'dark' ? styles.headingDark : styles.headingLight,
+                { color: theme.colors.text },
                 variant === 'article' ? styles.articleHeading : null,
                 block.level === 1 ? styles.h1 : block.level === 2 ? styles.h2 : styles.h3,
                 variant === 'article' && block.level === 1 ? styles.articleH1 : null,
@@ -64,7 +67,7 @@ export function MarkdownNote({ markdown, onOpenNote, onOpenTag, variant = 'defau
                 variant === 'article' && block.level > 2 ? styles.articleH3 : null,
               ]}
             >
-              {renderInlineChunks(block.content, onOpenNote, onOpenTag, tone, entityHighlights)}
+              {renderInlineChunks(block.content, onOpenNote, onOpenTag, theme, tone, entityHighlights)}
             </Text>
           );
         }
@@ -75,14 +78,14 @@ export function MarkdownNote({ markdown, onOpenNote, onOpenTag, variant = 'defau
               <Text
                 style={[
                   styles.bulletMarker,
-                  tone === 'dark' ? styles.bulletMarkerDark : styles.bulletMarkerLight,
+                  { color: theme.colors.textMuted },
                   block.ordered ? styles.orderedMarker : null,
                 ]}
               >
                 {block.marker}
               </Text>
-              <Text style={[styles.paragraph, tone === 'dark' ? styles.paragraphDark : styles.paragraphLight, variant === 'article' ? styles.articleParagraph : null]}>
-                {renderInlineChunks(block.content, onOpenNote, onOpenTag, tone, entityHighlights)}
+              <Text style={[styles.paragraph, { color: theme.colors.text }, variant === 'article' ? styles.articleParagraph : null]}>
+                {renderInlineChunks(block.content, onOpenNote, onOpenTag, theme, tone, entityHighlights)}
               </Text>
             </View>
           );
@@ -90,8 +93,8 @@ export function MarkdownNote({ markdown, onOpenNote, onOpenTag, variant = 'defau
 
         if (block.type === 'quote') {
           return (
-            <View key={`md-${index}`} style={[styles.quoteBox, tone === 'dark' ? styles.quoteBoxDark : styles.quoteBoxLight]}>
-              <Text style={[styles.quoteText, tone === 'dark' ? styles.quoteTextDark : styles.quoteTextLight]}>{renderInlineChunks(block.content, onOpenNote, onOpenTag, tone, entityHighlights)}</Text>
+            <View key={`md-${index}`} style={[styles.quoteBox, { borderLeftColor: theme.colors.quoteBorder, backgroundColor: theme.colors.quoteSurface }]}>
+              <Text style={[styles.quoteText, { color: theme.colors.textMuted }]}>{renderInlineChunks(block.content, onOpenNote, onOpenTag, theme, tone, entityHighlights)}</Text>
             </View>
           );
         }
@@ -113,15 +116,16 @@ export function MarkdownNote({ markdown, onOpenNote, onOpenTag, variant = 'defau
               contentContainerStyle={styles.tableScrollContent}
               testID="markdown-table"
             >
-              <View style={[styles.table, tone === 'dark' ? styles.tableDark : styles.tableLight]}>
-                <View style={[styles.tableRow, styles.tableHeaderRow, tone === 'dark' ? styles.tableHeaderRowDark : styles.tableHeaderRowLight]}>
+              <View style={[styles.table, { borderColor: theme.colors.tableBorder, backgroundColor: theme.colors.tableSurface }]}>
+                <View style={[styles.tableRow, styles.tableHeaderRow, { borderBottomColor: theme.colors.tableBorder, backgroundColor: theme.colors.tableHeaderSurface }]}>
                   {block.headers.map((cell, cellIndex) => (
                     <View key={`header-${cellIndex}`} style={[styles.tableCell, styles.tableHeaderCell, { width: block.widths[cellIndex] ?? 150 }]}>
                       {renderTableCellLines(cell, {
+                        theme,
                         tone,
                         textStyle: [
                           styles.tableHeaderText,
-                          tone === 'dark' ? styles.tableHeaderTextDark : styles.tableHeaderTextLight,
+                          { color: theme.colors.text },
                           block.aligns[cellIndex] === 'center'
                             ? styles.tableTextCenter
                             : block.aligns[cellIndex] === 'right'
@@ -138,12 +142,13 @@ export function MarkdownNote({ markdown, onOpenNote, onOpenTag, variant = 'defau
                 {block.rows.map((row, rowIndex) => (
                   <View key={`row-${rowIndex}`} style={[styles.tableRow, rowIndex % 2 === 0 ? styles.tableRowOdd : styles.tableRowEven]}>
                     {row.map((cell, cellIndex) => (
-                      <View key={`row-${rowIndex}-cell-${cellIndex}`} style={[styles.tableCell, { width: block.widths[cellIndex] ?? 150 }]}>
+                      <View key={`row-${rowIndex}-cell-${cellIndex}`} style={[styles.tableCell, { width: block.widths[cellIndex] ?? 150, borderRightColor: theme.colors.tableBorder }]}> 
                         {renderTableCellLines(cell, {
+                          theme,
                           tone,
                           textStyle: [
                             styles.tableCellText,
-                            tone === 'dark' ? styles.tableCellTextDark : styles.tableCellTextLight,
+                            { color: theme.colors.text },
                             block.aligns[cellIndex] === 'center'
                               ? styles.tableTextCenter
                               : block.aligns[cellIndex] === 'right'
@@ -165,8 +170,8 @@ export function MarkdownNote({ markdown, onOpenNote, onOpenTag, variant = 'defau
 
         if (block.type === 'code') {
           return (
-            <View key={`md-${index}`} style={[styles.codeBox, tone === 'dark' ? styles.codeBoxDark : null]}>
-              <Text style={styles.codeText}>{block.content}</Text>
+            <View key={`md-${index}`} style={[styles.codeBox, { backgroundColor: theme.colors.codeSurface, borderColor: theme.colors.border }, tone === 'dark' ? styles.codeBoxDark : null]}>
+              <Text style={[styles.codeText, { color: theme.colors.codeText }]}>{block.content}</Text>
             </View>
           );
         }
@@ -176,12 +181,12 @@ export function MarkdownNote({ markdown, onOpenNote, onOpenTag, variant = 'defau
             <Text
               style={[
                 styles.paragraph,
-                tone === 'dark' ? styles.paragraphDark : styles.paragraphLight,
+                { color: theme.colors.text },
                 variant === 'article' ? styles.articleParagraph : null,
                 variant === 'article' && isFirstParagraph ? styles.articleLead : null,
               ]}
             >
-              {renderInlineChunks(block.content, onOpenNote, onOpenTag, tone, entityHighlights)}
+              {renderInlineChunks(block.content, onOpenNote, onOpenTag, theme, tone, entityHighlights)}
             </Text>
           </Fragment>
         );
@@ -444,6 +449,7 @@ function renderTableCellLines(
     onOpenNote?: (value: string) => void;
     onOpenTag?: (value: string) => void;
     textStyle: object | object[];
+    theme: AppTheme;
     tone: 'light' | 'dark';
     entityHighlights?: EntityHighlight[];
   },
@@ -453,7 +459,7 @@ function renderTableCellLines(
     <View testID={lines.length > 1 ? 'markdown-table-cell-multiline' : undefined} style={styles.tableCellInner}>
       {lines.map((line, index) => (
         <Text key={`table-line-${index}`} style={[options.textStyle, index > 0 ? styles.tableCellLineBreak : null]}>
-          {renderInlineChunks(line, options.onOpenNote, options.onOpenTag, options.tone, options.entityHighlights)}
+          {renderInlineChunks(line, options.onOpenNote, options.onOpenTag, options.theme, options.tone, options.entityHighlights)}
         </Text>
       ))}
     </View>
@@ -466,7 +472,9 @@ export function renderEntityHighlightedText(
   entityHighlights?: EntityHighlight[],
   baseTextStyle?: object | object[],
   keyPrefix = 'entity-highlight',
+  theme?: AppTheme,
 ) {
+  const resolvedTheme = theme && theme.resolvedMode === tone ? theme : buildAppTheme(tone === 'dark' ? 'dark' : 'light');
   const segments = splitEntityHighlightSegments(value, entityHighlights);
 
   return segments.map((segment, index) => {
@@ -486,7 +494,7 @@ export function renderEntityHighlightedText(
       <Text
         key={key}
         testID="markdown-inline-entity-highlight"
-        style={[baseTextStyle, styles.entityHighlightBase, getEntityHighlightStyle(segment.entityType, tone)]}
+        style={[baseTextStyle, styles.entityHighlightBase, getEntityHighlightStyle(segment.entityType, resolvedTheme)]}
       >
         {segment.value}
       </Text>
@@ -498,13 +506,15 @@ function renderInlineChunks(
   value: string,
   onOpenNote?: (value: string) => void,
   onOpenTag?: (value: string) => void,
+  theme?: AppTheme,
   tone: 'light' | 'dark' = 'light',
   entityHighlights?: EntityHighlight[],
 ) {
+  const resolvedTheme = theme && theme.resolvedMode === tone ? theme : buildAppTheme(tone === 'dark' ? 'dark' : 'light');
   const chunks = parseInlineChunks(value);
   return chunks.map((chunk, index) => {
     if (chunk.type === 'text') {
-      return <Fragment key={`chunk-${index}`}>{renderEntityHighlightedText(chunk.value, tone, entityHighlights, undefined, `chunk-${index}`)}</Fragment>;
+      return <Fragment key={`chunk-${index}`}>{renderEntityHighlightedText(chunk.value, tone, entityHighlights, undefined, `chunk-${index}`, resolvedTheme)}</Fragment>;
     }
 
     if (chunk.type === 'tag') {
@@ -512,7 +522,7 @@ function renderInlineChunks(
         <Text
           key={`chunk-${index}`}
           testID="markdown-inline-tag"
-          style={[styles.tagText, tone === 'dark' ? styles.tagTextDark : styles.tagTextLight]}
+          style={[styles.tagText, { color: resolvedTheme.colors.tagText, backgroundColor: resolvedTheme.colors.tagSurface }]}
           onPress={onOpenTag ? () => onOpenTag(chunk.value.slice(1)) : undefined}
         >
           {chunk.value}
@@ -521,16 +531,16 @@ function renderInlineChunks(
     }
 
     if (chunk.type === 'strong') {
-      return <Fragment key={`chunk-${index}`}>{renderEntityHighlightedText(chunk.value, tone, entityHighlights, styles.strongText, `chunk-${index}`)}</Fragment>;
+      return <Fragment key={`chunk-${index}`}>{renderEntityHighlightedText(chunk.value, tone, entityHighlights, styles.strongText, `chunk-${index}`, resolvedTheme)}</Fragment>;
     }
 
     if (chunk.type === 'emphasis') {
-      return <Fragment key={`chunk-${index}`}>{renderEntityHighlightedText(chunk.value, tone, entityHighlights, styles.emphasisText, `chunk-${index}`)}</Fragment>;
+      return <Fragment key={`chunk-${index}`}>{renderEntityHighlightedText(chunk.value, tone, entityHighlights, styles.emphasisText, `chunk-${index}`, resolvedTheme)}</Fragment>;
     }
 
     if (chunk.type === 'inline-code') {
       return (
-        <Text key={`chunk-${index}`} style={styles.inlineCodeText}>
+        <Text key={`chunk-${index}`} style={[styles.inlineCodeText, { color: resolvedTheme.colors.codeText, backgroundColor: resolvedTheme.colors.codeSurface }]}>
           {chunk.value}
         </Text>
       );
@@ -538,14 +548,14 @@ function renderInlineChunks(
 
     if (chunk.type === 'note-link') {
       return (
-        <Text key={`chunk-${index}`} style={styles.linkText} onPress={() => onOpenNote?.(chunk.target)}>
+        <Text key={`chunk-${index}`} style={[styles.linkText, { color: resolvedTheme.colors.link }]} onPress={() => onOpenNote?.(chunk.target)}>
           {chunk.label}
         </Text>
       );
     }
 
     return (
-      <Text key={`chunk-${index}`} style={styles.linkText} onPress={() => { void Linking.openURL(chunk.href); }}>
+      <Text key={`chunk-${index}`} style={[styles.linkText, { color: resolvedTheme.colors.link }]} onPress={() => { void Linking.openURL(chunk.href); }}>
         {chunk.label}
       </Text>
     );
@@ -664,23 +674,23 @@ function isWordBoundary(value: string, index: number) {
   return !/[\p{L}\p{N}_]/u.test(value[index] ?? '');
 }
 
-function getEntityHighlightStyle(entityType: string, tone: 'light' | 'dark') {
+function getEntityHighlightStyle(entityType: string, theme: AppTheme) {
   const normalized = entityType.trim().toLocaleLowerCase('fr');
 
   if (normalized.includes('person')) {
-    return tone === 'dark' ? styles.entityHighlightPersonDark : styles.entityHighlightPersonLight;
+    return { color: theme.colors.entityPersonText, backgroundColor: theme.colors.entityPersonSurface };
   }
   if (normalized.includes('org')) {
-    return tone === 'dark' ? styles.entityHighlightOrganizationDark : styles.entityHighlightOrganizationLight;
+    return { color: theme.colors.entityOrganizationText, backgroundColor: theme.colors.entityOrganizationSurface };
   }
   if (normalized.includes('loc') || normalized.includes('place') || normalized.includes('geo')) {
-    return tone === 'dark' ? styles.entityHighlightLocationDark : styles.entityHighlightLocationLight;
+    return { color: theme.colors.entityLocationText, backgroundColor: theme.colors.entityLocationSurface };
   }
   if (normalized.includes('date') || normalized.includes('time')) {
-    return tone === 'dark' ? styles.entityHighlightTemporalDark : styles.entityHighlightTemporalLight;
+    return { color: theme.colors.entityTemporalText, backgroundColor: theme.colors.entityTemporalSurface };
   }
 
-  return tone === 'dark' ? styles.entityHighlightConceptDark : styles.entityHighlightConceptLight;
+  return { color: theme.colors.entityConceptText, backgroundColor: theme.colors.entityConceptSurface };
 }
 
 function splitInlineTags(value: string): InlineChunk[] {

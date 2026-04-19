@@ -18,6 +18,23 @@ from src.config import settings
 from src.logger import log_token_usage
 
 
+def clear_mlx_cache() -> None:
+    try:
+        import mlx.core as mx
+
+        clear_cache = getattr(mx, "clear_cache", None)
+        if callable(clear_cache):
+            clear_cache()
+            return
+
+        metal = getattr(mx, "metal", None)
+        metal_clear_cache = getattr(metal, "clear_cache", None)
+        if callable(metal_clear_cache):
+            metal_clear_cache()
+    except Exception:
+        pass
+
+
 class MlxClient:
     def __init__(self) -> None:
         self._model = None
@@ -57,8 +74,7 @@ class MlxClient:
             self._prefix_warm_offset = 0
             try:
                 gc.collect()
-                import mlx.core as mx
-                mx.metal.clear_cache()
+                clear_mlx_cache()
             except Exception:
                 pass
             logger.info(f"Modèle MLX déchargé : {self._model_name}")

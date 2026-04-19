@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import time
 from typing import TYPE_CHECKING
 
@@ -10,6 +11,8 @@ if TYPE_CHECKING:
 
 
 class AutoLearnQuestionAnswering:
+    _HARD_CLAIM_RE = re.compile(r"\b(?:\d{1,4}(?:[.,]\d+)?%?|20\d{2}|19\d{2})\b")
+
     def __init__(self, owner: "AutoLearner") -> None:
         self._owner = owner
 
@@ -36,7 +39,9 @@ class AutoLearnQuestionAnswering:
                 logger.warning(
                     f"Auto-learner : aucune question générée pour '{title}' (tentative {attempt})"
                 )
-                return None
+                if sleep_between_questions > 0 and attempt < max_retries:
+                    time.sleep(sleep_between_questions)
+                continue
 
             question = questions[0]
             asked_questions.append(question)
@@ -67,7 +72,11 @@ class AutoLearnQuestionAnswering:
                 step=f"Tentative {attempt} — Recherche web : {question[:60]}…",
             )
             web_results = self._owner._web_search(question)
-            web_snippets = [result["body"] for result in web_results if result.get("body")]
+            web_snippets = [
+                result.get("full_text") or result.get("body", "")
+                for result in web_results
+                if result.get("full_text") or result.get("body")
+            ]
             if web_snippets and self._owner._snippets_relevant(question, web_snippets):
                 rag_context, sources = self._build_rag_context(question)
                 answer, sources, web_results, provenance = self._compose_web_answer(
@@ -77,8 +86,15 @@ class AutoLearnQuestionAnswering:
                     web_snippets,
                     web_results,
                 )
+                if provenance != "Coffre" and not self._is_grounded_web_answer(answer, web_snippets):
+                    logger.info(
+                        f"Auto-learner : réponse web jugée insuffisamment ancrée, repli coffre pour '{question[:60]}'"
+                    )
+                    answer, sources = self._owner._rag.query(question, exclude_obsirag_generated=True)
+                    web_results = []
+                    provenance = "Coffre"
             else:
-                answer, sources = self._owner._rag.query(question)
+                answer, sources = self._owner._rag.query(question, exclude_obsirag_generated=True)
                 web_results = []
                 provenance = "Coffre"
 
@@ -109,7 +125,7 @@ class AutoLearnQuestionAnswering:
             return "abort", None
 
     def _build_rag_context(self, question: str) -> tuple[str, list[dict]]:
-        _, sources = self._owner._rag.query(question)
+        _, sources = self._owner._rag.query(question, exclude_obsirag_generated=True)
         rag_context = (
             "\n\n".join(source.get("text", "")[:400] for source in sources[:2])
             if sources
@@ -135,8 +151,8 @@ class AutoLearnQuestionAnswering:
             web_context=fitted_web,
         )
         try:
-            answer = self._owner._rag._llm.chat(
-                [{"role": "user", "content": prompt}],
+            answer = self._owner._chat_user_visible_french(
+                prompt,
                 temperature=0.3,
                 max_tokens=self._owner._MAX_TOKENS_RESPONSE,
                 operation="autolearn_enrich",
@@ -145,5 +161,25 @@ class AutoLearnQuestionAnswering:
             logger.info(f"Auto-learner : réponse web pour '{question[:60]}'")
             return answer, sources, web_results, provenance
         except Exception:
-            answer, rag_sources = self._owner._rag.query(question)
+            answer, rag_sources = self._owner._rag.query(question, exclude_obsirag_generated=True)
             return answer, rag_sources, [], "Coffre"
+
+    @classmethod
+    def _is_grounded_web_answer(cls, answer: str, web_snippets: list[str]) -> bool:
+        normalized_answer = (answer or "").strip().lower()
+        if not normalized_answer:
+            return False
+
+        claims = {
+            match.group(0).replace(",", ".")
+            for match in cls._HARD_CLAIM_RE.finditer(normalized_answer)
+        }
+        if not claims:
+            return True
+
+        normalized_context = "\n".join(snippet.lower().replace(",", ".") for snippet in web_snippets if snippet)
+        if not normalized_context:
+            return False
+
+        unsupported_claims = [claim for claim in claims if claim not in normalized_context]
+        return len(unsupported_claims) < len(claims)

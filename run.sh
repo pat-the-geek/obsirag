@@ -27,11 +27,6 @@ set +o allexport
 
 STREAMLIT_SERVER_ADDRESS="${STREAMLIT_SERVER_ADDRESS:-127.0.0.1}"
 
-# Remplace host.docker.internal → localhost (héritage Docker)
-if [[ "${OLLAMA_BASE_URL:-}" == *"host.docker.internal"* ]]; then
-  export OLLAMA_BASE_URL="${OLLAMA_BASE_URL/host.docker.internal/localhost}"
-fi
-
 export APP_DATA_DIR="${APP_DATA_DIR:-$SCRIPT_DIR/data}"
 export LOG_DIR="${LOG_DIR:-$SCRIPT_DIR/logs}"
 export PYTHONPATH="$SCRIPT_DIR"

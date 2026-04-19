@@ -18,11 +18,11 @@ Options :
   --no-llm         Nettoyage simple : retire le suffixe _YYYYMMDD, underscores → espaces
   --sleep <s>      Pause entre appels LLM en secondes (défaut : 5)
 
-Usage (dans Docker) :
-  docker exec obsirag python3 /app/scripts/rename_insights.py
-  docker exec obsirag python3 /app/scripts/rename_insights.py --dry-run
-  docker exec obsirag python3 /app/scripts/rename_insights.py --dir insights --sleep 2
-  docker exec obsirag python3 /app/scripts/rename_insights.py --no-llm --dry-run
+Usage :
+    .venv/bin/python scripts/rename_insights.py
+    .venv/bin/python scripts/rename_insights.py --dry-run
+    .venv/bin/python scripts/rename_insights.py --dir insights --sleep 2
+    .venv/bin/python scripts/rename_insights.py --no-llm --dry-run
 """
 from __future__ import annotations
 
@@ -33,7 +33,7 @@ import sys
 import time
 from pathlib import Path
 
-sys.path.insert(0, "/app")
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from src.config import settings
 
 # ── Helpers frontmatter ────────────────────────────────────────────────────────

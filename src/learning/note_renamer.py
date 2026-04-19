@@ -25,8 +25,8 @@ class AutoLearnNoteRenamer:
             f"Sinon, réponds uniquement avec le nouveau titre en français."
         )
         try:
-            result = self._owner._rag._llm.chat(
-                [{"role": "user", "content": prompt}],
+            result = self._owner._chat_user_visible_french(
+                prompt,
                 temperature=0.2,
                 max_tokens=50,
                 operation="autolearn_rename",

@@ -36,6 +36,28 @@ class AutoLearnSynapseDiscovery:
     def synapse_pair_key(file_path_a: str, file_path_b: str) -> str:
         return "|||".join(sorted([file_path_a, file_path_b]))
 
+    @staticmethod
+    def extract_synapse_note_refs(content: str) -> tuple[str | None, str | None]:
+        explicit_refs = re.findall(r"^\*\*Note source ([AB]) :\*\* \[\[(.+?)\]\]", content, re.MULTILINE)
+        if len(explicit_refs) >= 2:
+            ordered = {label: ref.strip() for label, ref in explicit_refs}
+            return ordered.get("A"), ordered.get("B")
+
+        section_refs = [
+            match.group(1).strip()
+            for match in re.finditer(r"^## \[\[(.+?)\]\]", content, re.MULTILINE)
+        ]
+        if len(section_refs) >= 2:
+            return section_refs[0], section_refs[1]
+        return None, None
+
+    @staticmethod
+    def extract_synapse_similarity(content: str) -> float | None:
+        match = re.search(r"^\*\*Similarité sémantique :\*\*\s*(\d{1,3})%", content, re.MULTILINE)
+        if not match:
+            return None
+        return max(0.0, min(1.0, int(match.group(1)) / 100))
+
     def discover_synapses(self, all_notes: list[dict]) -> None:
         quota = self._owner._get_settings().autolearn_synapse_per_run
         if quota <= 0:
@@ -73,7 +95,45 @@ class AutoLearnSynapseDiscovery:
                 except Exception as exc:
                     logger.warning(f"Synapse {file_path_a} ↔ {file_path_b} : {exc}")
 
-    def create_synapse_artifact(self, note_a: dict, note_b_info: dict) -> Path:
+    def build_synapse_artifact_content(
+        self,
+        note_a: dict,
+        note_b_info: dict,
+        explanation: str,
+        *,
+        excerpt_a: str,
+    ) -> str:
+        title_a = note_a.get("title", note_a["file_path"])
+        title_b = note_b_info["title"]
+        score = note_b_info["score"]
+
+        lines = [
+            f"# Synapse : {title_a} ↔ {title_b}",
+            "",
+            f"**Similarité sémantique :** {score:.0%}  ",
+            f"**Découverte le :** {datetime.now(UTC).strftime('%Y-%m-%d %H:%M')} UTC",
+            f"**Note source A :** [[{str(note_a.get('file_path', '')).removesuffix('.md')}]]  ",
+            f"**Note source B :** [[{str(note_b_info.get('file_path', '')).removesuffix('.md')}]]",
+            "",
+            "---",
+            "",
+            "## Connexion identifiée",
+            "",
+            explanation,
+            "",
+            "---",
+            "",
+            f"## [[{title_a}]]",
+            "",
+            f"> {excerpt_a[:600]}…",
+            "",
+            f"## [[{title_b}]]",
+            "",
+            f"> {note_b_info['excerpt'][:600]}…",
+        ]
+        return "\n".join(lines)
+
+    def create_synapse_artifact(self, note_a: dict, note_b_info: dict, *, output_path: Path | None = None) -> Path:
         title_a = note_a.get("title", note_a["file_path"])
         title_b = note_b_info["title"]
         score = note_b_info["score"]
@@ -91,8 +151,8 @@ class AutoLearnSynapseDiscovery:
             f"l'utilisateur pourrait se poser pour approfondir ce lien. Réponds en français."
         )
 
-        explanation = self._owner._rag._llm.chat(
-            [{"role": "user", "content": prompt}],
+        explanation = self._owner._chat_user_visible_french(
+            prompt,
             temperature=0.6,
             max_tokens=2048,
             operation="autolearn_synapse",
@@ -103,30 +163,16 @@ class AutoLearnSynapseDiscovery:
         date_str = datetime.now(UTC).strftime("%Y%m%d")
         out_dir = self._owner._get_settings().synapses_dir
         out_dir.mkdir(parents=True, exist_ok=True)
-        out_path = out_dir / f"{safe_a}__{safe_b}_{date_str}.md"
-
-        lines = [
-            f"# Synapse : {title_a} ↔ {title_b}",
-            "",
-            f"**Similarité sémantique :** {score:.0%}  ",
-            f"**Découverte le :** {datetime.now(UTC).strftime('%Y-%m-%d %H:%M')} UTC",
-            "",
-            "---",
-            "",
-            "## Connexion identifiée",
-            "",
-            explanation,
-            "",
-            "---",
-            "",
-            f"## [[{title_a}]]",
-            "",
-            f"> {excerpt_a[:600]}…",
-            "",
-            f"## [[{title_b}]]",
-            "",
-            f"> {excerpt_b[:600]}…",
-        ]
-        out_path.write_text("\n".join(lines), encoding="utf-8")
+        out_path = output_path or out_dir / f"{safe_a}__{safe_b}_{date_str}.md"
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text(
+            self.build_synapse_artifact_content(
+                note_a,
+                note_b_info,
+                explanation,
+                excerpt_a=excerpt_a,
+            ),
+            encoding="utf-8",
+        )
         logger.info(f"Synapse créée : {title_a} ↔ {title_b} ({score:.0%})")
         return out_path

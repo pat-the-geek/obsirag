@@ -11,7 +11,7 @@ class Settings(BaseSettings):
     # Coffre Obsidian (lecture, + écriture dans obsirag/insights et obsirag/synthesis)
     vault_path: str = "/vault"
 
-    # Données système ObsiRAG — volume Docker (HORS coffre, pas de sync iCloud)
+    # Données système ObsiRAG — hors coffre, pas de sync iCloud
     app_data_dir: str = "/app/data"
 
     # MLX-LM (génération locale Apple Silicon — moteur LLM principal)
@@ -110,11 +110,11 @@ class Settings(BaseSettings):
         """Nom du coffre tel qu'Obsidian le connaît."""
         return self.obsidian_vault_name or Path(self.vault_path).name
 
-    # -- Données système (volume Docker, hors coffre) --
+    # -- Données système (hors coffre) --
 
     @property
     def data_dir(self) -> Path:
-        """Répertoire système ObsiRAG — volume Docker, invisible pour Obsidian."""
+        """Répertoire système ObsiRAG — invisible pour Obsidian."""
         return Path(self.app_data_dir)
 
     @property

@@ -666,6 +666,38 @@ class ChromaStore:
             results = self.search_by_keyword(title, top_k=top_k)
         return ChromaStore._filter_retrieval_chunks(results, top_k=top_k)
 
+    def get_chunks_by_file_path(self, file_path: str, top_k: int = 10) -> list[dict]:
+        """Récupère les chunks d'une note via son chemin exact dans le coffre."""
+        if not self.native_api_available():
+            return []
+        try:
+            raw = ChromaStore._collection_get(
+                self,
+                where={"file_path": file_path},
+                include=["documents", "metadatas"],
+                limit=max(1, top_k * 4),
+            )
+        except Exception:
+            return []
+
+        results = []
+        for chunk_id, doc, meta in zip(
+            raw.get("ids", []),
+            raw.get("documents", []),
+            raw.get("metadatas", []),
+        ):
+            if ChromaStore._is_retrieval_artifact_path((meta or {}).get("file_path", "")):
+                continue
+            results.append({
+                "chunk_id": chunk_id,
+                "text": doc,
+                "metadata": meta or {},
+                "score": 0.99,
+            })
+
+        results.sort(key=lambda item: int((item.get("metadata") or {}).get("chunk_index") or 0))
+        return ChromaStore._filter_retrieval_chunks(results, top_k=top_k)
+
 
     def count(self) -> int:
         now = time.monotonic()

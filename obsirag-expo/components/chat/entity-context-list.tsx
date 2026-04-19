@@ -1,5 +1,6 @@
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
+import { useAppTheme } from '../../theme/app-theme';
 import { EntityContext } from '../../types/domain';
 import { MarkdownNote } from '../notes/markdown-note';
 
@@ -10,22 +11,23 @@ type EntityContextListProps = {
 };
 
 export function EntityContextList({ entities, isOpen = false, onToggleOpen }: EntityContextListProps) {
+  const theme = useAppTheme();
   if (!entities?.length) {
     return null;
   }
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { backgroundColor: theme.colors.surfaceMuted, borderColor: theme.colors.border }]}>
       <Pressable testID="entity-contexts-panel-toggle" style={styles.header} onPress={onToggleOpen}>
         <View style={styles.headerCopy}>
-          <Text style={styles.title}>Entités détectées</Text>
-          <Text style={styles.caption}>{entities.length} entité{entities.length > 1 ? 's' : ''}</Text>
+          <Text style={[styles.title, { color: theme.colors.text }]}>Entités détectées</Text>
+          <Text style={[styles.caption, { color: theme.colors.textMuted }]}>{entities.length} entité{entities.length > 1 ? 's' : ''}</Text>
         </View>
-        <Text style={styles.chevron}>{isOpen ? 'Masquer' : 'Afficher'}</Text>
+        <Text style={[styles.chevron, { color: theme.colors.primary }]}>{isOpen ? 'Masquer' : 'Afficher'}</Text>
       </Pressable>
       {isOpen ? (
         <View testID="entity-contexts-panel-content" style={styles.content}>
-          <MarkdownNote markdown={buildEntityContextsMarkdown(entities)} tone="light" />
+          <MarkdownNote markdown={buildEntityContextsMarkdown(entities)} tone={theme.isDark ? 'dark' : 'light'} />
         </View>
       ) : null}
     </View>
@@ -75,9 +77,7 @@ const styles = StyleSheet.create({
   container: {
     gap: 8,
     borderRadius: 16,
-    backgroundColor: '#fbf8f3',
     borderWidth: 1,
-    borderColor: '#ded5c9',
     padding: 12,
   },
   header: {
@@ -92,14 +92,11 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 13,
     fontWeight: '700',
-    color: '#3a2c1f',
   },
   caption: {
     fontSize: 12,
-    color: '#7a6855',
   },
   chevron: {
-    color: '#8a562b',
     fontSize: 12,
     fontWeight: '700',
   },

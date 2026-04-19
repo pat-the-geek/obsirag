@@ -45,6 +45,7 @@ let mockConversationData: ConversationDetail | undefined = {
   id: 'conv-1',
   title: 'Conversation test',
   updatedAt: '2026-04-16T12:00:00Z',
+  sizeBytes: 4096,
   draft: '',
   messages: [
     {
@@ -181,6 +182,7 @@ describe('ConversationDetailScreen', () => {
       id: 'conv-1',
       title: 'Conversation test',
       updatedAt: '2026-04-16T12:00:00Z',
+      sizeBytes: 4096,
       draft: '',
       messages: [
         {
@@ -239,6 +241,8 @@ describe('ConversationDetailScreen', () => {
     const tree = renderer.create(<ConversationDetailScreen />);
 
     expect(textTreeContains(tree, 'Rechercher sur le web')).toBe(true);
+    expect(textTreeContains(tree, 'Modifie le')).toBe(true);
+    expect(textTreeContains(tree, '4 ko')).toBe(true);
     expect(tree.root.findByProps({ testID: 'message-composer-secondary-action' })).toBeTruthy();
     expect(tree.root.findByProps({ testID: 'message-composer-tertiary-action' })).toBeTruthy();
 

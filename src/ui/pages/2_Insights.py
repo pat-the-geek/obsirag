@@ -201,7 +201,7 @@ with tab_synthesis:
                 st.markdown(render_note_badge(path_str), unsafe_allow_html=True)
                 st.markdown(_read_md_file(path_str, mtime))
 
-# ---- Historique des requêtes (volume Docker) ----
+# ---- Historique des requêtes (données système locales) ----
 with tab_queries:
     q_file = settings.queries_file
     queries = list_query_history_entries(q_file)

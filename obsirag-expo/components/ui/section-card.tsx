@@ -1,6 +1,8 @@
 import { PropsWithChildren } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 
+import { useAppTheme } from '../../theme/app-theme';
+
 type SectionCardProps = PropsWithChildren<{
   title: string;
   subtitle?: string;
@@ -8,12 +10,14 @@ type SectionCardProps = PropsWithChildren<{
 }>;
 
 export function SectionCard({ children, title, subtitle, headerAccessory }: SectionCardProps) {
+  const theme = useAppTheme();
+
   return (
-    <View style={styles.card}>
+    <View style={[styles.card, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border, shadowColor: theme.colors.shadow }]}>
       <View style={styles.headerRow}>
         <View style={styles.titleBlock}>
-          <Text style={styles.title}>{title}</Text>
-          {subtitle ? <Text style={styles.subtitle}>{subtitle}</Text> : null}
+          <Text style={[styles.title, { color: theme.colors.text }]}>{title}</Text>
+          {subtitle ? <Text style={[styles.subtitle, { color: theme.colors.textMuted }]}>{subtitle}</Text> : null}
         </View>
         {headerAccessory ? <View style={styles.headerAccessory}>{headerAccessory}</View> : null}
       </View>
@@ -27,12 +31,9 @@ const styles = StyleSheet.create({
     position: 'relative',
     overflow: 'visible',
     borderRadius: 18,
-    backgroundColor: '#fffdfa',
     borderWidth: 1,
-    borderColor: '#d8cfc0',
     padding: 16,
     gap: 10,
-    shadowColor: '#47331a',
     shadowOpacity: 0.08,
     shadowRadius: 10,
     shadowOffset: { width: 0, height: 4 },

@@ -25,9 +25,6 @@ src/ui/pages/__pycache__/
 # Données ObsiRAG générées (dans le coffre, pas dans le repo)
 # (le dossier obsirag/data est dans le vault, pas ici)
 
-# Docker
-.dockerignore
-
 # Claude / IDE
 .claude/
 # src/ui/static/ is tracked (favicons)

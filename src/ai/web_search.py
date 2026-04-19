@@ -561,9 +561,37 @@ def _score_search_results(original_query: str, candidate_query: str, results: li
 def _build_snippets(results: list[dict]) -> str:
     """Construit le bloc de snippets web utilisé pour synthèse et contrôle qualité."""
     return "\n\n".join(
-        f"**{r.get('title', '')}** ({r.get('href', '')})\n{r.get('body', '')}"
+        f"**{r.get('title', '')}** ({r.get('href', '')})\n{r.get('full_text') or r.get('body', '')}"
         for r in results
     )
+
+
+def build_query_overview_from_results_sync(
+    query: str,
+    search_query: str,
+    results: list[dict],
+    llm,
+    *,
+    max_results: int = 8,
+) -> dict:
+    """Construit une vue d'ensemble à partir de résultats web déjà récupérés."""
+    if not results:
+        return {}
+
+    limited_results = [item for item in results if isinstance(item, dict) and item.get("href")][:max_results]
+    if not limited_results:
+        return {}
+
+    summary = _synthesize_ai_overview(query, search_query, limited_results, llm)
+    if not summary:
+        return {}
+
+    return {
+        "query": query,
+        "search_query": search_query,
+        "summary": summary,
+        "sources": limited_results,
+    }
 
 def _synthesize(query: str, results: list[dict], llm) -> str | None:
     """Synthétise les résultats web avec le LLM. Retourne le texte ou None."""
@@ -704,10 +732,14 @@ def _format_entity_contexts_markdown(entity_contexts: list[dict]) -> str:
             lines.append("")
 
         notes = context.get("notes") or []
-        if notes:
+        filtered_notes = [
+            note for note in notes
+            if not str(note.get("file_path") or "").replace("\\", "/").startswith("obsirag/")
+        ]
+        if filtered_notes:
             lines.append("### Notes liées")
             lines.append("")
-            for note in notes:
+            for note in filtered_notes:
                 note_title = note.get("title") or note.get("file_path") or "Note"
                 note_path = note.get("file_path") or ""
                 if note_path:
@@ -852,17 +884,7 @@ def build_query_overview_sync(query: str, llm, *, max_results: int = 8) -> dict:
     instant_results = _ddg_instant_answer_search(search_query, max_results=min(4, max_results))
     ddg_results = _ddg_search(search_query, max_results=max_results)
     results = _merge_search_results(instant_results, ddg_results, max_results=max_results)
-    if not results:
-        return {}
-    summary = _synthesize_ai_overview(query, search_query, results, llm)
-    if not summary:
-        return {}
-    return {
-        "query": query,
-        "search_query": search_query,
-        "summary": summary,
-        "sources": results[:max_results],
-    }
+    return build_query_overview_from_results_sync(query, search_query, results, llm, max_results=max_results)
 
 
 # ---------------------------------------------------------------------------

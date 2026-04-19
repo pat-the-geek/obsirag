@@ -6,6 +6,19 @@ import { MessageBubble } from '../../components/chat/message-bubble';
 import { MarkdownNote } from '../../components/notes/markdown-note';
 import { ChatMessage } from '../../types/domain';
 
+function flattenStyle(value: unknown): Array<Record<string, unknown>> {
+  if (!value) {
+    return [];
+  }
+  if (Array.isArray(value)) {
+    return value.flatMap((item) => flattenStyle(item));
+  }
+  if (typeof value === 'object') {
+    return [value as Record<string, unknown>];
+  }
+  return [];
+}
+
 function findPressableByLabel(tree: renderer.ReactTestRenderer, label: string) {
   return tree.root.findAll((node) => {
     if (typeof node.props.onPress !== 'function') {
@@ -63,16 +76,11 @@ describe('MessageBubble', () => {
 
     const tree = renderer.create(<MessageBubble message={message} />);
     const shell = tree.root.findByProps({ testID: 'user-message-shell' });
-    const bubble = tree.root.findAllByType(View).find((node) => {
-      const style = node.props.style;
-      if (!Array.isArray(style)) {
-        return false;
-      }
-      return style.some((item) => item?.backgroundColor === '#191919');
-    });
+    const bubble = tree.root.findByProps({ testID: 'user-message-bubble' });
+    const bubbleStyle = flattenStyle(bubble.props.style);
 
     expect(shell.props.style).toEqual(expect.arrayContaining([expect.objectContaining({ width: '100%', alignItems: 'flex-end' })]));
-    expect(bubble?.props.style).toEqual(
+    expect(bubbleStyle).toEqual(
       expect.arrayContaining([expect.objectContaining({ alignSelf: 'flex-end', marginLeft: 'auto' })]),
     );
   });
@@ -247,15 +255,10 @@ describe('MessageBubble', () => {
     };
 
     const tree = renderer.create(<MessageBubble message={message} />);
-    const bubble = tree.root.findAllByType(View).find((node) => {
-      const style = node.props.style;
-      if (!Array.isArray(style)) {
-        return false;
-      }
-      return style.some((item) => item?.backgroundColor === '#f4f1ea');
-    });
+    const bubble = tree.root.findByProps({ testID: 'assistant-message-bubble' });
+    const bubbleStyle = flattenStyle(bubble.props.style);
 
-    expect(bubble).toBeTruthy();
+    expect(bubbleStyle).toEqual(expect.arrayContaining([expect.objectContaining({ backgroundColor: '#f4f1ea' })]));
     expect(tree.root.findByType(MarkdownNote).props.tone).toBe('light');
   });
 

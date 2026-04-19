@@ -99,11 +99,43 @@ class TestAnswerPromptingHelpers:
 
 @pytest.mark.unit
 class TestArtifactWriterHelpers:
+    def test_filter_source_paths_prefers_user_sources_over_obsirag_artifacts(self):
+        assert AutoLearnArtifactWriter.filter_source_paths([
+            "obsirag/synapses/demo.md",
+            "folder/note.md",
+            "folder/note.md",
+        ]) == ["folder/note.md"]
+
+    def test_render_qa_sections_falls_back_to_source_note_when_sources_are_only_obsirag(self):
+        writer = AutoLearnArtifactWriter(MagicMock())
+
+        lines = writer.render_qa_sections(
+            [{
+                "question": "Q ?",
+                "answer": "R",
+                "sources": ["obsirag/synapses/demo.md", "obsirag/web_insights/demo.md"],
+            }],
+            provenance="Coffre",
+            source_note_path="folder/source.md",
+        )
+
+        assert "*Notes consultées : [[folder/source]]*  " in lines
+
+    def test_normalize_provenance_label_maps_mixed_forms(self):
+        assert AutoLearnArtifactWriter.normalize_provenance_label("Web + Coffre") == "Coffre et Web"
+        assert AutoLearnArtifactWriter.normalize_provenance_label("Coffre + Web") == "Coffre et Web"
+        assert AutoLearnArtifactWriter.normalize_provenance_label("Web") == "Web"
+
     def test_compute_global_provenance_defaults_to_coffre(self):
         assert AutoLearnArtifactWriter.compute_global_provenance([
             {"provenance": "Coffre"},
             {},
         ]) == "Coffre"
+
+    def test_compute_global_provenance_normalizes_web_plus_coffre(self):
+        assert AutoLearnArtifactWriter.compute_global_provenance([
+            {"provenance": "Web + Coffre"},
+        ]) == "Coffre et Web"
 
     def test_upsert_entity_gallery_replaces_existing_section(self):
         owner = MagicMock()
@@ -164,6 +196,38 @@ class TestArtifactWriterHelpers:
         owner._metrics.increment.assert_called_once_with("autolearn_insights_appended_total")
         assert "## Question 2" in path.read_text(encoding="utf-8")
 
+    def test_append_to_insight_uses_existing_note_source_as_fallback_for_obsirag_only_sources(self, tmp_settings):
+        owner = MagicMock()
+        owner._get_settings.return_value = tmp_settings
+        owner._merge_frontmatter_tags.side_effect = lambda content, _tags: content
+        owner._build_entity_image_gallery.return_value = ""
+        owner._synthesize_web_sources.return_value = ""
+        owner._metrics = MagicMock()
+        writer = AutoLearnArtifactWriter(owner)
+
+        tmp_settings.max_insight_size_bytes = 10_000
+        path = tmp_settings.insights_dir / "2026-04" / "Insight.md"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            "# Insights\n\n**Note source :** [[folder/source]]  \n**Générée le :** old\n**Provenance :** Coffre\n\n## Question 1\n\n> Q\n\nA\n",
+            encoding="utf-8",
+        )
+
+        writer.append_to_insight(
+            path,
+            [{"question": "Q2 ?", "answer": "Réponse", "sources": ["obsirag/synapses/demo.md"]}],
+            ["person/alice"],
+            "Coffre",
+        )
+
+        updated = path.read_text(encoding="utf-8")
+        assert "*Notes consultées : [[folder/source]]*" in updated
+
+    def test_extract_source_note_ref_returns_wikilink_target(self):
+        content = "# Insights\n\n**Note source :** [[folder/source]]  \n"
+
+        assert AutoLearnArtifactWriter.extract_source_note_ref(content) == "folder/source"
+
 
 @pytest.mark.unit
 class TestWebEnrichmentHelpers:
@@ -190,11 +254,15 @@ class TestWebEnrichmentHelpers:
                 ]
 
         module.DDGS = _FakeDDGS
-        with patch.dict("sys.modules", {"ddgs": module}):
+        with (
+            patch.dict("sys.modules", {"ddgs": module}),
+            patch.object(AutoLearnWebEnrichment, "fetch_url_content", return_value="full content"),
+        ):
             results = enrichment.web_search("question")
 
         owner._metrics.increment.assert_called_once_with("autolearn_web_search_fallback_total")
         assert len(results) == 2
+        assert results[0]["full_text"] == "full content"
 
     def test_web_search_counts_error_when_provider_raises(self):
         owner = MagicMock()
@@ -279,3 +347,19 @@ class TestSynapseDiscoveryHelpers:
             discovery.discover_synapses([{"file_path": "a.md", "title": "A", "wikilinks": []}])
 
         warning.assert_called_once()
+
+    def test_extract_synapse_note_refs_prefers_explicit_sources(self):
+        content = (
+            "# Synapse\n\n"
+            "**Note source A :** [[folder/a]]  \n"
+            "**Note source B :** [[folder/b]]\n\n"
+            "## [[Titre A]]\n\n"
+            "## [[Titre B]]\n"
+        )
+
+        assert AutoLearnSynapseDiscovery.extract_synapse_note_refs(content) == ("folder/a", "folder/b")
+
+    def test_extract_synapse_note_refs_falls_back_to_section_links(self):
+        content = "## [[Titre A]]\n\nTexte\n\n## [[Titre B]]\n"
+
+        assert AutoLearnSynapseDiscovery.extract_synapse_note_refs(content) == ("Titre A", "Titre B")

@@ -38,4 +38,22 @@ describe('InsightListItem', () => {
     expect(tagCalls).toEqual(['nasa']);
     expect(openCalls).toEqual(['insight-1']);
   });
+
+  it('renders modified date and size metadata when available', () => {
+    const item: InsightItem = {
+      id: 'insight-2',
+      title: 'Rapport Artemis',
+      filePath: 'obsirag/insights/rapport-artemis.md',
+      kind: 'insight',
+      tags: [],
+      dateModified: '2026-04-19T14:35:00Z',
+      sizeBytes: 12_480,
+    };
+
+    const tree = renderer.create(<InsightListItem item={item} />);
+    const joined = tree.root.findAllByType(Text).map((node) => String(Array.isArray(node.props.children) ? node.props.children.join('') : node.props.children ?? '')).join(' ');
+
+    expect(joined).toContain('Modifie le');
+    expect(joined).toContain('ko');
+  });
 });

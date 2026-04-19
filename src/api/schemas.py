@@ -115,6 +115,7 @@ class RelatedNoteModel(BaseModel):
     title: str
     filePath: str
     dateModified: str | None = None
+    sizeBytes: int | None = None
 
 
 class DdgKnowledgeModel(BaseModel):
@@ -162,6 +163,7 @@ class ConversationSummaryModel(BaseModel):
     title: str
     preview: str
     updatedAt: str
+    sizeBytes: int | None = None
     turnCount: int
     messageCount: int
     isCurrent: bool | None = None
@@ -171,6 +173,7 @@ class ConversationDetailModel(BaseModel):
     id: str
     title: str
     updatedAt: str
+    sizeBytes: int | None = None
     draft: str = ""
     messages: list[ChatMessageModel] = Field(default_factory=list)
     lastGenerationStats: GenerationStatsModel | None = None
@@ -210,6 +213,7 @@ class NoteDetailModel(BaseModel):
     backlinks: list[RelatedNoteModel] = Field(default_factory=list)
     links: list[RelatedNoteModel] = Field(default_factory=list)
     dateModified: str | None = None
+    sizeBytes: int | None = None
     noteType: str | None = None
     outline: list[dict[str, int | str]] = Field(default_factory=list)
 
@@ -229,6 +233,7 @@ class InsightItemModel(BaseModel):
     provenance: Literal["vault", "web", "hybrid"] | None = None
     tags: list[str] = Field(default_factory=list)
     dateModified: str | None = None
+    sizeBytes: int | None = None
     excerpt: str | None = None
 
 

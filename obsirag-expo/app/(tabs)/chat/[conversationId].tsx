@@ -10,6 +10,9 @@ import { Screen } from '../../../components/ui/screen';
 import { useConversation, useDeleteConversationMessage, useExplicitWebSearch, useGenerateConversationReport, useSaveConversation, useStreamMessage } from '../../../features/chat/use-chat';
 import { EntityContext, ChatMessage, SourceRef } from '../../../types/domain';
 import { useAppStore } from '../../../store/app-store';
+import { useAppTheme } from '../../../theme/app-theme';
+import { formatMetadataDate, formatSizeBytes, joinMetadataParts } from '../../../utils/format-display';
+import { buildNoteRoute } from '../../../utils/note-route';
 
 const PENDING_ASSISTANT_IDS = new Set(['streaming-assistant', 'pending-web-assistant']);
 
@@ -31,6 +34,7 @@ export default function ConversationDetailScreen() {
   );
   const draft = useAppStore((state) => (conversationId ? state.drafts[conversationId] ?? '' : ''));
   const setDraft = useAppStore((state) => state.setDraft);
+  const theme = useAppTheme();
   const { data, isLoading, isRefetching, refetch } = useConversation(conversationId);
   const messages = data?.messages ?? [];
   const streamMessage = useStreamMessage(conversationId ?? '');
@@ -70,6 +74,10 @@ export default function ConversationDetailScreen() {
   const asideEntityMaxHeight = Math.max(360, height - Math.max(24, insets.top + 18) - 18);
   const isGenerationStepActive = streamMessage.isPending && activeProgressSteps.some((step) => isGenerationStep(step));
   const scrollRef = useRef<ScrollView | null>(null);
+  const conversationMetadata = joinMetadataParts([
+    data?.updatedAt ? `Modifie le ${formatMetadataDate(data.updatedAt)}` : null,
+    formatSizeBytes(data?.sizeBytes),
+  ]);
 
   const scrollThreadToBottom = () => {
     if (process.env.NODE_ENV === 'test' || typeof requestAnimationFrame !== 'function') {
@@ -137,20 +145,21 @@ export default function ConversationDetailScreen() {
 
   if (!conversationId || isLoading || !data) {
     return (
-      <Screen backgroundColor="#f4f1ea">
-        <ActivityIndicator />
+      <Screen backgroundColor={theme.colors.background}>
+        <ActivityIndicator color={theme.colors.primary} />
       </Screen>
     );
   }
 
   return (
-    <Screen scroll scrollRef={scrollRef} refreshing={isRefetching} onRefresh={refetch} backgroundColor="#f4f1ea" contentStyle={styles.screenContent}>
+    <Screen scroll scrollRef={scrollRef} refreshing={isRefetching} onRefresh={refetch} backgroundColor={theme.colors.background} contentStyle={styles.screenContent}>
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} keyboardVerticalOffset={Math.max(12, insets.bottom)} style={styles.keyboardShell}>
       <View style={[styles.shell, { paddingBottom: Math.max(14, insets.bottom + 8) }]}>
         <View style={styles.header}>
           <View style={styles.headerCopy}>
-            <Text style={styles.headerTitle}>{data.title}</Text>
-            <Text style={styles.headerSubtitle}>Conversation centree, reponses developpees et actions contextuelles en bas d'ecran.</Text>
+            <Text style={[styles.headerTitle, { color: theme.colors.text }]}>{data.title}</Text>
+            {conversationMetadata ? <Text style={[styles.headerMeta, { color: theme.colors.textSubtle }]}>{conversationMetadata}</Text> : null}
+            <Text style={[styles.headerSubtitle, { color: theme.colors.textMuted }]}>Conversation centree, reponses developpees et actions contextuelles en bas d'ecran.</Text>
           </View>
         </View>
 
@@ -160,20 +169,20 @@ export default function ConversationDetailScreen() {
               <ConversationEntitySidebar
                 entities={aggregatedEntityContexts}
                 compact
-                onOpenNote={(notePath) => router.push(`/(tabs)/note/${encodeURIComponent(notePath)}`)}
+                onOpenNote={(notePath) => router.push(buildNoteRoute(notePath))}
                 onOpenTag={(tag) => router.push(`/(tabs)/graph?tag=${encodeURIComponent(tag)}`)}
               />
             ) : null}
 
             <View style={[styles.thread, { paddingBottom: 28 + insets.bottom }]}>
               {messages.length === 0 ? (
-                <View style={styles.emptyStateCard}>
-                  <Text style={styles.emptyStateTitle}>Exemples de questions</Text>
-                  <Text style={styles.emptyStateBody}>Le chat Streamlit propose des points d'entree rapides. La version Expo reprend ici des suggestions pour lancer un premier tour utile.</Text>
+                <View style={[styles.emptyStateCard, { backgroundColor: theme.colors.surfaceMuted, borderColor: theme.colors.border }]}>
+                  <Text style={[styles.emptyStateTitle, { color: theme.colors.text }]}>Exemples de questions</Text>
+                  <Text style={[styles.emptyStateBody, { color: theme.colors.textMuted }]}>Le chat Streamlit propose des points d'entree rapides. La version Expo reprend ici des suggestions pour lancer un premier tour utile.</Text>
                   <View style={styles.emptyStateActions}>
                     {quickActions.map((item) => (
-                      <Pressable key={item} style={styles.emptyStateActionButton} onPress={() => setDraft(conversationId, item)}>
-                        <Text style={styles.emptyStateActionText}>{item}</Text>
+                      <Pressable key={item} style={[styles.emptyStateActionButton, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]} onPress={() => setDraft(conversationId, item)}>
+                        <Text style={[styles.emptyStateActionText, { color: theme.colors.text }]}>{item}</Text>
                       </Pressable>
                     ))}
                   </View>
@@ -188,9 +197,9 @@ export default function ConversationDetailScreen() {
                     message={message}
                     highlightEntities={aggregatedEntityContexts}
                     onSuggestWebSearch={(query) => explicitWebSearch.mutate(query)}
-                    onOpenNote={(notePath) => router.push(`/(tabs)/note/${encodeURIComponent(notePath)}`)}
+                    onOpenNote={(notePath) => router.push(buildNoteRoute(notePath))}
                     onOpenTag={(tag) => router.push(`/(tabs)/graph?tag=${encodeURIComponent(tag)}`)}
-                    onOpenPrimarySource={(notePath) => router.push(`/(tabs)/note/${encodeURIComponent(notePath)}`)}
+                    onOpenPrimarySource={(notePath) => router.push(buildNoteRoute(notePath))}
                     onDeleteMessage={confirmDeleteMessage}
                     onReusePrompt={(query) => setDraft(conversationId, query)}
                     {...(() => {
@@ -203,11 +212,11 @@ export default function ConversationDetailScreen() {
               })}
             </View>
 
-            <View style={[styles.dock, Platform.OS === 'web' ? styles.dockWeb : null]}>
+            <View style={[styles.dock, { backgroundColor: theme.colors.background }, Platform.OS === 'web' ? [styles.dockWeb, { borderTopColor: theme.colors.border, shadowColor: theme.colors.shadow }] : null]}>
               {(responseActionPending || generateConversationReport.isPending) ? (
-                <View style={styles.progressCard}>
-                  <Text style={styles.progressTitle}>Progression du traitement</Text>
-                  {activeProgressLabel ? <Text style={styles.progressCurrent}>{activeProgressLabel}</Text> : null}
+                <View style={[styles.progressCard, { backgroundColor: theme.colors.surfaceMuted, borderColor: theme.colors.border }]}>
+                  <Text style={[styles.progressTitle, { color: theme.colors.text }]}>Progression du traitement</Text>
+                  {activeProgressLabel ? <Text style={[styles.progressCurrent, { color: theme.colors.primary }]}>{activeProgressLabel}</Text> : null}
                   <View style={styles.progressList}>
                     {activeProgressSteps.map((step, index) => {
                       const isLast = index === activeProgressSteps.length - 1;
@@ -215,10 +224,10 @@ export default function ConversationDetailScreen() {
                       const showGenerationActivity = (isLast && isGenerationStep(step) && isGenerationStepActive) || generateConversationReport.isPending;
                       return (
                         <View key={`${step}-${index}`} style={styles.progressItem}>
-                          <View style={[styles.progressDot, isLast ? styles.progressDotActive : null]} />
+                          <View style={[styles.progressDot, { backgroundColor: theme.colors.textSubtle }, isLast ? [styles.progressDotActive, { backgroundColor: theme.colors.primary }] : null]} />
                           <View style={styles.progressTextRow}>
-                            <Text style={[styles.progressText, isLast ? styles.progressTextActive : null]}>{step}</Text>
-                            <Text style={[styles.progressActivityGlyph, showGenerationActivity ? styles.progressActivityGlyphActive : null]}>
+                            <Text style={[styles.progressText, { color: theme.colors.textMuted }, isLast ? [styles.progressTextActive, { color: theme.colors.text }] : null]}>{step}</Text>
+                            <Text style={[styles.progressActivityGlyph, showGenerationActivity ? [styles.progressActivityGlyphActive, { color: theme.colors.primary }] : null]}>
                               {showGenerationActivity ? GENERATION_ACTIVITY_FRAMES[generationActivityFrame] : ' '}
                             </Text>
                           </View>
@@ -228,9 +237,9 @@ export default function ConversationDetailScreen() {
                   </View>
                 </View>
               ) : null}
-              {explicitWebSearch.isPending ? <Text style={styles.statusText}>Recherche sur le web en cours...</Text> : null}
+              {explicitWebSearch.isPending ? <Text style={[styles.statusText, { color: theme.colors.textMuted }]}>Recherche sur le web en cours...</Text> : null}
               {streamMessage.error ? (
-                <Text style={styles.errorText}>
+                <Text style={[styles.errorText, { color: theme.colors.warningText }] }>
                   Erreur: {streamMessage.error instanceof Error ? streamMessage.error.message : 'generation indisponible'}
                 </Text>
               ) : null}
@@ -263,7 +272,7 @@ export default function ConversationDetailScreen() {
                     return;
                   }
                   generateConversationReport.mutate(conversationId, {
-                    onSuccess: (result) => router.push(`/(tabs)/note/${encodeURIComponent(result.path)}`),
+                    onSuccess: (result) => router.push(buildNoteRoute(result.path)),
                     onError: (error) => Alert.alert('Rapport impossible', error instanceof Error ? error.message : 'Erreur inconnue'),
                   });
                 }}
@@ -278,7 +287,7 @@ export default function ConversationDetailScreen() {
             <ConversationEntitySidebar
               entities={aggregatedEntityContexts}
               maxHeight={asideEntityMaxHeight}
-              onOpenNote={(notePath) => router.push(`/(tabs)/note/${encodeURIComponent(notePath)}`)}
+              onOpenNote={(notePath) => router.push(buildNoteRoute(notePath))}
               onOpenTag={(tag) => router.push(`/(tabs)/graph?tag=${encodeURIComponent(tag)}`)}
             />
           ) : null}
@@ -366,13 +375,15 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   headerTitle: {
-    color: '#1f160c',
     fontSize: 22,
     fontWeight: '700',
   },
   headerSubtitle: {
-    color: '#6f5d49',
     lineHeight: 20,
+  },
+  headerMeta: {
+    fontSize: 12,
+    lineHeight: 18,
   },
   thread: {
     paddingTop: 12,
@@ -380,19 +391,15 @@ const styles = StyleSheet.create({
   },
   emptyStateCard: {
     borderRadius: 18,
-    backgroundColor: '#252525',
     borderWidth: 1,
-    borderColor: '#343434',
     padding: 16,
     gap: 10,
   },
   emptyStateTitle: {
-    color: '#f3f3f3',
     fontSize: 18,
     fontWeight: '700',
   },
   emptyStateBody: {
-    color: '#b5b5b5',
     lineHeight: 20,
   },
   emptyStateActions: {
@@ -400,21 +407,17 @@ const styles = StyleSheet.create({
   },
   emptyStateActionButton: {
     borderRadius: 14,
-    backgroundColor: '#1d1d1d',
     borderWidth: 1,
-    borderColor: '#343434',
     paddingHorizontal: 14,
     paddingVertical: 12,
   },
   emptyStateActionText: {
-    color: '#f0f0f0',
     lineHeight: 20,
   },
   dock: {
     flexShrink: 0,
     gap: 10,
     paddingTop: 8,
-    backgroundColor: '#f4f1ea',
   },
   dockWeb: {
     position: 'sticky' as 'absolute',
@@ -422,27 +425,21 @@ const styles = StyleSheet.create({
     zIndex: 10,
     paddingBottom: 12,
     borderTopWidth: 1,
-    borderTopColor: '#d8cfc0',
-    shadowColor: '#47331a',
     shadowOpacity: 0.08,
     shadowRadius: 16,
     shadowOffset: { width: 0, height: -6 },
   },
   progressCard: {
     borderRadius: 16,
-    backgroundColor: '#242424',
     borderWidth: 1,
-    borderColor: '#353535',
     padding: 12,
     gap: 8,
   },
   progressTitle: {
-    color: '#f3f3f3',
     fontSize: 13,
     fontWeight: '700',
   },
   progressCurrent: {
-    color: '#d9c19a',
     fontSize: 13,
     fontWeight: '600',
   },
@@ -464,17 +461,12 @@ const styles = StyleSheet.create({
     width: 8,
     height: 8,
     borderRadius: 4,
-    backgroundColor: '#5f5f5f',
   },
-  progressDotActive: {
-    backgroundColor: '#d9c19a',
-  },
+  progressDotActive: {},
   progressText: {
-    color: '#aaaaaa',
     fontSize: 13,
   },
   progressTextActive: {
-    color: '#f1f1f1',
     fontWeight: '600',
   },
   progressActivityGlyph: {
@@ -484,15 +476,11 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     textAlign: 'center',
   },
-  progressActivityGlyphActive: {
-    color: '#d9c19a',
-  },
+  progressActivityGlyphActive: {},
   errorText: {
-    color: '#f0b36a',
     fontSize: 13,
   },
   statusText: {
-    color: '#6f5d49',
     fontSize: 13,
   },
 });

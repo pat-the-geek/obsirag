@@ -220,7 +220,7 @@ class TestServiceManager:
         assert manager.indexing_status["running"] is False
         assert manager.indexing_status["processed"] == 1
         assert manager.indexing_status["total"] == 3
-        assert manager.indexing_status["current"] == "note.md"
+        assert manager.indexing_status["current"] == "Indexation terminee"
 
     def test_initial_index_resets_running_flag_on_error(self):
         manager = ServiceManager.__new__(ServiceManager)
@@ -231,3 +231,4 @@ class TestServiceManager:
         ServiceManager._initial_index(manager)
 
         assert manager.indexing_status["running"] is False
+        assert manager.indexing_status["current"] == "Indexation terminee"

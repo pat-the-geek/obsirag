@@ -5,6 +5,7 @@ export type ConversationSummary = {
   title: string;
   preview: string;
   updatedAt: string;
+  sizeBytes?: number;
   turnCount: number;
   messageCount: number;
   isCurrent?: boolean;
@@ -44,6 +45,7 @@ export type RelatedNote = {
   title: string;
   filePath: string;
   dateModified?: string;
+  sizeBytes?: number;
 };
 
 export type DdgKnowledge = {
@@ -90,6 +92,7 @@ export type ConversationDetail = {
   id: string;
   title: string;
   updatedAt: string;
+  sizeBytes?: number;
   draft: string;
   messages: ChatMessage[];
   lastGenerationStats?: GenerationStats;
@@ -105,6 +108,7 @@ export type NoteDetail = {
   backlinks: RelatedNote[];
   links: RelatedNote[];
   dateModified?: string;
+  sizeBytes?: number;
   noteType?: string;
   outline?: Array<{ level: number; title: string; line: number }>;
 };
@@ -124,6 +128,7 @@ export type InsightItem = {
   provenance?: 'vault' | 'web' | 'hybrid';
   tags: string[];
   dateModified?: string;
+  sizeBytes?: number;
   excerpt?: string;
 };
 

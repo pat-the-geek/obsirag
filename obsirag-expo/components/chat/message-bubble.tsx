@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Animated, Easing, Pressable, StyleSheet, Text, View } from 'react-native';
 
+import { useAppTheme } from '../../theme/app-theme';
 import { ChatMessage, EntityContext } from '../../types/domain';
 import { MarkdownNote, renderEntityHighlightedText } from '../notes/markdown-note';
 import { EntityContextList } from './entity-context-list';
@@ -35,6 +36,7 @@ export function MessageBubble({
   onOpenPrimarySource,
   onDeleteMessage,
 }: MessageBubbleProps) {
+  const theme = useAppTheme();
   const isUser = message.role === 'user';
   const revealProgress = useRef(new Animated.Value(isUser || process.env.NODE_ENV === 'test' ? 1 : 0)).current;
   const [sourcesOpen, setSourcesOpen] = useState(false);
@@ -55,6 +57,14 @@ export function MessageBubble({
   );
   const displayedAssistantContentRef = useRef(displayedAssistantContent);
   const [pendingFrameIndex, setPendingFrameIndex] = useState(0);
+  const assistantTone = theme.isDark ? 'dark' : 'light';
+  const userBubbleBackground = theme.isDark ? theme.colors.primaryMuted : '#191919';
+  const userBubbleBorder = theme.isDark ? theme.colors.primary : '#2d2d2d';
+  const userTextColor = theme.isDark ? theme.colors.primaryText : '#f1f1f1';
+  const assistantBubbleBackground = theme.isDark ? theme.colors.surface : '#f4f1ea';
+  const assistantBubbleBorder = theme.isDark ? theme.colors.border : '#ddd4c8';
+  const queryOverviewBackground = theme.isDark ? theme.colors.surfaceMuted : '#fbf8f3';
+  const queryOverviewBorder = theme.isDark ? theme.colors.border : '#ded5c9';
 
   useEffect(() => {
     displayedAssistantContentRef.current = displayedAssistantContent;
@@ -148,22 +158,30 @@ export function MessageBubble({
           testID={isUser ? 'user-message-shell' : 'assistant-reveal-shell'}
           style={[assistantRevealStyle, isUser ? styles.userBubbleShell : null]}
         >
-          <View style={[styles.base, isUser ? styles.userBubble : styles.assistantBubble]}>
+          <View
+            testID={isUser ? 'user-message-bubble' : 'assistant-message-bubble'}
+            style={[
+              styles.base,
+              isUser
+                ? [styles.userBubble, { backgroundColor: userBubbleBackground, borderColor: userBubbleBorder }]
+                : [styles.assistantBubble, { backgroundColor: assistantBubbleBackground, borderColor: assistantBubbleBorder }],
+            ]}
+          >
             {isUser ? (
-              <Text style={styles.userContent}>{renderEntityHighlightedText(message.content, 'dark', highlightEntities, undefined, `user-${message.id}`)}</Text>
+              <Text style={[styles.userContent, { color: userTextColor }]}>{renderEntityHighlightedText(message.content, 'dark', highlightEntities, undefined, `user-${message.id}`, theme)}</Text>
             ) : isPendingAssistant && !displayedAssistantContent.trim() ? (
               <View testID="assistant-pending-state" style={styles.pendingState}>
                 <View style={styles.pendingTitleRow}>
-                  <Text style={styles.pendingTitle}>Réponse en préparation</Text>
-                  <Text style={styles.pendingGlyph}>{PENDING_RESPONSE_FRAMES[pendingFrameIndex]}</Text>
+                  <Text style={[styles.pendingTitle, { color: theme.colors.text }]}>Réponse en préparation</Text>
+                  <Text style={[styles.pendingGlyph, { color: theme.colors.textSubtle }]}>{PENDING_RESPONSE_FRAMES[pendingFrameIndex]}</Text>
                 </View>
-                <Text style={styles.pendingCaption}>{message.timeline?.[message.timeline.length - 1] ?? 'Traitement en cours'}</Text>
+                <Text style={[styles.pendingCaption, { color: theme.colors.textMuted }]}>{message.timeline?.[message.timeline.length - 1] ?? 'Traitement en cours'}</Text>
               </View>
             ) : (
               <MarkdownNote
                 markdown={displayedAssistantContent}
                 variant="article"
-                tone="light"
+                tone={assistantTone}
                 {...(highlightEntities ? { entityHighlights: highlightEntities } : {})}
                 {...(onOpenNote ? { onOpenNote } : {})}
                 {...(onOpenTag ? { onOpenTag } : {})}
@@ -189,15 +207,18 @@ export function MessageBubble({
       ) : null}
       {!isUser && hasRenderableQueryOverview ? (
         <Animated.View style={assistantRevealStyle}>
-          <View testID="message-query-overview-response" style={[styles.base, styles.followUpBubble]}>
+          <View
+            testID="message-query-overview-response"
+            style={[styles.base, styles.followUpBubble, { backgroundColor: assistantBubbleBackground, borderColor: assistantBubbleBorder }]}
+          >
             <View style={styles.followUpHeader}>
-              <Text style={styles.assistantRole}>ObsiRAG</Text>
-              <Text style={styles.followUpLabel}>Vue d'ensemble DDG</Text>
+              <Text style={[styles.assistantRole, { color: theme.colors.text }]}>ObsiRAG</Text>
+              <Text style={[styles.followUpLabel, { color: theme.colors.textMuted }]}>Vue d'ensemble DDG</Text>
             </View>
-            <View style={styles.queryOverviewBox}>
+            <View style={[styles.queryOverviewBox, { backgroundColor: queryOverviewBackground, borderColor: queryOverviewBorder }]}>
               <MarkdownNote
                 markdown={displayedAssistantContent}
-                tone="light"
+                tone={assistantTone}
                 {...(highlightEntities ? { entityHighlights: highlightEntities } : {})}
                 {...(onOpenNote ? { onOpenNote } : {})}
                 {...(onOpenTag ? { onOpenTag } : {})}
@@ -211,24 +232,24 @@ export function MessageBubble({
           {showDeleteAction ? (
             <Pressable
               testID="message-delete-action"
-              style={styles.deleteActionButton}
+              style={[styles.deleteActionButton, { backgroundColor: theme.colors.dangerSurface, borderColor: theme.colors.danger }]}
               onPress={() => onDeleteMessage?.(message.id)}
             >
-              <Text style={styles.deleteActionLabel}>Supprimer la réponse</Text>
+              <Text style={[styles.deleteActionLabel, { color: theme.colors.dangerPillText }]}>Supprimer la réponse</Text>
             </Pressable>
           ) : null}
           {showWebSearchAction ? (
             <Pressable
               testID="message-web-search-action"
-              style={styles.webSearchActionButton}
+              style={[styles.webSearchActionButton, { backgroundColor: theme.colors.warningSurface, borderColor: theme.colors.warningText }]}
               onPress={() => onSuggestWebSearch?.(webSearchSuggestion!)}
             >
-              <Text style={styles.webSearchActionLabel}>Rechercher sur le web</Text>
+              <Text style={[styles.webSearchActionLabel, { color: theme.colors.warningText }]}>Rechercher sur le web</Text>
             </Pressable>
           ) : null}
         </View>
       ) : null}
-      {statsLabel ? <Text testID="message-generation-stats" style={styles.statsText}>{statsLabel}</Text> : null}
+      {statsLabel ? <Text testID="message-generation-stats" style={[styles.statsText, { color: theme.colors.textSubtle }]}>{statsLabel}</Text> : null}
     </View>
   );
 }
@@ -259,22 +280,16 @@ const styles = StyleSheet.create({
     maxWidth: '56%',
     alignSelf: 'flex-end',
     marginLeft: 'auto',
-    backgroundColor: '#191919',
     borderWidth: 1,
-    borderColor: '#2d2d2d',
   },
   assistantBubble: {
     width: '100%',
-    backgroundColor: '#f4f1ea',
     borderWidth: 1,
-    borderColor: '#ddd4c8',
     paddingBottom: 14,
   },
   followUpBubble: {
     width: '100%',
-    backgroundColor: '#f4f1ea',
     borderWidth: 1,
-    borderColor: '#ddd4c8',
   },
   followUpHeader: {
     flexDirection: 'row',
@@ -283,7 +298,6 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   followUpLabel: {
-    color: '#5d4b38',
     fontSize: 12,
     fontWeight: '700',
     textTransform: 'uppercase',
@@ -305,10 +319,8 @@ const styles = StyleSheet.create({
     color: '#d6d6d6',
   },
   assistantRole: {
-    color: '#2f2419',
   },
   userContent: {
-    color: '#f1f1f1',
     fontSize: 15,
     lineHeight: 22,
   },
@@ -322,26 +334,21 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   pendingTitle: {
-    color: '#2f2419',
     fontSize: 15,
     fontWeight: '700',
   },
   pendingGlyph: {
-    color: '#7f6b55',
     fontSize: 16,
     fontWeight: '700',
     minWidth: 24,
   },
   pendingCaption: {
-    color: '#6f5d49',
     fontSize: 13,
     lineHeight: 18,
   },
   queryOverviewBox: {
     borderRadius: 12,
-    backgroundColor: '#fbf8f3',
     borderWidth: 1,
-    borderColor: '#ded5c9',
     padding: 12,
     gap: 10,
   },
@@ -354,33 +361,26 @@ const styles = StyleSheet.create({
   webSearchActionButton: {
     alignSelf: 'flex-start',
     borderRadius: 999,
-    backgroundColor: '#efe3cf',
     borderWidth: 1,
-    borderColor: '#dbc4a6',
     paddingHorizontal: 14,
     paddingVertical: 9,
   },
   webSearchActionLabel: {
-    color: '#5b3a0f',
     fontSize: 12,
     fontWeight: '800',
   },
   deleteActionButton: {
     alignSelf: 'flex-start',
     borderRadius: 999,
-    backgroundColor: '#f6e3de',
     borderWidth: 1,
-    borderColor: '#ddb6ab',
     paddingHorizontal: 14,
     paddingVertical: 9,
   },
   deleteActionLabel: {
-    color: '#7a2f22',
     fontSize: 12,
     fontWeight: '800',
   },
   statsText: {
-    color: '#8b7864',
     fontSize: 11,
     lineHeight: 14,
     paddingHorizontal: 4,

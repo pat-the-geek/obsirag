@@ -82,6 +82,35 @@ _wait_for_pid() {
   return 1
 }
 
+_stop_existing_port_listener() {
+  local name="$1"
+  local port="$2"
+
+  local listeners
+  listeners="$(lsof -ti :"$port" 2>/dev/null || true)"
+  if [ -z "$listeners" ]; then
+    return 0
+  fi
+
+  echo "==> Arrêt du listener existant pour $name sur le port $port"
+  printf '%s\n' "$listeners" | xargs kill 2>/dev/null || true
+
+  local attempts=10
+  while [ "$attempts" -gt 0 ]; do
+    if ! lsof -ti :"$port" >/dev/null 2>&1; then
+      return 0
+    fi
+    attempts=$((attempts - 1))
+    sleep 0.5
+  done
+
+  listeners="$(lsof -ti :"$port" 2>/dev/null || true)"
+  if [ -n "$listeners" ]; then
+    echo "==> Forçage de l'arrêt du listener existant pour $name sur le port $port"
+    printf '%s\n' "$listeners" | xargs kill -9 2>/dev/null || true
+  fi
+}
+
 _start_background_service() {
   local name="$1"
   local pid_file="$2"
@@ -99,8 +128,7 @@ _start_background_service() {
   fi
 
   if lsof -ti :"$port" >/dev/null 2>&1; then
-    echo "$name écoute déjà sur le port $port."
-    return 0
+    _stop_existing_port_listener "$name" "$port"
   fi
 
   bash -lc "$command" >> "$log_file" 2>> "$error_file" &

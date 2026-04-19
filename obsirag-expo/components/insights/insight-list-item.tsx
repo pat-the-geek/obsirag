@@ -1,6 +1,8 @@
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { InsightItem } from '../../types/domain';
+import { useAppTheme } from '../../theme/app-theme';
+import { formatMetadataDate, formatSizeBytes, joinMetadataParts } from '../../utils/format-display';
 import { StatusPill } from '../ui/status-pill';
 import { TagPill } from '../ui/tag-pill';
 
@@ -11,15 +13,22 @@ type InsightListItemProps = {
 };
 
 export function InsightListItem({ item, onPress, onOpenTag }: InsightListItemProps) {
+  const theme = useAppTheme();
+  const metadata = joinMetadataParts([
+    item.dateModified ? `Modifie le ${formatMetadataDate(item.dateModified)}` : null,
+    formatSizeBytes(item.sizeBytes),
+  ]);
+
   return (
-    <View style={styles.card}>
+    <View style={[styles.card, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }] }>
       <Pressable onPress={onPress} style={styles.mainPressable}>
         <View style={styles.header}>
-          <Text style={styles.title}>{item.title}</Text>
+          <Text style={[styles.title, { color: theme.colors.text }]}>{item.title}</Text>
           <StatusPill label={item.kind} tone="neutral" />
         </View>
-        {item.excerpt ? <Text style={styles.excerpt}>{item.excerpt}</Text> : null}
-        <Text style={styles.meta}>{item.filePath}</Text>
+        {item.excerpt ? <Text style={[styles.excerpt, { color: theme.colors.textMuted }]}>{item.excerpt}</Text> : null}
+        <Text style={[styles.meta, { color: theme.colors.textSubtle }]}>{item.filePath}</Text>
+        {metadata ? <Text style={[styles.meta, { color: theme.colors.textSubtle }]}>{metadata}</Text> : null}
       </Pressable>
       {item.tags.length ? (
         <View style={styles.tagsRow}>
@@ -35,9 +44,7 @@ export function InsightListItem({ item, onPress, onOpenTag }: InsightListItemPro
 const styles = StyleSheet.create({
   card: {
     borderRadius: 16,
-    backgroundColor: '#fffdfa',
     borderWidth: 1,
-    borderColor: '#d8cfc0',
     padding: 14,
     gap: 8,
   },
@@ -51,12 +58,10 @@ const styles = StyleSheet.create({
   },
   title: {
     flex: 1,
-    color: '#1f160c',
     fontWeight: '700',
     fontSize: 16,
   },
   excerpt: {
-    color: '#564733',
     lineHeight: 20,
   },
   tagsRow: {
@@ -65,7 +70,6 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   meta: {
-    color: '#8a7760',
     fontSize: 12,
   },
 });

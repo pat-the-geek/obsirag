@@ -1,6 +1,7 @@
 import { Image, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { ChatMessage, DdgKnowledge, EntityContext, RelatedNote } from '../../types/domain';
+import { formatMetadataDate, formatSizeBytes, joinMetadataParts } from '../../utils/format-display';
 import { TagPill } from '../ui/tag-pill';
 
 const ENTITY_IMAGE_SIZE = 112;
@@ -60,10 +61,21 @@ export function ConversationEntitySidebar({ entities, onOpenNote, onOpenTag, com
                   <Text style={styles.sectionLabel}>Notes liees</Text>
                   <View style={styles.notePills}>
                     {entity.notes.map((note) => (
-                      <Pressable key={`${entityKey(entity)}-${note.filePath}`} testID="entity-note-pill" style={[styles.notePill, { maxWidth: ENTITY_IMAGE_SIZE + 26 }]} onPress={() => onOpenNote?.(note.filePath)}>
+                      <Pressable key={`${entityKey(entity)}-${note.filePath}`} testID="entity-note-pill" style={[styles.notePill, { maxWidth: ENTITY_IMAGE_SIZE + 48 }]} onPress={() => onOpenNote?.(note.filePath)}>
                         <Text style={styles.notePillText} numberOfLines={1}>
                           {buildCompactNoteLabel(note, ENTITY_IMAGE_SIZE)}
                         </Text>
+                        {joinMetadataParts([
+                          note.dateModified ? formatMetadataDate(note.dateModified) : null,
+                          formatSizeBytes(note.sizeBytes),
+                        ]) ? (
+                          <Text style={styles.notePillMeta} numberOfLines={2}>
+                            {joinMetadataParts([
+                              note.dateModified ? formatMetadataDate(note.dateModified) : null,
+                              formatSizeBytes(note.sizeBytes),
+                            ])}
+                          </Text>
+                        ) : null}
                       </Pressable>
                     ))}
                   </View>
@@ -274,16 +286,21 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   notePill: {
-    borderRadius: 999,
+    borderRadius: 14,
     backgroundColor: '#efe5d8',
     borderWidth: 1,
     borderColor: '#dbcdb8',
     paddingHorizontal: 10,
     paddingVertical: 6,
+    gap: 2,
   },
   notePillText: {
     color: '#4b3c2b',
     fontSize: 12,
     fontWeight: '700',
+  },
+  notePillMeta: {
+    color: '#7a6855',
+    fontSize: 11,
   },
 });

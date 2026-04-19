@@ -1,5 +1,7 @@
 import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
+import { useAppTheme } from '../../theme/app-theme';
+
 type MessageComposerProps = {
   value: string;
   onChangeText: (value: string) => void;
@@ -25,10 +27,11 @@ export function MessageComposer({
   onTertiaryAction,
   tertiaryActionDisabled,
 }: MessageComposerProps) {
+  const theme = useAppTheme();
   const canSubmit = !disabled && value.trim().length > 0;
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }] }>
       <TextInput
         testID="message-composer-input"
         value={value}
@@ -45,8 +48,8 @@ export function MessageComposer({
           onSubmit();
         }}
         placeholder="Posez une question sur votre coffre..."
-        placeholderTextColor="#8a7760"
-        style={styles.input}
+        placeholderTextColor={theme.colors.textSubtle}
+        style={[styles.input, { color: theme.colors.text }]}
       />
       <View style={styles.bottomRow}>
         <View style={styles.leftActions}>
@@ -55,9 +58,9 @@ export function MessageComposer({
               testID="message-composer-secondary-action"
               disabled={secondaryActionDisabled}
               onPress={onSecondaryAction}
-              style={[styles.secondaryButton, secondaryActionDisabled && styles.buttonDisabled]}
+              style={[styles.secondaryButton, { backgroundColor: theme.colors.secondaryButton, borderColor: theme.colors.border }, secondaryActionDisabled && styles.buttonDisabled]}
             >
-              <Text style={styles.secondaryButtonLabel}>{secondaryActionLabel}</Text>
+              <Text style={[styles.secondaryButtonLabel, { color: theme.colors.secondaryButtonText }]}>{secondaryActionLabel}</Text>
             </Pressable>
           ) : null}
           {tertiaryActionLabel && onTertiaryAction ? (
@@ -65,15 +68,15 @@ export function MessageComposer({
               testID="message-composer-tertiary-action"
               disabled={tertiaryActionDisabled}
               onPress={onTertiaryAction}
-              style={[styles.tertiaryButton, tertiaryActionDisabled && styles.buttonDisabled]}
+              style={[styles.tertiaryButton, { backgroundColor: theme.colors.warningSurface, borderColor: theme.colors.warningText }, tertiaryActionDisabled && styles.buttonDisabled]}
             >
-              <Text style={styles.tertiaryButtonLabel}>{tertiaryActionLabel}</Text>
+              <Text style={[styles.tertiaryButtonLabel, { color: theme.colors.warningText }]}>{tertiaryActionLabel}</Text>
             </Pressable>
           ) : null}
           {!secondaryActionLabel && !tertiaryActionLabel ? <View style={styles.spacer} /> : null}
         </View>
-        <Pressable testID="message-composer-submit" disabled={!canSubmit} onPress={onSubmit} style={[styles.button, !canSubmit && styles.buttonDisabled]}>
-          <Text style={styles.buttonLabel}>Envoyer</Text>
+        <Pressable testID="message-composer-submit" disabled={!canSubmit} onPress={onSubmit} style={[styles.button, { backgroundColor: theme.colors.primary, borderColor: theme.colors.primary }, !canSubmit && styles.buttonDisabled]}>
+          <Text style={[styles.buttonLabel, { color: theme.colors.primaryText }]}>Envoyer</Text>
         </Pressable>
       </View>
     </View>
@@ -84,14 +87,11 @@ const styles = StyleSheet.create({
   container: {
     borderRadius: 22,
     padding: 14,
-    backgroundColor: '#2b2b2b',
     borderWidth: 1,
-    borderColor: '#2b2b2b',
     gap: 10,
   },
   input: {
     minHeight: 56,
-    color: '#f2f2f2',
     fontSize: 16,
     lineHeight: 24,
     textAlignVertical: 'top',
@@ -117,12 +117,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 10,
     borderRadius: 999,
-    backgroundColor: '#353535',
     borderWidth: 1,
-    borderColor: '#4a4a4a',
   },
   secondaryButtonLabel: {
-    color: '#f0f0f0',
     fontWeight: '700',
   },
   tertiaryButton: {
@@ -130,12 +127,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 10,
     borderRadius: 999,
-    backgroundColor: '#4a2f17',
     borderWidth: 1,
-    borderColor: '#7a5225',
   },
   tertiaryButtonLabel: {
-    color: '#fff4e8',
     fontWeight: '700',
   },
   button: {
@@ -143,15 +137,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 10,
     borderRadius: 999,
-    backgroundColor: '#151515',
     borderWidth: 1,
-    borderColor: '#414141',
   },
   buttonDisabled: {
     opacity: 0.45,
   },
   buttonLabel: {
-    color: '#f5f5f5',
     fontWeight: '700',
   },
 });

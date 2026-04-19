@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import type { GestureResponderEvent } from 'react-native';
 import {
   forceCenter,
   forceCollide,
@@ -11,11 +12,13 @@ import {
 import { Animated, Easing, Platform, Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import Svg, { Circle, G, Line, Text as SvgText } from 'react-native-svg';
 import { WebView } from 'react-native-webview';
+import type { WebViewMessageEvent } from 'react-native-webview';
 
 import { GraphData } from '../../types/domain';
 
 type KnowledgeGraphProps = {
   data: GraphData;
+  isActive?: boolean;
   focusedNodeId?: string;
   onSelectNode?: (nodeId: string) => void;
   onOpenNode?: (nodeId: string) => void;
@@ -36,6 +39,8 @@ type PositionedNode = {
   x: number;
   y: number;
   radius: number;
+  ambientHaloRadius?: number;
+  ambientHaloOpacity?: number;
 };
 
 type ForceNode = SimulationNodeDatum & PositionedNode;
@@ -56,14 +61,16 @@ const AnimatedLine = Animated.createAnimatedComponent(Line);
 const AnimatedCircle = Animated.createAnimatedComponent(Circle);
 const AnimatedSvgText = Animated.createAnimatedComponent(SvgText);
 
-export function KnowledgeGraph({ data, focusedNodeId, onSelectNode, onOpenNode, onDetectSynapses, zoom = 1, onZoomChange: _onZoomChange, onZoomIn, onZoomOut, onZoomReset }: KnowledgeGraphProps) {
+export function KnowledgeGraph({ data, isActive: _isActive = true, focusedNodeId, onSelectNode, onOpenNode, onDetectSynapses, zoom = 1, onZoomChange: _onZoomChange, onZoomIn, onZoomOut, onZoomReset }: KnowledgeGraphProps) {
   const windowDimensions = useWindowDimensions();
   const edgeReveal = useRef(new Animated.Value(0)).current;
   const nodeReveal = useRef(new Animated.Value(0)).current;
   const motionProgress = useRef(new Animated.Value(1)).current;
+  const ambientProgress = useRef(new Animated.Value(0)).current;
   const fitScale = useRef(new Animated.Value(1)).current;
   const shouldAnimate = process.env.NODE_ENV !== 'test';
   const [motionValue, setMotionValue] = useState(1);
+  const [ambientValue, setAmbientValue] = useState(0);
   const [fitScaleValue, setFitScaleValue] = useState(1);
   const renderData = useMemo(() => selectRenderableGraph(data, focusedNodeId), [data, focusedNodeId]);
   const scene = useMemo(() => buildGraphScene(renderData, windowDimensions.width), [renderData, windowDimensions.width]);
@@ -74,6 +81,7 @@ export function KnowledgeGraph({ data, focusedNodeId, onSelectNode, onOpenNode, 
   const canvasWidth = Math.round(viewportWidth * zoom);
   const canvasHeight = Math.round(viewportHeight * zoom);
   const edgeStyle = useMemo(() => buildEdgeStyle(renderData.nodes.length), [renderData.nodes.length]);
+  const ambientMotion = useMemo(() => buildAmbientMotionProfile(renderData.nodes.length), [renderData.nodes.length]);
   const labelMode = useMemo(() => buildLabelMode(renderData, focusedNodeId), [focusedNodeId, renderData]);
   const shouldUseHtmlGraph = process.env.NODE_ENV !== 'test';
   const htmlFrameId = useMemo(
@@ -109,12 +117,34 @@ export function KnowledgeGraph({ data, focusedNodeId, onSelectNode, onOpenNode, 
 
   useEffect(() => {
     const motionId = motionProgress.addListener(({ value }) => setMotionValue(value));
+    const ambientId = ambientProgress.addListener(({ value }) => setAmbientValue(value));
     const fitId = fitScale.addListener(({ value }) => setFitScaleValue(value));
     return () => {
       motionProgress.removeListener(motionId);
+      ambientProgress.removeListener(ambientId);
       fitScale.removeListener(fitId);
     };
-  }, [fitScale, motionProgress]);
+  }, [ambientProgress, fitScale, motionProgress]);
+
+  useEffect(() => {
+    if (!shouldAnimate || !ambientMotion.enabled) {
+      ambientProgress.stopAnimation();
+      ambientProgress.setValue(0);
+      return undefined;
+    }
+
+    ambientProgress.setValue(0);
+    const animation = Animated.loop(
+      Animated.timing(ambientProgress, {
+        toValue: 1,
+        duration: ambientMotion.cycleMs,
+        easing: Easing.linear,
+        useNativeDriver: false,
+      }),
+    );
+    animation.start();
+    return () => animation.stop();
+  }, [ambientMotion.cycleMs, ambientMotion.enabled, ambientProgress, shouldAnimate]);
 
   useEffect(() => {
     if (!shouldAnimate) {
@@ -177,14 +207,17 @@ export function KnowledgeGraph({ data, focusedNodeId, onSelectNode, onOpenNode, 
     const sampleMaps = layout.samples.map((sample) => new Map(sample.map((node) => [node.id, node])));
     return layout.nodes.map((node) => {
       const sampled = interpolateNodeSample(node.id, sampleMaps, motionValue) ?? node;
+      const ambientState = describeAmbientNodeMotion(node.id, ambientValue * ambientMotion.cycleMs, ambientMotion);
       return {
         ...node,
-        x: sampled.x,
-        y: sampled.y,
-        radius: sampled.radius,
+        x: sampled.x + ambientState.driftX,
+        y: sampled.y + ambientState.driftY,
+        radius: Math.max(2.5, sampled.radius + ambientState.radiusDelta),
+        ambientHaloRadius: ambientState.haloRadiusDelta,
+        ambientHaloOpacity: ambientState.haloOpacity,
       };
     });
-  }, [layout.nodes, layout.samples, motionValue]);
+  }, [ambientMotion, ambientValue, layout.nodes, layout.samples, motionValue]);
   const animatedNodeMap = useMemo(() => new Map(animatedNodes.map((node) => [node.id, node])), [animatedNodes]);
   const fittedWidth = viewportWidth * fitScaleValue;
   const fittedHeight = viewportHeight * fitScaleValue;
@@ -216,7 +249,7 @@ export function KnowledgeGraph({ data, focusedNodeId, onSelectNode, onOpenNode, 
               style={[styles.webview, { height: viewportHeight }]}
               scrollEnabled={false}
               nestedScrollEnabled={false}
-              onMessage={(event) => {
+              onMessage={(event: WebViewMessageEvent) => {
                 const payload = safeParseGraphMessage(event.nativeEvent.data);
                 if (!payload) {
                   return;
@@ -285,7 +318,17 @@ export function KnowledgeGraph({ data, focusedNodeId, onSelectNode, onOpenNode, 
                 const fill = (node.noteType ? NOTE_TYPE_COLORS[node.noteType] : undefined) ?? groupColors.get(node.group) ?? GROUP_COLORS[0] ?? '#2a5f95';
                 const showLabel = shouldShowLabel(node, labelMode, isFocused);
                 return (
-                  <G key={node.id} testID={`graph-node-${node.id}`} onPress={() => onSelectNode?.(node.id)}>
+                  <G key={node.id} testID={`graph-node-${node.id}`} onPress={(_event: GestureResponderEvent) => onSelectNode?.(node.id)}>
+                    {node.ambientHaloOpacity ? (
+                      <Circle
+                        cx={node.x}
+                        cy={node.y}
+                        r={node.radius + (node.ambientHaloRadius ?? 0)}
+                        fill={withAlpha(fill, node.ambientHaloOpacity)}
+                        stroke={withAlpha('#ffffff', Math.min(0.18, node.ambientHaloOpacity * 0.7))}
+                        strokeWidth={1.2}
+                      />
+                    ) : null}
                     <AnimatedCircle
                       cx={node.x}
                       cy={node.y}
@@ -469,6 +512,91 @@ function buildEdgeStyle(nodeCount: number) {
     return { strokeWidth: 1.1, opacity: 0.56 };
   }
   return { strokeWidth: 1.5, opacity: 0.9 };
+}
+
+function buildAmbientMotionProfile(nodeCount: number) {
+  if (nodeCount > 180) {
+    return {
+      enabled: false,
+      cycleMs: 6400,
+      frameIntervalMs: 120,
+      radiusAmplitude: 0,
+      driftAmplitude: 0,
+      borderAmplitude: 0,
+      shadowBase: 10,
+      shadowAmplitude: 0,
+      haloRadiusBase: 0,
+      haloRadiusAmplitude: 0,
+      haloOpacityBase: 0,
+      haloOpacityAmplitude: 0,
+    };
+  }
+
+  if (nodeCount > 96) {
+    return {
+      enabled: true,
+      cycleMs: 7600,
+      frameIntervalMs: 96,
+      radiusAmplitude: 0.34,
+      driftAmplitude: 0.52,
+      borderAmplitude: 0.26,
+      shadowBase: 12,
+      shadowAmplitude: 12,
+      haloRadiusBase: 2.8,
+      haloRadiusAmplitude: 4.8,
+      haloOpacityBase: 0.16,
+      haloOpacityAmplitude: 0.22,
+    };
+  }
+
+  return {
+    enabled: true,
+    cycleMs: 6900,
+    frameIntervalMs: 80,
+    radiusAmplitude: 0.5,
+    driftAmplitude: 0.78,
+    borderAmplitude: 0.34,
+    shadowBase: 14,
+    shadowAmplitude: 15,
+    haloRadiusBase: 3.6,
+    haloRadiusAmplitude: 6.2,
+    haloOpacityBase: 0.2,
+    haloOpacityAmplitude: 0.26,
+  };
+}
+
+function describeAmbientNodeMotion(
+  nodeId: string,
+  timeMs: number,
+  ambientMotion: ReturnType<typeof buildAmbientMotionProfile>,
+) {
+  if (!ambientMotion.enabled) {
+    return {
+      radiusDelta: 0,
+      driftX: 0,
+      driftY: 0,
+      haloRadiusDelta: 0,
+      haloOpacity: 0,
+      shadowSize: ambientMotion.shadowBase,
+      borderDelta: 0,
+    };
+  }
+
+  const basePhase = stableHash(nodeId) * Math.PI * 2;
+  const progress = (timeMs / ambientMotion.cycleMs) * Math.PI * 2;
+  const pulse = Math.sin(progress + basePhase);
+  const undertow = Math.sin(progress * 0.53 + basePhase * 1.31);
+  const sway = Math.cos(progress * 0.71 + basePhase * 1.67);
+  const bloom = Math.max(0, Math.min(1, ((pulse * 0.58) + (undertow * 0.28) + (sway * 0.14) + 1) / 2));
+  return {
+    radiusDelta: ((pulse * 0.72) + (undertow * 0.28)) * ambientMotion.radiusAmplitude,
+    driftX: (sway + undertow * 0.35) * ambientMotion.driftAmplitude * 0.52,
+    driftY: (pulse * 0.74 + sway * 0.26) * ambientMotion.driftAmplitude,
+    haloRadiusDelta: ambientMotion.haloRadiusBase + bloom * ambientMotion.haloRadiusAmplitude,
+    haloOpacity: ambientMotion.haloOpacityBase + bloom * ambientMotion.haloOpacityAmplitude,
+    shadowSize: ambientMotion.shadowBase + bloom * ambientMotion.shadowAmplitude,
+    borderDelta: bloom * ambientMotion.borderAmplitude,
+  };
 }
 
 function buildLabelMode(data: GraphData, focusedNodeId?: string) {
@@ -660,6 +788,7 @@ function buildVisNetworkHtml(data: GraphData, focusedNodeId?: string, zoom = 1, 
   const groupColors = buildGroupColorMap(data.nodes.map((node) => node.group));
   const physics = buildVisPhysics(data.nodes.length);
   const performanceProfile = buildGraphPerformanceProfile(data.nodes.length);
+  const ambientMotion = buildAmbientMotionProfile(data.nodes.length);
   const hoverEnabled = performanceProfile.enableHover || performanceProfile.enableTooltipHover;
   const scale = clamp(zoom, 0.75, 2.2);
   const labelBehavior = buildLabelBehavior(data.nodes.length);
@@ -758,6 +887,7 @@ function buildVisNetworkHtml(data: GraphData, focusedNodeId?: string, zoom = 1, 
         const focusedNodeId = ${JSON.stringify(focusedNodeId ?? null)};
         const frameId = ${JSON.stringify(frameId ?? null)};
         const preferredScale = ${JSON.stringify(scale)};
+        const ambientMotion = ${JSON.stringify(ambientMotion)};
         const labelBehavior = ${JSON.stringify(labelBehavior)};
         const neighborhoodFade = ${JSON.stringify(neighborhoodFade)};
         const performanceProfile = ${JSON.stringify(performanceProfile)};
@@ -765,6 +895,9 @@ function buildVisNetworkHtml(data: GraphData, focusedNodeId?: string, zoom = 1, 
         let activeNodeId = focusedNodeId;
         let hoveredNodeId = null;
         let overviewStateDirty = false;
+        let ambientAnimationFrame = null;
+        let ambientLastTick = 0;
+        let ambientTimeMs = 0;
         const network = new vis.Network(container, { nodes, edges }, {
           autoResize: true,
           layout: {
@@ -821,6 +954,56 @@ function buildVisNetworkHtml(data: GraphData, focusedNodeId?: string, zoom = 1, 
           return scaleValue >= labelBehavior.globalThreshold;
         }
 
+        function stableHash(value) {
+          var hash = 2166136261;
+          for (var index = 0; index < value.length; index += 1) {
+            hash ^= value.charCodeAt(index);
+            hash = Math.imul(hash, 16777619);
+          }
+          return (hash >>> 0) / 4294967295;
+        }
+
+        function withAlpha(color, alpha) {
+          if (typeof color !== 'string') {
+            return color;
+          }
+          if (color.indexOf('rgba(') === 0) {
+            return color.replace(/rgba\(([^,]+),([^,]+),([^,]+),[^)]+\)/, 'rgba($1,$2,$3,' + alpha + ')');
+          }
+          if (color.indexOf('rgb(') === 0) {
+            return color.replace(/rgb\(([^,]+),([^,]+),([^)]+)\)/, 'rgba($1,$2,$3,' + alpha + ')');
+          }
+          if (color.indexOf('#') === 0 && (color.length === 7 || color.length === 4)) {
+            var hex = color.length === 4
+              ? color.split('').map(function(value, index) { return index === 0 ? '' : value + value; }).join('')
+              : color.slice(1);
+            var red = parseInt(hex.slice(0, 2), 16);
+            var green = parseInt(hex.slice(2, 4), 16);
+            var blue = parseInt(hex.slice(4, 6), 16);
+            return 'rgba(' + red + ',' + green + ',' + blue + ',' + alpha + ')';
+          }
+          return color;
+        }
+
+        function describeAmbientNodeMotion(nodeId, timeMs) {
+          if (!ambientMotion.enabled) {
+            return { radiusDelta: 0, shadowSize: ambientMotion.shadowBase || 10, borderDelta: 0, shadowOpacity: 0, haloStrength: 0 };
+          }
+          var basePhase = stableHash(nodeId) * Math.PI * 2;
+          var progress = (timeMs / ambientMotion.cycleMs) * Math.PI * 2;
+          var pulse = Math.sin(progress + basePhase);
+          var undertow = Math.sin(progress * 0.53 + basePhase * 1.31);
+          var sway = Math.cos(progress * 0.71 + basePhase * 1.67);
+          var halo = Math.max(0, Math.min(1, ((pulse * 0.58) + (undertow * 0.28) + (sway * 0.14) + 1) / 2));
+          return {
+            radiusDelta: ((pulse * 0.72) + (undertow * 0.28)) * ambientMotion.radiusAmplitude,
+            shadowSize: ambientMotion.shadowBase + halo * ambientMotion.shadowAmplitude,
+            borderDelta: halo * ambientMotion.borderAmplitude,
+            shadowOpacity: ambientMotion.haloOpacityBase + halo * ambientMotion.haloOpacityAmplitude,
+            haloStrength: halo,
+          };
+        }
+
         function collectRelatedNodes(nodeId) {
           if (!nodeId) {
             return null;
@@ -830,7 +1013,10 @@ function buildVisNetworkHtml(data: GraphData, focusedNodeId?: string, zoom = 1, 
           return relatedNodeIds;
         }
 
-        function applyVisualState() {
+        function applyVisualState(animationTimeMs) {
+          if (typeof animationTimeMs === 'number') {
+            ambientTimeMs = animationTimeMs;
+          }
           const emphasizedNodeId = hoveredNodeId || activeNodeId;
           if (performanceProfile.skipIdleVisualRefresh && !emphasizedNodeId) {
             if (overviewStateDirty) {
@@ -850,6 +1036,7 @@ function buildVisNetworkHtml(data: GraphData, focusedNodeId?: string, zoom = 1, 
             const isHovered = baseNode.id === hoveredNodeId;
             const isRelated = relatedNodeIds ? relatedNodeIds.has(baseNode.id) : true;
             const isMuted = !isRelated;
+            const ambientState = !emphasizedNodeId ? describeAmbientNodeMotion(baseNode.id, ambientTimeMs) : null;
             const nodeOpacity = isMuted ? neighborhoodFade.nodeOpacity : 1;
             const fontColor = isMuted
               ? 'rgba(226,232,240,' + neighborhoodFade.fontOpacity + ')'
@@ -860,7 +1047,8 @@ function buildVisNetworkHtml(data: GraphData, focusedNodeId?: string, zoom = 1, 
               id: baseNode.id,
               label: shouldShowLabel(baseNode, scaleValue, relatedNodeIds, emphasizedNodeId) ? baseNode.fullLabel : '',
               opacity: nodeOpacity,
-              borderWidth: isActive ? 5 : isHovered ? 4 : isRelated ? 2.5 : 1,
+              borderWidth: isActive ? 5 : isHovered ? 4 : isRelated ? 2.5 + (ambientState ? ambientState.borderDelta : 0) : 1,
+              value: baseNode.value + (ambientState ? ambientState.radiusDelta : 0),
               font: Object.assign({}, baseNode.font, {
                 color: fontColor,
                 size: isActive ? 15 : isHovered ? 14 : 13,
@@ -869,7 +1057,9 @@ function buildVisNetworkHtml(data: GraphData, focusedNodeId?: string, zoom = 1, 
                 ? { enabled: true, color: 'rgba(255,255,255,0.45)', size: 32, x: 0, y: 0 }
                 : isHovered
                   ? { enabled: true, color: 'rgba(96,165,250,0.32)', size: 24, x: 0, y: 0 }
-                  : { enabled: false, color: 'rgba(0,0,0,0.55)', size: 10, x: 0, y: 0 },
+                  : ambientState
+                    ? { enabled: true, color: withAlpha(baseNode.color.background, ambientState.shadowOpacity), size: ambientState.shadowSize + 12, x: 0, y: 0 }
+                    : { enabled: false, color: 'rgba(0,0,0,0.55)', size: 10, x: 0, y: 0 },
             });
           });
 
@@ -888,6 +1078,17 @@ function buildVisNetworkHtml(data: GraphData, focusedNodeId?: string, zoom = 1, 
               width: isConnectedToActive ? 2.2 : isConnectedToHovered ? 1.8 : isRelated ? 1 : neighborhoodFade.edgeWidth,
             });
           });
+        }
+
+        function runAmbientMotion(frameTime) {
+          if (!ambientMotion.enabled) {
+            return;
+          }
+          if (!activeNodeId && !hoveredNodeId && frameTime - ambientLastTick >= ambientMotion.frameIntervalMs) {
+            ambientLastTick = frameTime;
+            applyVisualState(frameTime);
+          }
+          ambientAnimationFrame = window.requestAnimationFrame(runAmbientMotion);
         }
 
         function applyNeighborhoodFocus(nodeId) {
@@ -999,6 +1200,9 @@ function buildVisNetworkHtml(data: GraphData, focusedNodeId?: string, zoom = 1, 
               applyNeighborhoodFocus(focusedNodeId);
             }, 120);
           }
+          if (ambientMotion.enabled) {
+            ambientAnimationFrame = window.requestAnimationFrame(runAmbientMotion);
+          }
         });
 
         window.addEventListener('resize', function() {
@@ -1006,6 +1210,12 @@ function buildVisNetworkHtml(data: GraphData, focusedNodeId?: string, zoom = 1, 
             return;
           }
           fitOverview();
+        });
+
+        window.addEventListener('beforeunload', function() {
+          if (ambientAnimationFrame) {
+            window.cancelAnimationFrame(ambientAnimationFrame);
+          }
         });
       })();
     </script>

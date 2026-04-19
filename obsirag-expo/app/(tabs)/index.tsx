@@ -10,6 +10,9 @@ import { StatusPill } from '../../components/ui/status-pill';
 import { useServerConfig } from '../../features/auth/use-server-config';
 import { useNoteSearch } from '../../features/notes/use-notes';
 import { useSystemStatus } from '../../features/system/use-system-status';
+import { useAppTheme } from '../../theme/app-theme';
+import { formatMetadataDate, formatSizeBytes, joinMetadataParts } from '../../utils/format-display';
+import { buildNoteRoute } from '../../utils/note-route';
 
 const appIcon = require('../../assets/app-icon.png');
 
@@ -23,6 +26,7 @@ type HeroBadge = {
 
 export default function DashboardScreen() {
   const router = useRouter();
+  const theme = useAppTheme();
   const [noteQuery, setNoteQuery] = useState('');
   const { backendUrl, useMockServer } = useServerConfig();
   const { data, isLoading, isRefetching, refetch, isError, error } = useSystemStatus({ refetchIntervalMs: 1200 });
@@ -38,7 +42,7 @@ export default function DashboardScreen() {
 
   if (isError) {
     return (
-      <Screen backgroundColor="#f4f1ea" refreshing={isRefetching} onRefresh={refetch}>
+      <Screen backgroundColor={theme.colors.background} refreshing={isRefetching} onRefresh={refetch}>
         <SystemStartupView
           startup={{
             ready: false,
@@ -56,7 +60,7 @@ export default function DashboardScreen() {
 
   if (!data.startup?.ready) {
     return (
-      <Screen backgroundColor="#f4f1ea" refreshing={isRefetching} onRefresh={refetch}>
+      <Screen backgroundColor={theme.colors.background} refreshing={isRefetching} onRefresh={refetch}>
         <SystemStartupView
           {...(data.startup ? { startup: data.startup } : {})}
           backendReachable={data.backendReachable}
@@ -70,7 +74,7 @@ export default function DashboardScreen() {
   }
 
   const autolearnLog = data.autolearn?.log ?? [];
-  const indexingStatus = formatStatusValue(data.indexing?.current, 'Aucun traitement en cours');
+  const indexingStatus = formatIndexingStatus(data.indexing);
   const autolearnStatus = formatStatusValue(data.autolearn?.step, 'Inactif');
   const stackBadges = buildDashboardBadges(data);
   const activeLlmModel = formatActiveModelValue(data.runtime?.llmModel);
@@ -79,17 +83,17 @@ export default function DashboardScreen() {
 
   return (
     <Screen refreshing={isRefetching} onRefresh={refetch}>
-      <View style={styles.heroCard}>
+      <View style={[styles.heroCard, { borderColor: theme.colors.border, backgroundColor: theme.colors.surface }]}>
         <Image source={appIcon} style={styles.heroImage} resizeMode="contain" />
         <View style={styles.heroCopy}>
-          <Text style={styles.heroEyebrow}>ObsiRAG</Text>
-          <Text style={styles.heroTitle}>Dashboard</Text>
-          <Text style={styles.heroSubtitle}>Vue d’ensemble du runtime, des recherches rapides et de l’activité de l’auto-learner.</Text>
-          <View style={styles.activeModelCard}>
-            <Text style={styles.activeModelLabel}>LLM actif ObsiRAG</Text>
-            <Text selectable style={styles.activeModelValue}>{activeLlmModel}</Text>
-            <Text style={styles.activeModelMeta}>Source runtime: {runtimeSourceLabel}</Text>
-            <Text selectable style={styles.activeModelMeta}>Backend: {backendUrl}</Text>
+          <Text style={[styles.heroEyebrow, { color: theme.colors.primary }]}>ObsiRAG</Text>
+          <Text style={[styles.heroTitle, { color: theme.colors.text }]}>Dashboard</Text>
+          <Text style={[styles.heroSubtitle, { color: theme.colors.textMuted }]}>Vue d’ensemble du runtime, des recherches rapides et de l’activité de l’auto-learner.</Text>
+          <View style={[styles.activeModelCard, { borderColor: theme.colors.border, backgroundColor: theme.colors.surfaceMuted }] }>
+            <Text style={[styles.activeModelLabel, { color: theme.colors.primary }]}>LLM actif ObsiRAG</Text>
+            <Text selectable style={[styles.activeModelValue, { color: theme.colors.text }]}>{activeLlmModel}</Text>
+            <Text style={[styles.activeModelMeta, { color: theme.colors.textMuted }]}>Source runtime: {runtimeSourceLabel}</Text>
+            <Text selectable style={[styles.activeModelMeta, { color: theme.colors.textMuted }]}>Backend: {backendUrl}</Text>
           </View>
           <View style={styles.badgeRow}>
             {stackBadges.map((badge) => (
@@ -103,9 +107,9 @@ export default function DashboardScreen() {
       <SectionCard title="Etat du systeme" subtitle="Synthese rapide du runtime ObsiRAG expose par le backend.">
         <StatusPill label={data.backendReachable ? 'Backend joignable' : 'Backend indisponible'} tone={data.backendReachable ? 'success' : 'danger'} />
         <StatusPill label={connectionModeLabel} tone={useMockServer ? 'warning' : 'success'} />
-        <Text>Indexation: {indexingStatus}</Text>
-        <Text>Auto-learn: {autolearnStatus}</Text>
-        <Text>Source runtime: {runtimeSourceLabel}</Text>
+        <Text style={{ color: theme.colors.text }}>Indexation: {indexingStatus}</Text>
+        <Text style={{ color: theme.colors.text }}>Auto-learn: {autolearnStatus}</Text>
+        <Text style={{ color: theme.colors.text }}>Source runtime: {runtimeSourceLabel}</Text>
         <SystemStartupView
           {...(data.startup ? { startup: data.startup } : {})}
           backendReachable={data.backendReachable}
@@ -120,13 +124,24 @@ export default function DashboardScreen() {
           value={noteQuery}
           onChangeText={setNoteQuery}
           placeholder="Rechercher une note"
-          placeholderTextColor="#8a7760"
-          style={styles.input}
+          placeholderTextColor={theme.colors.textSubtle}
+          style={[styles.input, { borderColor: theme.colors.border, backgroundColor: theme.colors.surface, color: theme.colors.text }]}
         />
         {(noteSearch.data ?? []).slice(0, 6).map((item) => (
-          <Pressable key={item.filePath} style={styles.quickResult} onPress={() => router.push(`/(tabs)/note/${encodeURIComponent(item.filePath)}`)}>
-            <Text style={styles.quickTitle}>{item.title}</Text>
-            <Text style={styles.quickMeta}>{item.filePath}</Text>
+          <Pressable key={item.filePath} style={[styles.quickResult, { borderColor: theme.colors.border, backgroundColor: theme.colors.surfaceMuted }]} onPress={() => router.push(buildNoteRoute(item.filePath))}>
+            <Text style={[styles.quickTitle, { color: theme.colors.text }]}>{item.title}</Text>
+            <Text style={[styles.quickMeta, { color: theme.colors.textMuted }]}>{item.filePath}</Text>
+            {joinMetadataParts([
+              item.dateModified ? `Modifie le ${formatMetadataDate(item.dateModified)}` : null,
+              formatSizeBytes(item.sizeBytes),
+            ]) ? (
+              <Text style={[styles.quickMeta, { color: theme.colors.textSubtle }]}>
+                {joinMetadataParts([
+                  item.dateModified ? `Modifie le ${formatMetadataDate(item.dateModified)}` : null,
+                  formatSizeBytes(item.sizeBytes),
+                ])}
+              </Text>
+            ) : null}
           </Pressable>
         ))}
       </SectionCard>
@@ -138,6 +153,13 @@ export default function DashboardScreen() {
 function formatStatusValue(value: string | undefined, fallback: string) {
   const trimmed = value?.trim();
   return trimmed ? trimmed : fallback;
+}
+
+function formatIndexingStatus(indexing: NonNullable<ReturnType<typeof useSystemStatus>['data']>['indexing']) {
+  if (!indexing?.running) {
+    return 'Aucun traitement en cours';
+  }
+  return formatStatusValue(indexing.current, 'Indexation en cours');
 }
 
 function buildDashboardBadges(data: NonNullable<ReturnType<typeof useSystemStatus>['data']>): HeroBadge[] {
@@ -186,8 +208,6 @@ const styles = StyleSheet.create({
   heroCard: {
     borderRadius: 28,
     borderWidth: 1,
-    borderColor: '#decdb8',
-    backgroundColor: '#fbf5ea',
     paddingHorizontal: 18,
     paddingVertical: 20,
     flexDirection: 'row',
@@ -204,46 +224,38 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   heroEyebrow: {
-    color: '#8a562b',
     fontSize: 12,
     fontWeight: '800',
     letterSpacing: 0.9,
     textTransform: 'uppercase',
   },
   heroTitle: {
-    color: '#1f160c',
     fontSize: 28,
     fontWeight: '800',
   },
   heroSubtitle: {
-    color: '#6f5d49',
     fontSize: 14,
     lineHeight: 20,
   },
   activeModelCard: {
     borderRadius: 16,
     borderWidth: 1,
-    borderColor: '#e4cfb1',
-    backgroundColor: '#fffaf2',
     paddingHorizontal: 12,
     paddingVertical: 10,
     gap: 4,
   },
   activeModelLabel: {
-    color: '#8a562b',
     fontSize: 11,
     fontWeight: '800',
     letterSpacing: 0.6,
     textTransform: 'uppercase',
   },
   activeModelValue: {
-    color: '#1f160c',
     fontSize: 14,
     lineHeight: 20,
     fontWeight: '700',
   },
   activeModelMeta: {
-    color: '#6f5d49',
     fontSize: 12,
     lineHeight: 18,
     fontWeight: '600',
@@ -294,27 +306,20 @@ const styles = StyleSheet.create({
   },
   input: {
     borderWidth: 1,
-    borderColor: '#d8cfc0',
     borderRadius: 14,
-    backgroundColor: '#ffffff',
     paddingHorizontal: 14,
     paddingVertical: 12,
-    color: '#1f160c',
   },
   quickResult: {
     borderRadius: 14,
     borderWidth: 1,
-    borderColor: '#e0d5c7',
-    backgroundColor: '#f8f3eb',
     padding: 12,
     gap: 4,
   },
   quickTitle: {
-    color: '#1f160c',
     fontWeight: '700',
   },
   quickMeta: {
-    color: '#6f5d49',
     fontSize: 12,
   },
 });

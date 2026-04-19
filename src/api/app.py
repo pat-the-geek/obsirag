@@ -99,6 +99,61 @@ STREAM_ENRICHMENT_STEPS: list[tuple[str, str]] = [
 ]
 
 
+def _slugify_note_candidate(value: str) -> str:
+    normalized = unicodedata.normalize("NFD", str(value or "").strip().lower())
+    normalized = "".join(character for character in normalized if unicodedata.category(character) != "Mn")
+    normalized = re.sub(r"[^a-z0-9]+", "-", normalized)
+    return normalized.strip("-")
+
+
+def _resolve_note_path_identifier(note_path: str, svc) -> tuple[str, dict[str, Any] | None]:
+    normalized = normalize_vault_relative_path(note_path)
+    if not normalized:
+        return normalized, None
+
+    exact_candidates = [normalized]
+    if not normalized.endswith(".md"):
+        exact_candidates.append(f"{normalized}.md")
+
+    for candidate in exact_candidates:
+        note = svc.chroma.get_note_by_file_path(candidate)
+        if note is not None:
+            return candidate, note
+
+    target_stem = Path(normalized).stem.lower()
+    target_slug = _slugify_note_candidate(Path(normalized).stem)
+    matches: list[tuple[str, dict[str, Any]]] = []
+
+    for note in svc.chroma.list_notes():
+        file_path = normalize_vault_relative_path(str(note.get("file_path") or ""))
+        if not file_path:
+            continue
+
+        stem = Path(file_path).stem
+        title = str(note.get("title") or stem)
+        aliases = {
+            file_path.lower(),
+            stem.lower(),
+            _slugify_note_candidate(stem),
+            _slugify_note_candidate(title),
+        }
+        if target_stem in aliases or target_slug in aliases:
+            matches.append((file_path, note))
+
+    if len(matches) == 1:
+        return matches[0]
+
+    exact_stem_matches = [match for match in matches if Path(match[0]).stem.lower() == target_stem]
+    if len(exact_stem_matches) == 1:
+        return exact_stem_matches[0]
+
+    exact_slug_matches = [match for match in matches if _slugify_note_candidate(Path(match[0]).stem) == target_slug]
+    if len(exact_slug_matches) == 1:
+        return exact_slug_matches[0]
+
+    return normalized, None
+
+
 def _build_generation_stats(answer: str, started_at: float, *, ttft: float = 0.0) -> dict[str, float | int]:
     elapsed = max(time.perf_counter() - started_at, 0.001)
     token_count = len(answer.split())
@@ -295,6 +350,24 @@ def _normalize_indexing_status(payload: dict[str, Any] | None) -> dict[str, Any]
         "total": total,
         "current": current,
     }
+
+
+def _conversation_size_bytes(conversation: ConversationDetailModel) -> int:
+    return len(conversation.model_dump_json().encode("utf-8"))
+
+
+def _artifact_size_bytes(file_path: str) -> int | None:
+    if not file_path:
+        return None
+
+    try:
+        return resolve_vault_path(file_path, vault_root=settings.vault).stat().st_size
+    except OSError:
+        return None
+
+
+def _with_conversation_size(conversation: ConversationDetailModel) -> ConversationDetailModel:
+    return conversation.model_copy(update={"sizeBytes": _conversation_size_bytes(conversation)})
 
 
 def _load_index_state() -> dict[str, str]:
@@ -500,6 +573,7 @@ def list_conversations(_: None = Depends(require_api_auth)) -> list[Conversation
             title=item.title,
             preview=_conversation_preview(item),
             updatedAt=item.updatedAt,
+            sizeBytes=_conversation_size_bytes(item),
             turnCount=len([message for message in item.messages if message.role == "user"]),
             messageCount=len(item.messages),
         )
@@ -509,7 +583,7 @@ def list_conversations(_: None = Depends(require_api_auth)) -> list[Conversation
 
 @app.post("/api/v1/conversations", response_model=ConversationDetailModel)
 def create_conversation(payload: CreateConversationRequest, _: None = Depends(require_api_auth)) -> ConversationDetailModel:
-    return conversation_store.create(payload.title)
+    return _with_conversation_size(conversation_store.create(payload.title))
 
 
 @app.get("/api/v1/conversations/{conversation_id}", response_model=ConversationDetailModel)
@@ -517,7 +591,7 @@ def get_conversation(conversation_id: str, _: None = Depends(require_api_auth)) 
     item = conversation_store.repair_unanswered_tail(conversation_id)
     if item is None:
         raise HTTPException(status_code=404, detail="Conversation not found")
-    return item
+    return _with_conversation_size(item)
 
 
 @app.delete("/api/v1/conversations/{conversation_id}")
@@ -537,7 +611,7 @@ def delete_conversation_message(
     updated = conversation_store.delete_message(conversation_id, message_id)
     if updated is None:
         raise HTTPException(status_code=404, detail="Message not found")
-    return updated
+    return _with_conversation_size(updated)
 
 
 @app.post("/api/v1/conversations/{conversation_id}/save", response_model=SaveConversationResponse)
@@ -766,6 +840,7 @@ def list_notes(_: None = Depends(require_api_auth)) -> list[RelatedNoteModel]:
             title=note.get("title") or Path(note["file_path"]).stem,
             filePath=note["file_path"],
             dateModified=note.get("date_modified"),
+            sizeBytes=_artifact_size_bytes(note["file_path"]),
         )
         for note in svc.chroma.list_notes_sorted_by_title()
     ]
@@ -786,6 +861,7 @@ def search_notes(q: str, _: None = Depends(require_api_auth)) -> list[RelatedNot
             title=note.get("title") or Path(note["file_path"]).stem,
             filePath=note["file_path"],
             dateModified=note.get("date_modified"),
+            sizeBytes=_artifact_size_bytes(note["file_path"]),
         )
         for note in matches[:20]
     ]
@@ -794,8 +870,7 @@ def search_notes(q: str, _: None = Depends(require_api_auth)) -> list[RelatedNot
 @app.get("/api/v1/notes/{note_path:path}", response_model=NoteDetailModel)
 def get_note(note_path: str, _: None = Depends(require_api_auth)) -> NoteDetailModel:
     svc = get_service_manager()
-    normalized = normalize_vault_relative_path(note_path)
-    note = svc.chroma.get_note_by_file_path(normalized)
+    normalized, note = _resolve_note_path_identifier(note_path, svc)
     if note is None:
         raise HTTPException(status_code=404, detail="Note not found")
     abs_path = resolve_vault_path(normalized)
@@ -812,6 +887,7 @@ def get_note(note_path: str, _: None = Depends(require_api_auth)) -> NoteDetailM
         backlinks=[_related_note_from_note(item) for item in backlinks],
         links=[_related_note_from_link(link, svc) for link in note.get("wikilinks", [])],
         dateModified=note.get("date_modified"),
+        sizeBytes=_artifact_size_bytes(normalized),
         noteType=get_note_type(normalized),
         outline=extract_note_outline(content),
     )
@@ -822,8 +898,7 @@ def detect_note_synapses(note_path: str, _: None = Depends(require_api_auth)) ->
     svc = get_service_manager()
     svc.signal_ui_active()
 
-    normalized = normalize_vault_relative_path(note_path)
-    note = svc.chroma.get_note_by_file_path(normalized)
+    normalized, note = _resolve_note_path_identifier(note_path, svc)
     if note is None:
         raise HTTPException(status_code=404, detail="Note not found")
 
@@ -860,6 +935,7 @@ def detect_note_synapses(note_path: str, _: None = Depends(require_api_auth)) ->
                 title=created_path.stem.replace("_", " "),
                 filePath=relative_path,
                 dateModified=datetime.now(UTC).isoformat(),
+                sizeBytes=_artifact_size_bytes(relative_path),
             )
         )
 
@@ -887,17 +963,19 @@ def list_insights(_: None = Depends(require_api_auth)) -> list[InsightItemModel]
     svc = get_service_manager()
     entries: list[InsightItemModel] = []
     for note in svc.chroma.list_generated_notes():
-        kind = _artifact_kind(note.get("file_path", ""))
+        file_path = note.get("file_path", "")
+        kind = _artifact_kind(file_path)
         entries.append(
             InsightItemModel(
-                id=note.get("file_path", ""),
-                title=note.get("title") or Path(note.get("file_path", "")).stem,
-                filePath=note.get("file_path", ""),
+                id=file_path,
+                title=note.get("title") or Path(file_path).stem,
+                filePath=file_path,
                 kind=kind,
                 provenance="vault",
                 tags=list(note.get("tags", []) or []),
                 dateModified=note.get("date_modified"),
-                excerpt=_note_excerpt(note.get("file_path", "")),
+                sizeBytes=_artifact_size_bytes(file_path),
+                excerpt=_note_excerpt(file_path),
             )
         )
     return entries
@@ -2179,6 +2257,7 @@ def _related_note_from_note(item: dict) -> RelatedNoteModel:
         title=item.get("title") or Path(item.get("file_path", "")).stem,
         filePath=item.get("file_path", ""),
         dateModified=item.get("date_modified"),
+        sizeBytes=_artifact_size_bytes(item.get("file_path", "")),
     )
 
 

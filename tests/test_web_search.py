@@ -485,6 +485,29 @@ class TestWebSearchPublicApi:
         assert overview["summary"] == "Vue d'ensemble utile"
         assert len(overview["sources"]) == 2
 
+    def test_build_query_overview_from_results_sync_prefers_full_text_when_available(self):
+        llm = MagicMock()
+        with patch("src.ai.web_search._synthesize_ai_overview", return_value="Vue detaillee") as synthesize_mock:
+            overview = web_search.build_query_overview_from_results_sync(
+                "Qui est Ada Lovelace ?",
+                "Ada Lovelace explication analyse histoire contexte",
+                [
+                    {
+                        "title": "Wikipedia",
+                        "href": "https://example.com/ada",
+                        "body": "Court resume",
+                        "full_text": "Texte complet Ada Lovelace avec davantage de contexte.",
+                    }
+                ],
+                llm,
+            )
+
+        assert overview["summary"] == "Vue detaillee"
+        synthesize_args = synthesize_mock.call_args[0]
+        assert synthesize_args[0] == "Qui est Ada Lovelace ?"
+        assert synthesize_args[1] == "Ada Lovelace explication analyse histoire contexte"
+        assert synthesize_args[2][0]["full_text"] == "Texte complet Ada Lovelace avec davantage de contexte."
+
     def test_save_chat_enrichment_insight_creates_markdown_file(self, tmp_settings):
         with patch("src.ai.web_search.settings", tmp_settings):
             path = web_search.save_chat_enrichment_insight(
@@ -633,6 +656,21 @@ class TestWebSearchPublicApi:
         assert merged.startswith("---\n")
         assert "title: Ada" in merged
         assert "obsirag" in merged
+
+    def test_format_entity_contexts_markdown_excludes_obsirag_generated_notes(self):
+        markdown = web_search._format_entity_contexts_markdown([
+            {
+                "value": "Ada Lovelace",
+                "type": "PERSON",
+                "notes": [
+                    {"title": "Generated", "file_path": "obsirag/insights/generated.md"},
+                    {"title": "Ada note", "file_path": "People/Ada.md"},
+                ],
+            }
+        ])
+
+        assert "People/Ada" in markdown
+        assert "obsirag/insights/generated" not in markdown
 
     def test_build_query_overview_sync_returns_empty_when_search_or_summary_fails(self):
         llm = MagicMock()

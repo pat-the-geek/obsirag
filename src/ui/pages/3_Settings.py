@@ -84,7 +84,7 @@ with tab_config:
 
     col1, col2 = st.columns(2)
     col1.text_input("Coffre (lecture)", value=settings.vault_path, disabled=True)
-    col2.text_input("Données système (volume Docker)", value=settings.app_data_dir, disabled=True)
+    col2.text_input("Données système locales", value=settings.app_data_dir, disabled=True)
 
     st.caption(
         "📁 **Dans le coffre** (visibles dans Obsidian) : "
@@ -431,7 +431,7 @@ with tab_runtime_metrics:
 # ---- Index ChromaDB ----
 with tab_index:
     st.markdown("### État de l'index vectoriel")
-    st.caption(f"Stocké dans le volume Docker `obsirag-app-data` — pas dans iCloud")
+    st.caption("Stocké dans les données système locales — pas dans iCloud")
 
     recent_notes = svc.chroma.list_recent_notes(limit=20)
     user_notes = svc.chroma.list_user_notes()
@@ -481,7 +481,7 @@ with tab_danger:
 
     st.markdown("#### Réinitialiser l'index vectoriel")
     st.caption(
-        "Supprime ChromaDB et l'état d'indexation du volume Docker. "
+        "Supprime ChromaDB et l'état d'indexation des données système locales. "
         "Le coffre Obsidian n'est pas modifié. "
         "Une re-indexation complète se lancera au prochain démarrage."
     )

@@ -1,5 +1,6 @@
 import React from 'react';
 import renderer, { act } from 'react-test-renderer';
+import { Text } from 'react-native';
 
 import { aggregateConversationEntityContexts, buildCompactNoteLabel, ConversationEntitySidebar } from '../../components/chat/conversation-entity-sidebar';
 import { ChatMessage } from '../../types/domain';
@@ -79,6 +80,38 @@ describe('ConversationEntitySidebar', () => {
     });
 
     expect(noteCalls).toEqual(['Notes/Alpha-Research-Notebook.md']);
+  });
+
+  it('renders metadata for related notes when available', () => {
+    const tree = renderer.create(
+      <ConversationEntitySidebar
+        entities={[
+          {
+            type: 'person',
+            typeLabel: 'Personne',
+            value: 'Alpha',
+            notes: [
+              {
+                title: 'Alpha Research Notebook',
+                filePath: 'Notes/Alpha-Research-Notebook.md',
+                dateModified: '2026-04-19T14:35:00Z',
+                sizeBytes: 4096,
+              },
+            ],
+          },
+        ]}
+      />,
+    );
+
+    const renderedText = tree.root
+      .findAllByType(Text)
+      .map((node) => {
+        const children = node.props.children;
+        return Array.isArray(children) ? children.join('') : String(children ?? '');
+      })
+      .join('\n');
+
+    expect(renderedText).toContain('4 ko');
   });
 
   it('renders the entity cards inside a dedicated scroll container', () => {

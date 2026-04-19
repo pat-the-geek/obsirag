@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import tempfile
 import threading
 import time
@@ -26,6 +27,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from loguru import logger
 
 from src.config import settings
+from src.ai.mlx_client import clear_mlx_cache
 from src.learning.artifact_writer import AutoLearnArtifactWriter
 from src.learning.entity_services import AutoLearnEntityServices
 from src.learning.note_renamer import AutoLearnNoteRenamer
@@ -120,7 +122,7 @@ Contexte depuis mes notes personnelles :
 Sources web trouvées :
 {web_context}
 
-Rédige une réponse enrichie en français qui apporte de la CONNAISSANCE NOUVELLE par rapport au contexte de mes notes. Appuie-toi sur les sources web pour ajouter des faits, chiffres, études ou exemples concrets. Sois structuré et précis."""
+Rédige une réponse enrichie en français qui apporte de la CONNAISSANCE NOUVELLE par rapport au contexte de mes notes. Appuie-toi uniquement sur le contexte ci-dessus pour ajouter des faits, chiffres, études ou exemples concrets. N'invente aucun chiffre, aucune étude, aucune date ni aucune source. Si une donnée exacte n'est pas explicitement présente dans les sources web ou dans mes notes, dis clairement qu'elle n'est pas disponible. Sois structuré, précis et factuel."""
 
 _WEEKLY_SYNTHESIS_PROMPT = """Tu es un assistant de synthèse pour un coffre Obsidian.
 Voici les notes créées ou modifiées cette semaine :
@@ -133,6 +135,21 @@ Génère une synthèse structurée de la semaine en Markdown :
 - Points à approfondir
 - Questions ouvertes
 Sois concis et percutant (max 400 mots)."""
+
+_USER_VISIBLE_FRENCH_SYSTEM_PROMPT = """Tu rédiges du texte visible par l'utilisateur pour ObsiRAG.
+Réponds exclusivement en français naturel et fluide.
+
+Contraintes strictes :
+- N'utilise aucune autre langue pour la prose, sauf noms propres, titres de notes, citations exactes ou URLs.
+- N'utilise aucun idéogramme ni aucun texte en chinois, japonais, coréen, cyrillique ou arabe dans la réponse finale, sauf si l'utilisateur demande explicitement une citation exacte.
+- Si le texte source contient plusieurs langues, reformule l'explication intégralement en français.
+- Conserve le sens, la structure utile et les références entre crochets quand elles existent.
+- Réponds uniquement avec le texte final.
+"""
+
+_DISALLOWED_USER_VISIBLE_SCRIPT_RE = re.compile(
+    r"[\u0400-\u04FF\u0600-\u06FF\u4E00-\u9FFF\u3040-\u30FF\uAC00-\uD7AF]"
+)
 
 _QUESTION_PREFIX_RE = re.compile(r"^[•\*\-]?\s*(?:Q\d+[.:）]|Question\s*\d*[.:]|\d+[.)]\s*)?\s*", re.I)
 
@@ -229,6 +246,182 @@ class AutoLearner:
     def _json_store(self, path: Path) -> JsonStateStore:
         return JsonStateStore(path, os_module=os, tempfile_module=tempfile)
 
+    @staticmethod
+    def _contains_disallowed_user_visible_script(text: str) -> bool:
+        return bool(_DISALLOWED_USER_VISIBLE_SCRIPT_RE.search(text or ""))
+
+    def _rewrite_user_visible_text_in_french(self, text: str, *, operation: str) -> str:
+        prompt = (
+            "Réécris le texte suivant en français naturel et homogène. "
+            "Supprime toute portion dans une autre langue, sauf les noms propres, titres exacts, "
+            "wikilinks, URLs et citations indispensables. Réponds uniquement avec la version finale.\n\n"
+            f"Texte à réécrire :\n{text}"
+        )
+        try:
+            rewritten = self._rag._llm.chat(
+                [
+                    {"role": "system", "content": _USER_VISIBLE_FRENCH_SYSTEM_PROMPT},
+                    {"role": "user", "content": prompt},
+                ],
+                temperature=0.1,
+                max_tokens=self._MAX_TOKENS_RESPONSE,
+                operation=f"{operation}_rewrite_fr",
+            )
+            normalized = str(rewritten or "").strip()
+            return normalized or text
+        except Exception as exc:
+            logger.debug(f"Réécriture française échouée ({operation}) : {exc}")
+            return text
+
+    def _chat_user_visible_french(
+        self,
+        user_prompt: str,
+        *,
+        temperature: float,
+        max_tokens: int,
+        operation: str,
+    ) -> str:
+        answer = self._rag._llm.chat(
+            [
+                {"role": "system", "content": _USER_VISIBLE_FRENCH_SYSTEM_PROMPT},
+                {"role": "user", "content": user_prompt},
+            ],
+            temperature=temperature,
+            max_tokens=max_tokens,
+            operation=operation,
+        )
+        normalized = str(answer or "").strip()
+        if self._contains_disallowed_user_visible_script(normalized):
+            normalized = self._rewrite_user_visible_text_in_french(normalized, operation=operation)
+        return normalized
+
+    @staticmethod
+    def _is_archive_artifact_path(path: str | Path) -> bool:
+        return bool(re.search(r"_archive(?:_[a-z]+)?_\d{8}(?:_\d{6})?", str(path)))
+
+    @staticmethod
+    def _normalize_note_reference(ref: str) -> str:
+        value = str(ref or "").strip()
+        if value.startswith("[[") and value.endswith("]]"):
+            value = value[2:-2]
+        return value.split("|", 1)[0].split("#", 1)[0].strip()
+
+    def _resolve_note_reference(self, ref: str | None) -> dict | None:
+        normalized = self._normalize_note_reference(ref or "")
+        if not normalized:
+            return None
+
+        candidates = [normalized]
+        if not normalized.endswith(".md"):
+            candidates.append(f"{normalized}.md")
+
+        get_note_by_file_path = getattr(self._chroma, "get_note_by_file_path", None)
+        if callable(get_note_by_file_path):
+            for candidate in candidates:
+                try:
+                    note = get_note_by_file_path(candidate)
+                except Exception:
+                    note = None
+                if note:
+                    return note
+
+        try:
+            notes = list(self._chroma.list_notes())
+        except Exception:
+            notes = []
+
+        normalized_lower = normalized.lower()
+        normalized_stem = Path(normalized).stem.lower()
+        for note in notes:
+            file_path = str(note.get("file_path", "")).strip()
+            title = str(note.get("title", "")).strip()
+            if not file_path:
+                continue
+            if file_path in candidates:
+                return note
+            if file_path.lower() == normalized_lower:
+                return note
+            if Path(file_path).stem.lower() in {normalized_lower, normalized_stem}:
+                return note
+            if title.lower() in {normalized_lower, normalized_stem}:
+                return note
+        return None
+
+    @staticmethod
+    def _archive_artifact_copy(path: Path, *, reason: str) -> Path:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        archive_path = path.with_stem(path.stem + f"_archive_{reason}_{timestamp}")
+        shutil.copy2(path, archive_path)
+        return archive_path
+
+    @staticmethod
+    def _should_rewrite_markdown_block(block: str) -> bool:
+        lines = [line for line in block.splitlines() if line.strip()]
+        if not lines:
+            return False
+        stripped_lines = [line.lstrip() for line in lines]
+        if any(line.startswith((">", "```", "|")) for line in stripped_lines):
+            return False
+        preserve_prefixes = (
+            "#",
+            "**Note source",
+            "**Similarité sémantique",
+            "**Découverte le",
+            "**Générée le",
+            "**Mise à jour le",
+            "**Provenance",
+            "*Notes consultées",
+            "*Références web",
+            "![",
+        )
+        return not all(line.startswith(preserve_prefixes) for line in stripped_lines)
+
+    def _rewrite_contaminated_markdown_blocks(self, content: str, *, operation: str) -> tuple[str, bool]:
+        if not self._contains_disallowed_user_visible_script(content):
+            return content, False
+
+        end = self._fm_end(content)
+        prefix = content[:end] if end != -1 else ""
+        body = content[end:] if end != -1 else content
+        parts = re.split(r"(\n\s*\n)", body)
+        changed = False
+
+        for index in range(0, len(parts), 2):
+            block = parts[index]
+            if not self._contains_disallowed_user_visible_script(block):
+                continue
+            if not self._should_rewrite_markdown_block(block):
+                continue
+            trailing_newline = "\n" if block.endswith("\n") else ""
+            rewritten = self._rewrite_user_visible_text_in_french(block.strip(), operation=operation).strip()
+            if rewritten and rewritten != block.strip():
+                parts[index] = rewritten + trailing_newline
+                changed = True
+
+        return prefix + "".join(parts), changed
+
+    def _rewrite_generated_artifact_in_french(self, path: Path, *, operation: str, dry_run: bool = False) -> bool:
+        if not path.exists() or self._is_archive_artifact_path(path):
+            return False
+
+        content = path.read_text(encoding="utf-8")
+        rewritten, changed = self._rewrite_contaminated_markdown_blocks(content, operation=operation)
+        if not changed or rewritten == content:
+            return False
+        if dry_run:
+            return True
+
+        self._archive_artifact_copy(path, reason="cleanup")
+        path.write_text(rewritten, encoding="utf-8")
+        try:
+            self._indexer.index_note(path)
+        except Exception:
+            pass
+        invalidate_list_notes_cache = getattr(self._chroma, "invalidate_list_notes_cache", None)
+        if callable(invalidate_list_notes_cache):
+            invalidate_list_notes_cache()
+        return True
+
     def _is_first_insight_run(self) -> bool:
         """Vrai si le bulk initial n'a jamais été complété.
         Une fois le bulk terminé, le fichier bulk_done.flag est créé et cette méthode retourne False."""
@@ -317,8 +510,7 @@ class AutoLearner:
 
     def _finalize_bulk_initial(self) -> None:
         try:
-            import mlx.core as mx
-            mx.metal.clear_cache()
+            clear_mlx_cache()
             logger.debug("Cache Metal MLX libéré (fin mode accéléré)")
         except Exception:
             pass
@@ -637,8 +829,7 @@ class AutoLearner:
             except Exception:
                 pass
             try:
-                import mlx.core as mx
-                mx.metal.clear_cache()
+                clear_mlx_cache()
                 logger.debug("Cache Metal MLX libéré (fin cycle)")
             except Exception:
                 pass
@@ -649,28 +840,12 @@ class AutoLearner:
         note_meta: dict,
         sleep_between_questions: int | None = None,
     ) -> None:
-        _sleep_q = sleep_between_questions if sleep_between_questions is not None else self._SLEEP_BETWEEN_QUESTIONS
         file_path = str(note_meta.get("file_path", "")).strip()
         title = note_meta.get("title", note_meta["file_path"])
         logger.info(f"Auto-learner : traitement de '{title}'")
-        self._set_status(note=title, step="Récupération des chunks…", file_path=file_path)
-
-        chunks = self._chroma.search(title, top_k=5)
-        if not chunks:
-            logger.warning(f"Auto-learner : aucun chunk trouvé pour '{title}'")
-            self._set_status(note=title, step="⚠️ Aucun chunk trouvé, note ignorée", file_path=file_path)
-            try:
-                self._metrics.increment("autolearn_notes_skipped_total")
-            except Exception:
-                pass
-            return
-
-        content_preview = "\n\n".join(c["text"] for c in chunks[:3])
-        qa_pair = self._question_answering.generate_valid_qa_pair(
-            title,
-            content_preview,
-            sleep_between_questions=_sleep_q,
-            max_retries=self._MAX_QUESTION_RETRIES,
+        qa_pair, content_preview = self._generate_valid_qa_pair_for_note(
+            note_meta,
+            sleep_between_questions=sleep_between_questions,
         )
         qa_pairs = [qa_pair] if qa_pair else []
 
@@ -711,6 +886,161 @@ class AutoLearner:
                         self._set_status(note=new_title, step=f"✅ Note renommée → '{new_title}'", file_path=file_path)
                     else:
                         self._set_status(note=title, step="⚠️ Renommage annulé (conflit ou erreur)", file_path=file_path)
+
+    def _generate_valid_qa_pair_for_note(
+        self,
+        note_meta: dict,
+        *,
+        sleep_between_questions: int | None = None,
+    ) -> tuple[dict | None, str]:
+        _sleep_q = sleep_between_questions if sleep_between_questions is not None else self._SLEEP_BETWEEN_QUESTIONS
+        file_path = str(note_meta.get("file_path", "")).strip()
+        title = note_meta.get("title", note_meta["file_path"])
+        self._set_status(note=title, step="Récupération des chunks…", file_path=file_path)
+
+        chunks = self._load_note_chunks(file_path=file_path, title=title, top_k=5)
+        if not chunks:
+            logger.warning(f"Auto-learner : aucun chunk trouvé pour '{title}'")
+            self._set_status(note=title, step="⚠️ Aucun chunk trouvé, note ignorée", file_path=file_path)
+            try:
+                self._metrics.increment("autolearn_notes_skipped_total")
+            except Exception:
+                pass
+            return None, ""
+
+        content_preview = "\n\n".join(chunk["text"] for chunk in chunks[:3])
+        qa_pair = self._question_answering.generate_valid_qa_pair(
+            title,
+            content_preview,
+            sleep_between_questions=_sleep_q,
+            max_retries=self._MAX_QUESTION_RETRIES,
+        )
+        return qa_pair, content_preview
+
+    def _regenerate_insight_artifact(self, path: Path, *, dry_run: bool = False) -> bool:
+        if not path.exists() or self._is_archive_artifact_path(path):
+            return False
+
+        content = path.read_text(encoding="utf-8")
+        source_ref = self._artifact_writer.extract_source_note_ref(content)
+        note_meta = self._resolve_note_reference(source_ref)
+        if note_meta is None:
+            return False
+
+        qa_pair, _ = self._generate_valid_qa_pair_for_note(note_meta, sleep_between_questions=0)
+        if not qa_pair:
+            return False
+
+        qa_pairs = [qa_pair]
+        global_provenance = self._compute_global_provenance(qa_pairs)
+        qa_text = " ".join(qa["question"] + " " + qa["answer"] for qa in qa_pairs)
+        ner_tags, entity_images = self._extract_validated_entities(qa_text)
+        source_tags = [tag for tag in note_meta.get("tags", []) if tag]
+        rebuilt = self._build_new_insight_document(
+            note_meta.get("title", note_meta.get("file_path", path.stem)),
+            note_meta,
+            qa_pairs,
+            source_tags,
+            ner_tags,
+            entity_images,
+            global_provenance,
+        )
+        if dry_run:
+            return True
+
+        self._archive_artifact_copy(path, reason="regen")
+        path.write_text(rebuilt, encoding="utf-8")
+        try:
+            self._indexer.index_note(path)
+        except Exception:
+            pass
+        invalidate_list_notes_cache = getattr(self._chroma, "invalidate_list_notes_cache", None)
+        if callable(invalidate_list_notes_cache):
+            invalidate_list_notes_cache()
+        return True
+
+    def _regenerate_synapse_artifact(self, path: Path, *, dry_run: bool = False) -> bool:
+        if not path.exists() or self._is_archive_artifact_path(path):
+            return False
+
+        content = path.read_text(encoding="utf-8")
+        ref_a, ref_b = self._synapse_discovery.extract_synapse_note_refs(content)
+        note_a = self._resolve_note_reference(ref_a)
+        note_b = self._resolve_note_reference(ref_b)
+        if note_a is None or note_b is None:
+            return False
+
+        existing_links = {str(wikilink).lower() for wikilink in note_a.get("wikilinks", [])}
+        candidate = None
+        find_similar_notes = getattr(self._chroma, "find_similar_notes", None)
+        if callable(find_similar_notes):
+            try:
+                similar = find_similar_notes(
+                    source_fp=note_a["file_path"],
+                    existing_links=existing_links,
+                    top_k=50,
+                    threshold=0.0,
+                )
+            except Exception:
+                similar = []
+            candidate = next(
+                (item for item in similar if item.get("file_path") == note_b.get("file_path")),
+                None,
+            )
+
+        if candidate is None:
+            similarity = self._synapse_discovery.extract_synapse_similarity(content)
+            chunks_b = self._load_note_chunks(
+                file_path=str(note_b.get("file_path", "")),
+                title=str(note_b.get("title", note_b.get("file_path", ""))),
+                top_k=1,
+            )
+            candidate = {
+                "file_path": note_b.get("file_path", ""),
+                "title": note_b.get("title", note_b.get("file_path", "")),
+                "score": similarity if similarity is not None else self._get_settings().autolearn_synapse_threshold,
+                "excerpt": chunks_b[0]["text"][:300] if chunks_b else "",
+            }
+
+        if dry_run:
+            return True
+
+        self._archive_artifact_copy(path, reason="regen")
+        self._create_synapse_artifact(note_a, candidate, output_path=path)
+        try:
+            self._indexer.index_note(path)
+        except Exception:
+            pass
+        invalidate_list_notes_cache = getattr(self._chroma, "invalidate_list_notes_cache", None)
+        if callable(invalidate_list_notes_cache):
+            invalidate_list_notes_cache()
+        return True
+
+    def _load_note_chunks(self, *, file_path: str, title: str, top_k: int) -> list[dict]:
+        get_chunks_by_file_path = getattr(self._chroma, "get_chunks_by_file_path", None)
+        if callable(get_chunks_by_file_path) and file_path:
+            chunks = list(get_chunks_by_file_path(file_path, top_k=top_k) or [])
+            if chunks:
+                return chunks
+
+        search_by_note_title = getattr(self._chroma, "search_by_note_title", None)
+        if callable(search_by_note_title) and title:
+            chunks = list(search_by_note_title(title, top_k=top_k) or [])
+            exact_match = [chunk for chunk in chunks if (chunk.get("metadata") or {}).get("file_path") == file_path]
+            if exact_match:
+                return exact_match[:top_k]
+            if chunks:
+                return chunks
+
+        semantic_search = getattr(self._chroma, "search", None)
+        if not callable(semantic_search) or not title:
+            return []
+
+        chunks = list(semantic_search(title, top_k=top_k) or [])
+        exact_match = [chunk for chunk in chunks if (chunk.get("metadata") or {}).get("file_path") == file_path]
+        if exact_match:
+            return exact_match[:top_k]
+        return chunks
 
     def _is_weak_answer(self, answer: str) -> bool:
         return len(answer.strip()) < _MIN_ANSWER_LENGTH or bool(_WEAK_ANSWER_PATTERNS.search(answer))
@@ -772,6 +1102,9 @@ class AutoLearner:
 
     def _web_search(self, query: str) -> list[dict]:
         return self._web_enrichment.web_search(query)
+
+    def _build_web_search_query(self, query: str) -> str:
+        return self._web_enrichment.build_search_query(query)
 
     @staticmethod
     def _snippets_relevant(question: str, snippets: list[str]) -> bool:
@@ -879,8 +1212,20 @@ class AutoLearner:
 
     # ---- Recherche et mise à jour d'artefacts existants ----
 
-    def _find_existing_insight(self, note_title: str, ner_tags: list[str]) -> Path | None:
-        return self._artifact_writer.find_existing_insight(note_title, ner_tags)
+    def _find_existing_insight(
+        self,
+        note_title: str,
+        ner_tags: list[str],
+        *,
+        source_tags: list[str] | None = None,
+        source_note_path: str = "",
+    ) -> Path | None:
+        return self._artifact_writer.find_existing_insight(
+            note_title,
+            ner_tags,
+            source_tags=source_tags,
+            source_note_path=source_note_path,
+        )
 
     @staticmethod
     def _wikilink(file_path: str) -> str:
@@ -957,8 +1302,8 @@ class AutoLearner:
     def _discover_synapses(self, all_notes: list[dict]) -> None:
         self._synapse_discovery.discover_synapses(all_notes)
 
-    def _create_synapse_artifact(self, note_a: dict, note_b_info: dict):
-        return self._synapse_discovery.create_synapse_artifact(note_a, note_b_info)
+    def _create_synapse_artifact(self, note_a: dict, note_b_info: dict, *, output_path: Path | None = None):
+        return self._synapse_discovery.create_synapse_artifact(note_a, note_b_info, output_path=output_path)
 
     # ---- Synthèse hebdomadaire ----
 
@@ -991,8 +1336,8 @@ class AutoLearner:
                     summary_lines.append(f"- **{n['title']}** : {preview}…")
 
             prompt = _WEEKLY_SYNTHESIS_PROMPT.format(notes_summary="\n".join(summary_lines))
-            synthesis = self._rag._llm.chat(
-                [{"role": "user", "content": prompt}],
+            synthesis = self._chat_user_visible_french(
+                prompt,
                 temperature=0.5,
                 max_tokens=2048,
                 operation="autolearn_synthesis",

@@ -19,17 +19,53 @@ class AutoLearnArtifactWriter:
         self._owner = owner
 
     @staticmethod
+    def normalize_provenance_label(provenance: str | None) -> str:
+        value = (provenance or "Coffre").strip()
+        if value in {"Web + Coffre", "Coffre + Web", "Coffre et Web"}:
+            return "Coffre et Web"
+        return value or "Coffre"
+
+    @staticmethod
     def wikilink(file_path: str) -> str:
         return f"[[{file_path.removesuffix('.md')}]]"
 
     @staticmethod
+    def _is_obsirag_generated_path(file_path: str) -> bool:
+        normalized = str(file_path or "").replace("\\", "/")
+        return "/obsirag/" in normalized or normalized.startswith("obsirag/")
+
+    @classmethod
+    def filter_source_paths(cls, sources: list[str]) -> list[str]:
+        cleaned: list[str] = []
+        seen: set[str] = set()
+        for source in sources:
+            value = str(source or "").strip()
+            if not value or value in seen:
+                continue
+            seen.add(value)
+            cleaned.append(value)
+
+        user_sources = [source for source in cleaned if not cls._is_obsirag_generated_path(source)]
+        return user_sources or cleaned
+
+    @staticmethod
     def compute_global_provenance(qa_pairs: list[dict]) -> str:
-        provenances = {qa.get("provenance", "Coffre") for qa in qa_pairs}
-        if "Coffre et Web" in provenances or ("Coffre" in provenances and "Web" in provenances):
+        normalized = {
+            AutoLearnArtifactWriter.normalize_provenance_label(qa.get("provenance", "Coffre"))
+            for qa in qa_pairs
+        }
+        if "Coffre et Web" in normalized or ("Coffre" in normalized and "Web" in normalized):
             return "Coffre et Web"
-        if "Web" in provenances:
+        if "Web" in normalized:
             return "Web"
         return "Coffre"
+
+    @staticmethod
+    def _extract_global_provenance(content: str) -> str:
+        match = re.search(r"^\*\*Provenance :\*\*\s+(.+)$", content, re.MULTILINE)
+        if not match:
+            return "Coffre"
+        return AutoLearnArtifactWriter.normalize_provenance_label(match.group(1).strip())
 
     def render_qa_sections(
         self,
@@ -37,11 +73,22 @@ class AutoLearnArtifactWriter:
         *,
         start_index: int = 1,
         provenance: str,
+        source_note_path: str = "",
     ) -> list[str]:
         lines: list[str] = []
         for index, qa in enumerate(qa_pairs, start_index):
-            provenance_label = qa.get("provenance", provenance)
-            source_links = ", ".join(self.wikilink(source) for source in qa["sources"] if source)
+            provenance_label = self.normalize_provenance_label(qa.get("provenance", provenance))
+            filtered_sources = self.filter_source_paths(qa.get("sources", []))
+            if (
+                source_note_path
+                and not self._is_obsirag_generated_path(source_note_path)
+                and (
+                    not filtered_sources
+                    or all(self._is_obsirag_generated_path(source) for source in filtered_sources)
+                )
+            ):
+                filtered_sources = [source_note_path]
+            source_links = ", ".join(self.wikilink(source) for source in filtered_sources if source)
             lines.extend([
                 f"## Question {index}",
                 "",
@@ -103,13 +150,33 @@ class AutoLearnArtifactWriter:
             count=1,
         )
 
-    def find_existing_insight(self, note_title: str, ner_tags: list[str]) -> Path | None:
+    @staticmethod
+    def _extract_source_note_ref(content: str) -> str | None:
+        match = re.search(r"^\*\*Note source :\*\* \[\[(.+?)\]\]", content, re.MULTILINE)
+        if not match:
+            return None
+        return match.group(1).strip()
+
+    @classmethod
+    def extract_source_note_ref(cls, content: str) -> str | None:
+        return cls._extract_source_note_ref(content)
+
+    def find_existing_insight(
+        self,
+        note_title: str,
+        ner_tags: list[str],
+        *,
+        source_tags: list[str] | None = None,
+        source_note_path: str = "",
+    ) -> Path | None:
         insights_root = self._owner._get_settings().insights_dir
         if not insights_root.exists():
             return None
 
         safe_name = re.sub(r"[^\w\s-]", "", note_title).strip().replace(" ", "_")[:60].lower()
         new_ner_set = {tag for tag in ner_tags if "/" in tag}
+        new_source_tag_set = {tag for tag in (source_tags or []) if tag and "/" not in tag and tag != "insight"}
+        source_note_ref = source_note_path.removesuffix(".md") if source_note_path else ""
 
         candidate_paths: list[Path] = []
         list_insight_notes = getattr(self._owner._chroma, "list_insight_notes", None)
@@ -154,19 +221,31 @@ class AutoLearnArtifactWriter:
                 score = 10
             else:
                 score = 0
-                if new_ner_set:
+                try:
+                    content = read_text_file(path, default="")
+                except Exception:
+                    content = ""
+
+                if source_note_ref:
+                    existing_source_ref = self._extract_source_note_ref(content)
+                    if existing_source_ref == source_note_ref:
+                        score = 9
+
+                if score == 0 and new_ner_set and new_source_tag_set:
                     try:
-                        existing_tags = self._owner._read_frontmatter_tags(read_text_file(path, default=""))
+                        existing_tags = self._owner._read_frontmatter_tags(content)
                         existing_ner = {tag for tag in existing_tags if "/" in tag}
+                        existing_source_tags = {tag for tag in existing_tags if "/" not in tag and tag != "insight"}
                         overlap = len(new_ner_set & existing_ner)
-                        if overlap >= 2:
-                            score += overlap * 2
+                        source_overlap = len(new_source_tag_set & existing_source_tags)
+                        if overlap >= 2 and source_overlap >= 1:
+                            score += overlap * 2 + source_overlap
                     except Exception:
                         pass
             if score > best_score:
                 best_score = score
                 best_path = path
-        return best_path if best_score >= 4 else None
+        return best_path if best_score >= 5 else None
 
     def _record_metric(
         self,
@@ -226,7 +305,13 @@ class AutoLearnArtifactWriter:
             "---",
             "",
         ])
-        lines.extend(self.render_qa_sections(qa_pairs, provenance=global_provenance))
+        lines.extend(
+            self.render_qa_sections(
+                qa_pairs,
+                provenance=global_provenance,
+                source_note_path=note_meta.get("file_path", ""),
+            )
+        )
         lines.extend(self.render_web_synthesis_section(note_title, qa_pairs))
         return "\n".join(lines)
 
@@ -242,15 +327,34 @@ class AutoLearnArtifactWriter:
         existing_count = len(re.findall(r"^## Question \d+", content, re.MULTILINE))
         content = self._owner._merge_frontmatter_tags(content, ner_tags)
         content = self.maybe_add_frontmatter_location(content, entity_images)
+        existing_global_provenance = self._extract_global_provenance(content)
+        updated_global_provenance = self.compute_global_provenance([
+            {"provenance": existing_global_provenance},
+            {"provenance": provenance},
+        ])
         content = re.sub(
             r"\*\*(Générée|Mise à jour) le :\*\*.*",
             f"**Mise à jour le :** {datetime.now().strftime('%Y-%m-%d %H:%M')}  ",
             content,
         )
+        content = re.sub(
+            r"^\*\*Provenance :\*\*\s+.+$",
+            f"**Provenance :** {updated_global_provenance}",
+            content,
+            flags=re.MULTILINE,
+        )
         content = self.upsert_entity_gallery(content, entity_images)
+        source_note_path = self._extract_source_note_ref(content) or ""
 
         new_lines = [""]
-        new_lines.extend(self.render_qa_sections(qa_pairs, start_index=existing_count + 1, provenance=provenance))
+        new_lines.extend(
+            self.render_qa_sections(
+                qa_pairs,
+                start_index=existing_count + 1,
+                provenance=provenance,
+                source_note_path=source_note_path,
+            )
+        )
         new_lines.extend(self.render_web_synthesis_section(path.stem, qa_pairs))
         path.write_text(content.rstrip() + "\n" + "\n".join(new_lines), encoding="utf-8")
 
@@ -277,7 +381,12 @@ class AutoLearnArtifactWriter:
         ner_tags, entity_images = self._owner._extract_validated_entities(qa_text)
         source_tags = [tag for tag in note_meta.get("tags", []) if tag]
 
-        existing = self._owner._find_existing_insight(note_title, ner_tags)
+        existing = self._owner._find_existing_insight(
+            note_title,
+            ner_tags,
+            source_tags=source_tags,
+            source_note_path=note_meta.get("file_path", ""),
+        )
         if existing:
             self._owner._append_to_insight(existing, qa_pairs, ner_tags, global_provenance, entity_images)
             return

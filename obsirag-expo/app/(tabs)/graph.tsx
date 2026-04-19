@@ -1,6 +1,6 @@
-import { useDeferredValue, useMemo, useState } from 'react';
+import { startTransition, useDeferredValue, useMemo, useState } from 'react';
 import { ActivityIndicator, Alert, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useLocalSearchParams, usePathname, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useQueryClient } from '@tanstack/react-query';
 
@@ -10,6 +10,7 @@ import { SectionCard } from '../../components/ui/section-card';
 import { TagPill } from '../../components/ui/tag-pill';
 import { useServerConfig } from '../../features/auth/use-server-config';
 import { useGraph, useGraphSubgraph } from '../../features/graph/use-graph';
+import { buildNoteRoute } from '../../utils/note-route';
 
 const FILTER_OPTION_LIMIT = 15;
 const MIN_GRAPH_ZOOM = 0.2;
@@ -18,6 +19,7 @@ const MAX_GRAPH_ZOOM = 10;
 export default function GraphScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
+  const pathname = usePathname();
   const params = useLocalSearchParams<{ tag?: string }>();
   const queryClient = useQueryClient();
   const { api, useMockServer, setUseMockServer } = useServerConfig();
@@ -44,9 +46,10 @@ export default function GraphScreen() {
   }), [deferredSearchText, recencyDays, selectedGroup, selectedTag, selectedType]);
   const { data, isLoading, isRefetching, refetch } = useGraph(graphFilters);
   const subgraph = useGraphSubgraph(focusedNodeId, 1, graphFilters);
-  const graphData = focusedNodeId ? subgraph.data : data;
-  const graphLoading = focusedNodeId ? subgraph.isLoading : isLoading;
-  const graphRefreshing = focusedNodeId ? subgraph.isRefetching : isRefetching;
+  const graphData = focusedNodeId ? (subgraph.data ?? data) : data;
+  const graphLoading = !graphData && (focusedNodeId ? subgraph.isLoading : isLoading);
+  const graphRefreshing = focusedNodeId ? Boolean(subgraph.isLoading || subgraph.isRefetching) : isRefetching;
+  const isResolvingFocusedSubgraph = Boolean(focusedNodeId && !subgraph.data && subgraph.isLoading);
   const availableGroups = useMemo(() => rankOptionsByUsage(
     graphData?.filterOptions.folders ?? [],
     graphData?.nodes.flatMap((node) => node.group ? [node.group] : []) ?? [],
@@ -72,6 +75,7 @@ export default function GraphScreen() {
       .filter((note) => note.title.toLowerCase().includes(search) || note.filePath.toLowerCase().includes(search))
       .slice(0, 8);
   }, [graphData?.noteOptions, noteSearchText]);
+  const isGraphRouteActive = pathname === '/graph' || pathname.endsWith('/graph');
 
   const switchToLiveBackend = async () => {
     setUseMockServer(false);
@@ -87,7 +91,7 @@ export default function GraphScreen() {
       if (firstCreated) {
         Alert.alert('Synapses detectees', result.message, [
           { text: 'Fermer', style: 'cancel' },
-          { text: 'Ouvrir la premiere', onPress: () => router.push(`/(tabs)/note/${encodeURIComponent(firstCreated.filePath)}`) },
+          { text: 'Ouvrir la premiere', onPress: () => router.push(buildNoteRoute(firstCreated.filePath)) },
         ]);
         return;
       }
@@ -152,9 +156,14 @@ export default function GraphScreen() {
           <>
             <KnowledgeGraph
               data={graphData}
+              isActive={isGraphRouteActive}
               {...(focusedNodeId ? { focusedNodeId } : {})}
-              onSelectNode={setFocusedNodeId}
-              onOpenNode={(nodeId) => router.push(`/(tabs)/note/${encodeURIComponent(nodeId)}`)}
+              onSelectNode={(nodeId) => {
+                startTransition(() => {
+                  setFocusedNodeId(nodeId);
+                });
+              }}
+              onOpenNode={(nodeId) => router.push(buildNoteRoute(nodeId))}
               onDetectSynapses={(nodeId) => { void detectSynapsesForNode(nodeId); }}
               onZoomChange={(value) => setZoom(Number(clamp(value, MIN_GRAPH_ZOOM, MAX_GRAPH_ZOOM).toFixed(2)))}
               zoom={zoom}
@@ -183,6 +192,7 @@ export default function GraphScreen() {
             ) : null}
             <Text>{graphData.metrics.nodeCount} noeuds · {graphData.metrics.edgeCount} aretes · densite {graphData.metrics.density}</Text>
             <Text style={styles.helperText}>{graphData.metrics.filteredNoteCount ?? graphData.metrics.nodeCount} / {graphData.metrics.totalNoteCount ?? graphData.metrics.nodeCount} notes affichees</Text>
+            {isResolvingFocusedSubgraph ? <Text style={styles.helperText}>Affinage du voisinage en cours. Le focus est applique immediatement, puis le sous-graphe detaille remplace cette vue des qu'il est pret.</Text> : null}
             <TextInput
               value={searchText}
               onChangeText={setSearchText}
@@ -209,7 +219,7 @@ export default function GraphScreen() {
                 style={styles.searchInput}
               />
               {visibleNoteOptions.length ? visibleNoteOptions.map((note) => (
-                <Pressable key={`note-option-${note.filePath}`} onPress={() => router.push(`/(tabs)/note/${encodeURIComponent(note.filePath)}`)} style={styles.summaryRow}>
+                <Pressable key={`note-option-${note.filePath}`} onPress={() => router.push(buildNoteRoute(note.filePath))} style={styles.summaryRow}>
                   <Text style={styles.summaryRowTitle}>{note.title}</Text>
                   <Text style={styles.summaryRowMeta}>{labelForType(note.noteType ?? 'user')} · {shortPath(note.filePath)}</Text>
                 </Pressable>
@@ -219,7 +229,7 @@ export default function GraphScreen() {
               <View style={styles.summaryCard}>
                 <Text style={styles.summaryTitle}>Parcours par centralite</Text>
                 {graphData.spotlight.length ? graphData.spotlight.map((node) => (
-                  <Pressable key={`spotlight-${node.filePath}`} onPress={() => router.push(`/(tabs)/note/${encodeURIComponent(node.filePath)}`)} style={styles.summaryRow}>
+                  <Pressable key={`spotlight-${node.filePath}`} onPress={() => router.push(buildNoteRoute(node.filePath))} style={styles.summaryRow}>
                     <Text style={styles.summaryRowTitle}>{node.title}</Text>
                     <Text style={styles.summaryRowMeta}>centralite {node.score}{node.dateModified ? ` · ${formatDate(node.dateModified)}` : ''}</Text>
                   </Pressable>
@@ -228,7 +238,7 @@ export default function GraphScreen() {
               <View style={styles.summaryCard}>
                 <Text style={styles.summaryTitle}>Parcours recent</Text>
                 {graphData.recentNotes.length ? graphData.recentNotes.map((node) => (
-                  <Pressable key={`recent-${node.filePath}`} onPress={() => router.push(`/(tabs)/note/${encodeURIComponent(node.filePath)}`)} style={styles.summaryRow}>
+                  <Pressable key={`recent-${node.filePath}`} onPress={() => router.push(buildNoteRoute(node.filePath))} style={styles.summaryRow}>
                     <Text style={styles.summaryRowTitle}>{node.title}</Text>
                     <Text style={styles.summaryRowMeta}>{node.dateModified ? formatDate(node.dateModified) : 'date inconnue'}</Text>
                   </Pressable>
@@ -266,10 +276,10 @@ export default function GraphScreen() {
                 <Text style={styles.nodeTitle}>{node.label}</Text>
                 <Text style={styles.nodeMeta}>Degre {node.degree}</Text>
                 <View style={styles.nodeActions}>
-                  <Pressable onPress={() => setFocusedNodeId(node.id)} style={styles.focusButton}>
+                  <Pressable onPress={() => startTransition(() => setFocusedNodeId(node.id))} style={styles.focusButton}>
                     <Text style={styles.focusButtonText}>Focus</Text>
                   </Pressable>
-                  <Pressable onPress={() => router.push(`/(tabs)/note/${encodeURIComponent(node.id)}`)} style={styles.openButton}>
+                  <Pressable onPress={() => router.push(buildNoteRoute(node.id))} style={styles.openButton}>
                     <Text style={styles.openButtonText}>Ouvrir</Text>
                   </Pressable>
                 </View>

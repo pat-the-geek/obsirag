@@ -2,6 +2,8 @@ import { PropsWithChildren, RefObject } from 'react';
 import { RefreshControl, ScrollView, StyleProp, StyleSheet, View, ViewStyle } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { useAppTheme } from '../../theme/app-theme';
+
 type ScreenProps = PropsWithChildren<{
   scroll?: boolean;
   refreshing?: boolean;
@@ -14,15 +16,16 @@ type ScreenProps = PropsWithChildren<{
 
 export function Screen({ children, scroll = true, refreshing = false, onRefresh, backgroundColor, contentStyle, scrollContentStyle, scrollRef }: ScreenProps) {
   const insets = useSafeAreaInsets();
+  const theme = useAppTheme();
   const content = <View style={[styles.content, contentStyle]}>{children}</View>;
 
   return (
-    <SafeAreaView edges={['top', 'right', 'bottom', 'left']} style={[styles.safeArea, backgroundColor ? { backgroundColor } : null]}>
+    <SafeAreaView edges={['top', 'right', 'bottom', 'left']} style={[styles.safeArea, { backgroundColor: backgroundColor ?? theme.colors.background }, backgroundColor ? { backgroundColor } : null]}>
       {scroll ? (
         <ScrollView
           ref={scrollRef}
           contentContainerStyle={[styles.scroll, { paddingBottom: 20 + insets.bottom }, scrollContentStyle]}
-          refreshControl={onRefresh ? <RefreshControl refreshing={refreshing} onRefresh={onRefresh} /> : undefined}
+          refreshControl={onRefresh ? <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={theme.colors.primary} /> : undefined}
         >
           {content}
         </ScrollView>
@@ -36,7 +39,6 @@ export function Screen({ children, scroll = true, refreshing = false, onRefresh,
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: '#f4f1ea',
   },
   scroll: {
     paddingBottom: 32,

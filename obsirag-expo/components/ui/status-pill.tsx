@@ -1,14 +1,24 @@
 import { StyleSheet, Text, View } from 'react-native';
 
+import { useAppTheme } from '../../theme/app-theme';
+
 type StatusPillProps = {
   label: string;
   tone?: 'neutral' | 'success' | 'warning' | 'danger';
 };
 
 export function StatusPill({ label, tone = 'neutral' }: StatusPillProps) {
+  const theme = useAppTheme();
+  const toneStyle = {
+    neutral: { backgroundColor: theme.colors.neutralSurface, color: theme.colors.neutralText },
+    success: { backgroundColor: theme.colors.successSurface, color: theme.colors.successText },
+    warning: { backgroundColor: theme.colors.warningSurface, color: theme.colors.warningText },
+    danger: { backgroundColor: theme.colors.dangerSurface, color: theme.colors.dangerPillText },
+  }[tone];
+
   return (
-    <View style={[styles.base, styles[tone]]}>
-      <Text style={[styles.text, styles[`${tone}Text`]]}>{label}</Text>
+    <View style={[styles.base, { backgroundColor: toneStyle.backgroundColor }]}>
+      <Text style={[styles.text, { color: toneStyle.color }]}>{label}</Text>
     </View>
   );
 }
@@ -24,12 +34,4 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '700',
   },
-  neutral: { backgroundColor: '#e8e1d6' },
-  success: { backgroundColor: '#dcefd9' },
-  warning: { backgroundColor: '#f6e5c6' },
-  danger: { backgroundColor: '#f3d2d2' },
-  neutralText: { color: '#55442e' },
-  successText: { color: '#255b28' },
-  warningText: { color: '#7a4f00' },
-  dangerText: { color: '#7b1e1e' },
 });

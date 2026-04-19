@@ -247,6 +247,9 @@ _VERIFIER_PROMPT = (
 )
 
 _HARD_SENTINEL = "cette information n'est pas dans ton coffre."
+_DISALLOWED_USER_VISIBLE_SCRIPT_RE = re.compile(
+    r"[\u0400-\u04FF\u0600-\u06FF\u4E00-\u9FFF\u3040-\u30FF\uAC00-\uD7AF]"
+)
 
 
 class RAGPipeline:
@@ -292,11 +295,15 @@ class RAGPipeline:
         user_query: str,
         history: list[dict[str, str]],
         progress_callback: Callable[[dict[str, Any]], None] | None = None,
+        *,
+        exclude_obsirag_generated: bool = False,
     ) -> tuple[str, list[dict], str]:
         self._emit_progress(progress_callback, phase="resolve", message="Analyse de la requête")
         resolved_query = self._resolve_query_with_history(user_query, history)
         self._emit_progress(progress_callback, phase="retrieval", message="Recherche des passages pertinents")
         chunks, intent = self._retrieve(resolved_query, progress_callback=progress_callback)
+        if exclude_obsirag_generated:
+            chunks = self._filter_obsirag_generated_chunks(chunks)
         self._emit_progress(
             progress_callback,
             phase="retrieval",
@@ -552,6 +559,8 @@ class RAGPipeline:
         self,
         user_query: str,
         chat_history: list[dict[str, str]] | None = None,
+        *,
+        exclude_obsirag_generated: bool = False,
     ) -> tuple[str, list[dict]]:
         """Appel bloquant — retourne (réponse, sources). Réduit le contexte si dépassement."""
         try:
@@ -560,7 +569,9 @@ class RAGPipeline:
             pass
         history = chat_history or []
         # PERF-15a : cache hit → retour immédiat sans inférence
-        cached = self._answer_cache.get(user_query, history) if self._answer_cache is not None else None
+        cached = None
+        if self._answer_cache is not None and not exclude_obsirag_generated:
+            cached = self._answer_cache.get(user_query, history)
         if cached is not None:
             logger.debug("[answer_cache] HIT query")
             try:
@@ -568,7 +579,11 @@ class RAGPipeline:
             except Exception:
                 pass
             return cached
-        resolved_query, chunks, intent = self._prepare_query_execution(user_query, history)
+        resolved_query, chunks, intent = self._prepare_query_execution(
+            user_query,
+            history,
+            exclude_obsirag_generated=exclude_obsirag_generated,
+        )
         if not chunks:
             logger.info("RAG: aucun chunk retenu, retour sentinel immédiat")
             try:
@@ -588,7 +603,7 @@ class RAGPipeline:
             ):
                 try:
                     answer = self._run_chat_attempt(messages, context, history, resolved_query, intent)
-                    if self._answer_cache is not None:
+                    if self._answer_cache is not None and not exclude_obsirag_generated:
                         self._answer_cache.put(user_query, history, answer, chunks)
                     return answer, chunks
                 except BadRequestError as exc:
@@ -672,6 +687,9 @@ class RAGPipeline:
 
         text = RAGPipeline._sanitize_structured_study_answer(text)
 
+        if self._contains_disallowed_user_visible_script(text):
+            text = self._rewrite_answer_in_french(text, query=query)
+
         if "### " in text and re.search(re.escape(_HARD_SENTINEL), text, flags=re.IGNORECASE):
             logger.info("RAG normalize: remplacement du hard sentinel embarqué dans une synthèse")
             text = re.sub(
@@ -699,6 +717,37 @@ class RAGPipeline:
         logger.info("RAG normalize: suppression du préfixe hard sentinel sur une réponse mixte")
         text = RAGPipeline._sanitize_structured_study_answer(remainder)
         return self._sanitize_single_subject_answer(text, query, intent)
+
+    @staticmethod
+    def _contains_disallowed_user_visible_script(text: str) -> bool:
+        return bool(_DISALLOWED_USER_VISIBLE_SCRIPT_RE.search(text or ""))
+
+    def _rewrite_answer_in_french(self, text: str, *, query: str) -> str:
+        prompt = (
+            "Réécris la réponse suivante en français naturel et homogène. "
+            "Conserve le sens, les titres Markdown utiles, les titres de notes entre crochets, les wikilinks, "
+            "les URLs et les citations indispensables. N'utilise aucune autre langue pour la prose finale.\n\n"
+            f"Question d'origine : {query}\n\n"
+            f"Réponse à réécrire :\n{text}"
+        )
+        try:
+            rewritten = self._llm.chat(
+                [
+                    {
+                        "role": "system",
+                        "content": "Tu es ObsiRAG. Tu réécris exclusivement en français naturel et tu réponds uniquement avec le texte final.",
+                    },
+                    {"role": "user", "content": prompt},
+                ],
+                temperature=0.1,
+                max_tokens=max(1200, self._max_tokens_for_intent("general")),
+                operation="rag_rewrite_fr",
+            )
+            normalized = str(rewritten or "").strip()
+            return normalized or text
+        except Exception as exc:
+            logger.warning(f"RAG rewrite français échoué : {exc}")
+            return text
 
     def _sanitize_single_subject_answer(self, text: str, query: str, intent: str) -> str:
         """Nettoie une réponse mono-sujet pour éviter la structure étude et les dérives
@@ -931,6 +980,19 @@ class RAGPipeline:
         progress_callback: Callable[[dict[str, Any]], None] | None = None,
     ) -> tuple[list[dict], str]:
         return self._retrieval_strategy.retrieve(query, progress_callback=progress_callback)
+
+    @staticmethod
+    def _is_obsirag_generated_chunk(chunk: dict) -> bool:
+        metadata = chunk.get("metadata") or {}
+        file_path = str(metadata.get("file_path") or "").replace("\\", "/")
+        return "/obsirag/" in file_path or file_path.startswith("obsirag/")
+
+    def _filter_obsirag_generated_chunks(self, chunks: list[dict]) -> list[dict]:
+        filtered = [chunk for chunk in chunks if not self._is_obsirag_generated_chunk(chunk)]
+        dropped = len(chunks) - len(filtered)
+        if dropped > 0:
+            logger.info(f"RAG autolearn: {dropped} chunk(s) ObsiRAG exclus du contexte")
+        return filtered
 
     @staticmethod
     def _extract_proper_nouns(query: str) -> list[str]:

@@ -52,6 +52,7 @@ export const mockConversations: ConversationDetail[] = [
     id: 'conv-1',
     title: 'Mission Artemis II',
     updatedAt: now,
+    sizeBytes: 18_240,
     draft: '',
     messages,
     lastGenerationStats: {
@@ -65,6 +66,7 @@ export const mockConversations: ConversationDetail[] = [
     id: 'conv-2',
     title: 'Finance comportementale',
     updatedAt: now,
+    sizeBytes: 1_024,
     draft: 'Quels biais cognitifs reviennent le plus ?',
     messages: [],
   },
@@ -75,6 +77,7 @@ export const mockConversationSummaries: ConversationSummary[] = mockConversation
   title: item.title,
   preview: item.messages[item.messages.length - 1]?.content ?? 'Fil vide',
   updatedAt: item.updatedAt,
+  sizeBytes: new TextEncoder().encode(JSON.stringify(item)).length,
   turnCount: item.messages.filter((message) => message.role === 'user').length,
   messageCount: item.messages.length,
 }));
@@ -158,15 +161,18 @@ export const mockNotes: NoteDetail[] = [
       {
         title: 'Artemis Program',
         filePath: 'Space/Artemis Program.md',
+        sizeBytes: 6_144,
       },
     ],
     links: [
       {
         title: 'Artemis Program',
         filePath: 'Space/Artemis Program.md',
+        sizeBytes: 6_144,
       },
     ],
     dateModified: now,
+    sizeBytes: 7_680,
     noteType: 'user-note',
   },
   {
@@ -185,9 +191,11 @@ export const mockNotes: NoteDetail[] = [
       {
         title: 'Artemis II',
         filePath: 'Space/Artemis II.md',
+        sizeBytes: 7_680,
       },
     ],
     dateModified: now,
+    sizeBytes: 12_480,
     noteType: 'insight',
   },
 ];
@@ -201,6 +209,7 @@ export const mockInsights: InsightItem[] = [
     provenance: 'hybrid',
     tags: ['insight', 'space', 'obsirag'],
     dateModified: now,
+    sizeBytes: 12_480,
     excerpt: 'Synthese des objectifs et de la logique de validation de la mission.',
   },
   {
@@ -211,6 +220,7 @@ export const mockInsights: InsightItem[] = [
     provenance: 'vault',
     tags: ['synapse', 'finance'],
     dateModified: now,
+    sizeBytes: 3_072,
     excerpt: 'Connexion implicite detectee entre deux notes du coffre.',
   },
 ];

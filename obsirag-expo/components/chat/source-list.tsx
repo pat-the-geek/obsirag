@@ -1,5 +1,7 @@
+import { useMemo } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
+import { useAppTheme } from '../../theme/app-theme';
 import { SourceRef } from '../../types/domain';
 
 type SourceListProps = {
@@ -10,29 +12,32 @@ type SourceListProps = {
 };
 
 export function SourceList({ sources, onSelectSource, isOpen = false, onToggleOpen }: SourceListProps) {
-  if (!sources?.length) {
+  const theme = useAppTheme();
+  const uniqueSources = useMemo(() => dedupeSources(sources), [sources]);
+
+  if (!uniqueSources.length) {
     return null;
   }
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { backgroundColor: theme.colors.surfaceMuted, borderColor: theme.colors.border }]}>
       <Pressable testID="sources-panel-toggle" style={styles.header} onPress={onToggleOpen}>
         <View style={styles.headerCopy}>
-          <Text style={styles.title}>Sources</Text>
-          <Text style={styles.caption}>{sources.length} source{sources.length > 1 ? 's' : ''}</Text>
+          <Text style={[styles.title, { color: theme.colors.text }]}>Sources</Text>
+          <Text style={[styles.caption, { color: theme.colors.textMuted }]}>{uniqueSources.length} source{uniqueSources.length > 1 ? 's' : ''}</Text>
         </View>
-        <Text style={styles.chevron}>{isOpen ? 'Masquer' : 'Afficher'}</Text>
+        <Text style={[styles.chevron, { color: theme.colors.primary }]}>{isOpen ? 'Masquer' : 'Afficher'}</Text>
       </Pressable>
       {isOpen ? (
         <View testID="sources-panel-content" style={styles.content}>
-          {sources.map((source) => (
+          {uniqueSources.map((source) => (
             <Pressable
               key={`${source.filePath}-${source.noteTitle}`}
-              style={styles.item}
+              style={[styles.item, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}
               onPress={onSelectSource ? () => onSelectSource(source) : undefined}
             >
-              <Text style={styles.itemTitle}>{source.noteTitle}</Text>
-              <Text style={styles.itemMeta}>{source.filePath}</Text>
+              <Text style={[styles.itemTitle, { color: theme.colors.text }]}>{source.noteTitle}</Text>
+              <Text style={[styles.itemMeta, { color: theme.colors.textMuted }]}>{source.filePath}</Text>
             </Pressable>
           ))}
         </View>
@@ -45,9 +50,7 @@ const styles = StyleSheet.create({
   container: {
     gap: 8,
     borderRadius: 16,
-    backgroundColor: '#fbf8f3',
     borderWidth: 1,
-    borderColor: '#ded5c9',
     padding: 12,
   },
   header: {
@@ -62,14 +65,11 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 13,
     fontWeight: '700',
-    color: '#3a2c1f',
   },
   caption: {
     fontSize: 12,
-    color: '#7a6855',
   },
   chevron: {
-    color: '#8a562b',
     fontSize: 12,
     fontWeight: '700',
   },
@@ -79,17 +79,80 @@ const styles = StyleSheet.create({
   item: {
     padding: 12,
     borderRadius: 14,
-    backgroundColor: '#fffdfa',
     borderWidth: 1,
-    borderColor: '#ded5c9',
   },
   itemTitle: {
-    color: '#2f2419',
     fontWeight: '700',
   },
   itemMeta: {
-    color: '#7a6855',
     fontSize: 12,
     marginTop: 4,
   },
 });
+
+function dedupeSources(sources?: SourceRef[]): SourceRef[] {
+  if (!sources?.length) {
+    return [];
+  }
+
+  const deduped = new Map<string, SourceRef>();
+  for (const source of sources) {
+    const key = sourceIdentityKey(source);
+    if (!key) {
+      continue;
+    }
+    const current = deduped.get(key);
+    if (!current) {
+      deduped.set(key, source);
+      continue;
+    }
+    const mergedSource: SourceRef = {
+      filePath: current.filePath || source.filePath,
+      noteTitle: current.noteTitle || source.noteTitle || source.filePath || current.filePath,
+      isPrimary: Boolean(current.isPrimary || source.isPrimary),
+    };
+    const mergedDateModified = current.dateModified || source.dateModified;
+    if (mergedDateModified) {
+      mergedSource.dateModified = mergedDateModified;
+    }
+    const mergedScore = mergeScore(current.score, source.score);
+    if (typeof mergedScore === 'number') {
+      mergedSource.score = mergedScore;
+    }
+    deduped.set(key, mergedSource);
+  }
+
+  return Array.from(deduped.values());
+}
+
+function sourceIdentityKey(source: SourceRef): string {
+  const normalizedPath = normalizeSourcePath(source.filePath);
+  const noteTitle = (source.noteTitle || '').trim().toLowerCase().replace(/\s+/g, ' ');
+  if (normalizedPath && noteTitle) {
+    return `${normalizedPath}|${noteTitle}`;
+  }
+  if (normalizedPath) {
+    return normalizedPath;
+  }
+  if (noteTitle) {
+    return `title:${noteTitle}`;
+  }
+  return '';
+}
+
+function normalizeSourcePath(filePath: string): string {
+  return (filePath || '').trim().replace(/\\/g, '/').replace(/^\.\//, '').toLowerCase();
+}
+
+function mergeScore(current?: number, incoming?: number): number | undefined {
+  if (typeof current === 'number' && typeof incoming === 'number') {
+    return Math.max(current, incoming);
+  }
+  if (typeof current === 'number') {
+    return current;
+  }
+  if (typeof incoming === 'number') {
+    return incoming;
+  }
+  return undefined;
+}

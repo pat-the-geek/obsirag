@@ -79,7 +79,7 @@ class ServiceManager:
         self._persist_startup_status(ready=True, current_step="Tous les services sont opérationnels")
 
     def _init_data_dirs(self) -> None:
-        # Données système (volume Docker)
+        # Données système hors coffre
         for d in [
             settings.data_dir,
             settings.data_dir / "stats",
@@ -209,5 +209,8 @@ class ServiceManager:
         except Exception as exc:
             logger.error(f"Erreur lors de l'indexation initiale : {exc}")
         finally:
-            self.indexing_status["running"] = False
+            self.indexing_status.update({
+                "running": False,
+                "current": "Indexation terminee",
+            })
             self._persist_indexing_status()

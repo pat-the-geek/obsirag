@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================
-# ObsiRAG — Setup sans Docker (macOS / Apple Silicon)
+# ObsiRAG — Setup natif (macOS / Apple Silicon)
 # À lancer une seule fois, depuis la racine du projet.
 # =============================================================
 set -euo pipefail

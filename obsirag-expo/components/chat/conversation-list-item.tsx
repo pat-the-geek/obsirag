@@ -1,6 +1,8 @@
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { ConversationSummary } from '../../types/domain';
+import { useAppTheme } from '../../theme/app-theme';
+import { formatMetadataDate, formatSizeBytes, joinMetadataParts } from '../../utils/format-display';
 import { StatusPill } from '../ui/status-pill';
 
 type ConversationListItemProps = {
@@ -11,23 +13,29 @@ type ConversationListItemProps = {
 };
 
 export function ConversationListItem({ item, onPress, onDelete, deleteDisabled = false }: ConversationListItemProps) {
+  const theme = useAppTheme();
+  const metadata = joinMetadataParts([
+    item.updatedAt ? `Modifie le ${formatMetadataDate(item.updatedAt)}` : null,
+    formatSizeBytes(item.sizeBytes),
+    `${item.turnCount} tours`,
+    `${item.messageCount} messages`,
+  ]);
+
   return (
-    <View style={styles.card}>
+    <View style={[styles.card, { borderColor: theme.colors.border, backgroundColor: theme.colors.surface }] }>
       <Pressable onPress={onPress} style={styles.pressableContent}>
         <View style={styles.header}>
-          <Text style={styles.title}>{item.title}</Text>
+          <Text style={[styles.title, { color: theme.colors.text }]}>{item.title}</Text>
           {item.isCurrent ? <StatusPill label="Actif" tone="success" /> : null}
         </View>
-        <Text style={styles.preview} numberOfLines={2}>
+        <Text style={[styles.preview, { color: theme.colors.textMuted }]} numberOfLines={2}>
           {item.preview}
         </Text>
-        <Text style={styles.meta}>
-          {item.turnCount} tours · {item.messageCount} messages
-        </Text>
+        <Text style={[styles.meta, { color: theme.colors.textSubtle }]}>{metadata}</Text>
       </Pressable>
       {onDelete ? (
-        <Pressable onPress={onDelete} style={[styles.deleteButton, deleteDisabled ? styles.deleteButtonDisabled : null]} disabled={deleteDisabled}>
-          <Text style={[styles.deleteButtonText, deleteDisabled ? styles.deleteButtonTextDisabled : null]}>{deleteDisabled ? 'Suppression...' : 'Supprimer'}</Text>
+        <Pressable onPress={onDelete} style={[styles.deleteButton, { borderTopColor: theme.colors.border, backgroundColor: theme.colors.backgroundAlt }, deleteDisabled ? styles.deleteButtonDisabled : null]} disabled={deleteDisabled}>
+          <Text style={[styles.deleteButtonText, { color: theme.colors.danger }, deleteDisabled ? [styles.deleteButtonTextDisabled, { color: theme.colors.textSubtle }] : null]}>{deleteDisabled ? 'Suppression...' : 'Supprimer'}</Text>
         </Pressable>
       ) : null}
     </View>
@@ -38,8 +46,6 @@ const styles = StyleSheet.create({
   card: {
     borderRadius: 16,
     borderWidth: 1,
-    borderColor: '#d8cfc0',
-    backgroundColor: '#fffdfa',
     overflow: 'hidden',
   },
   pressableContent: {
@@ -56,31 +62,24 @@ const styles = StyleSheet.create({
     flex: 1,
     fontSize: 16,
     fontWeight: '700',
-    color: '#1f160c',
   },
   preview: {
-    color: '#544632',
     lineHeight: 20,
   },
   meta: {
-    color: '#8a7760',
     fontSize: 12,
   },
   deleteButton: {
     borderTopWidth: 1,
-    borderTopColor: '#eadfce',
     paddingHorizontal: 14,
     paddingVertical: 10,
-    backgroundColor: '#f8efe6',
   },
   deleteButtonDisabled: {
     opacity: 0.6,
   },
   deleteButtonText: {
-    color: '#9f4f2d',
     fontWeight: '700',
   },
   deleteButtonTextDisabled: {
-    color: '#8f7e70',
   },
 });

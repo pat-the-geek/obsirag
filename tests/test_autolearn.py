@@ -298,14 +298,62 @@ class TestAutoLearner:
         dated_dir = tmp_settings.insights_dir / "2026-04"
         dated_dir.mkdir(parents=True, exist_ok=True)
         exact = dated_dir / "Note_Test_20260411.md"
-        exact.write_text("---\ntags:\n  - person/alice\n  - org/acme\n---\nBody", encoding="utf-8")
+        exact.write_text(
+            "---\ntags:\n  - science\n  - person/alice\n  - org/acme\n---\n"
+            "**Note source :** [[notes/note-test]]\n",
+            encoding="utf-8",
+        )
         thematic = dated_dir / "Other.md"
-        thematic.write_text("---\ntags:\n  - person/alice\n  - org/acme\n  - lieu/paris\n---\nBody", encoding="utf-8")
+        thematic.write_text(
+            "---\ntags:\n  - science\n  - person/alice\n  - org/acme\n  - lieu/paris\n---\nBody",
+            encoding="utf-8",
+        )
 
         with patch("src.learning.autolearn.settings", tmp_settings):
             assert learner._find_existing_insight("Note Test", ["person/alice"]) == exact
-            assert learner._find_existing_insight("Unknown", ["person/alice", "org/acme"]) == thematic
+            assert learner._find_existing_insight(
+                "Unknown",
+                ["person/alice", "org/acme"],
+                source_tags=["science"],
+            ) == thematic
             assert learner._find_existing_insight("Unknown", ["person/alice"]) is None
+
+    def test_find_existing_insight_requires_source_tag_overlap_for_thematic_merge(self, tmp_settings):
+        learner = AutoLearner(MagicMock(), MagicMock(), MagicMock())
+        dated_dir = tmp_settings.insights_dir / "2026-04"
+        dated_dir.mkdir(parents=True, exist_ok=True)
+        thematic = dated_dir / "Other.md"
+        thematic.write_text(
+            "---\ntags:\n  - space\n  - lieu/artemis-ii\n  - org/nasa\n  - org/apollo\n---\nBody",
+            encoding="utf-8",
+        )
+
+        with patch("src.learning.autolearn.settings", tmp_settings):
+            assert learner._find_existing_insight(
+                "Unknown",
+                ["lieu/artemis-ii", "org/nasa", "org/apollo"],
+                source_tags=["musique"],
+            ) is None
+
+    def test_find_existing_insight_matches_existing_source_note(self, tmp_settings):
+        learner = AutoLearner(MagicMock(), MagicMock(), MagicMock())
+        dated_dir = tmp_settings.insights_dir / "2026-04"
+        dated_dir.mkdir(parents=True, exist_ok=True)
+        existing = dated_dir / "Different_Title_20260411.md"
+        existing.write_text(
+            "---\ntags:\n  - musique\n  - org/nasa\n---\n"
+            "# Insights : Different title\n\n"
+            "**Note source :** [[Rapports-WUDD-ai/example]]\n",
+            encoding="utf-8",
+        )
+
+        with patch("src.learning.autolearn.settings", tmp_settings):
+            assert learner._find_existing_insight(
+                "Autre titre",
+                ["org/nasa"],
+                source_tags=["musique"],
+                source_note_path="Rapports-WUDD-ai/example.md",
+            ) == existing
 
     def test_find_existing_insight_uses_chroma_insight_listing_when_available(self, tmp_settings):
         chroma = MagicMock()
@@ -357,7 +405,7 @@ class TestAutoLearner:
         path = tmp_settings.insights_dir / "2026-04" / "Insight.md"
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(
-            "---\ntags:\n  - insight\n---\n# Insights\n\n**Générée le :** old\n\n## Question 1\n\n> Q\n\nA\n",
+            "---\ntags:\n  - insight\n---\n# Insights\n\n**Générée le :** old\n**Provenance :** Coffre\n\n## Question 1\n\n> Q\n\nA\n",
             encoding="utf-8",
         )
         qa_pairs = [{
@@ -385,6 +433,7 @@ class TestAutoLearner:
         assert len(archived) == 1
         content = archived[0].read_text(encoding="utf-8")
         assert "Mise à jour le" in content
+        assert "**Provenance :** Coffre et Web" in content
         assert "location: [48.000000, 2.000000]" in content
         assert "## Entités clés" in content
         assert "## Question 2" in content
@@ -558,9 +607,31 @@ class TestAutoLearner:
         content = created[0].read_text(encoding="utf-8")
         assert "# Synapse : Note A ↔ Note B" in content
         assert "**Similarité sémantique :** 83%" in content
+        assert "**Note source A :** [[a]]" in content
+        assert "**Note source B :** [[b]]" in content
         assert "Connexion implicite entre les deux notes." in content
 
-    def test_suggest_note_title_filters_keep_long_non_latin_and_same_title(self):
+    def test_create_synapse_artifact_rewrites_mixed_language_output(self, tmp_settings):
+        chroma = MagicMock()
+        chroma.search.return_value = [{"text": "Extrait de la note A"}]
+        rag = MagicMock()
+        rag._llm.chat.side_effect = [
+            "Connexion identifiée en français puis 中文.",
+            "Connexion identifiée entièrement en français.",
+        ]
+        learner = AutoLearner(chroma, rag, MagicMock())
+
+        with patch("src.learning.autolearn.settings", tmp_settings):
+            learner._create_synapse_artifact(
+                {"file_path": "a.md", "title": "Note A"},
+                {"file_path": "b.md", "title": "Note B", "score": 0.83, "excerpt": "Extrait B"},
+            )
+
+        content = next(tmp_settings.synapses_dir.glob("Note_A__Note_B_*.md")).read_text(encoding="utf-8")
+        assert "Connexion identifiée entièrement en français." in content
+        assert "中文" not in content
+
+    def test_suggest_note_title_filters_keep_long_and_same_title_after_rewrite(self):
         learner = AutoLearner(MagicMock(), MagicMock(), MagicMock())
         learner._rag._llm.chat.side_effect = [
             "CONSERVER",
@@ -573,8 +644,98 @@ class TestAutoLearner:
         assert learner._suggest_note_title("contenu", "Titre actuel") is None
         assert learner._suggest_note_title("contenu", "Titre actuel") is None
         assert learner._suggest_note_title("contenu", "Titre actuel") is None
-        assert learner._suggest_note_title("contenu", "Titre actuel") is None
         assert learner._suggest_note_title("contenu", "Titre actuel") == "Nouveau titre"
+
+    def test_chat_user_visible_french_rewrites_non_latin_output(self):
+        learner = AutoLearner(MagicMock(), MagicMock(), MagicMock())
+        learner._rag._llm.chat.side_effect = [
+            "Un debut en français puis 中文混杂.",
+            "Un début en français uniquement.",
+        ]
+
+        result = learner._chat_user_visible_french(
+            "Explique ce lien.",
+            temperature=0.3,
+            max_tokens=200,
+            operation="autolearn_synapse",
+        )
+
+        assert result == "Un début en français uniquement."
+        assert learner._rag._llm.chat.call_count == 2
+
+    def test_rewrite_generated_artifact_in_french_updates_contaminated_paragraph_only(self, tmp_settings):
+        learner = AutoLearner(MagicMock(), MagicMock(), MagicMock())
+        artifact = tmp_settings.insights_dir / "2026-04" / "Insight.md"
+        artifact.parent.mkdir(parents=True, exist_ok=True)
+        artifact.write_text(
+            "---\ntags:\n  - insight\n---\n"
+            "# Insights\n\n"
+            "**Note source :** [[folder/source]]  \n\n"
+            "Réponse en français puis 中文.\n\n"
+            "> Citation source 中文\n",
+            encoding="utf-8",
+        )
+        learner._rag._llm.chat.return_value = "Réponse entièrement en français."
+
+        with patch("src.learning.autolearn.settings", tmp_settings):
+            changed = learner._rewrite_generated_artifact_in_french(artifact, operation="artifact_cleanup")
+
+        assert changed is True
+        updated = artifact.read_text(encoding="utf-8")
+        assert "Réponse entièrement en français." in updated
+        assert "> Citation source 中文" in updated
+
+    def test_regenerate_insight_artifact_rebuilds_existing_file_from_source(self, tmp_settings):
+        chroma = MagicMock()
+        chroma.get_note_by_file_path.return_value = {
+            "file_path": "folder/source.md",
+            "title": "Source Note",
+            "tags": ["science"],
+        }
+        rag = MagicMock()
+        learner = AutoLearner(chroma, rag, MagicMock())
+        artifact = tmp_settings.insights_dir / "2026-04" / "Insight.md"
+        artifact.parent.mkdir(parents=True, exist_ok=True)
+        artifact.write_text("# Insights\n\n**Note source :** [[folder/source]]\n", encoding="utf-8")
+
+        with (
+            patch("src.learning.autolearn.settings", tmp_settings),
+            patch.object(learner, "_generate_valid_qa_pair_for_note", return_value=({"question": "Q ?", "answer": "Réponse", "sources": ["folder/source.md"], "provenance": "Coffre"}, "preview")),
+            patch.object(learner, "_extract_validated_entities", return_value=([], [])),
+            patch.object(learner, "_build_new_insight_document", return_value="# Insights régénéré\n"),
+        ):
+            changed = learner._regenerate_insight_artifact(artifact)
+
+        assert changed is True
+        assert artifact.read_text(encoding="utf-8") == "# Insights régénéré\n"
+
+    def test_regenerate_synapse_artifact_overwrites_existing_file(self, tmp_settings):
+        chroma = MagicMock()
+        chroma.get_note_by_file_path.side_effect = [
+            {"file_path": "folder/a.md", "title": "Titre A", "wikilinks": []},
+            {"file_path": "folder/b.md", "title": "Titre B", "wikilinks": []},
+        ]
+        chroma.find_similar_notes.return_value = [
+            {"file_path": "folder/b.md", "title": "Titre B", "score": 0.91, "excerpt": "Extrait B"},
+        ]
+        rag = MagicMock()
+        learner = AutoLearner(chroma, rag, MagicMock())
+        artifact = tmp_settings.synapses_dir / "Synapse.md"
+        artifact.parent.mkdir(parents=True, exist_ok=True)
+        artifact.write_text(
+            "**Note source A :** [[folder/a]]  \n**Note source B :** [[folder/b]]\n",
+            encoding="utf-8",
+        )
+
+        with (
+            patch("src.learning.autolearn.settings", tmp_settings),
+            patch.object(learner, "_create_synapse_artifact") as create_synapse,
+        ):
+            changed = learner._regenerate_synapse_artifact(artifact)
+
+        assert changed is True
+        create_synapse.assert_called_once()
+        assert create_synapse.call_args.kwargs["output_path"] == artifact
 
     def test_rename_note_in_vault_updates_frontmatter_links_and_processed_map(self, tmp_settings):
         vault = tmp_settings.vault
@@ -890,6 +1051,30 @@ class TestAutoLearner:
         with patch.object(learner, "_set_status"):
             learner._process_note({"file_path": "note.md", "title": "Note"}, sleep_between_questions=0)
 
+    def test_process_note_prefers_exact_chunks_by_file_path_over_title_search(self):
+        chroma = MagicMock()
+        chroma.get_chunks_by_file_path.return_value = [
+            {"text": "Extrait exact", "metadata": {"file_path": "folder/note.md", "chunk_index": 0}},
+            {"text": "Suite exacte", "metadata": {"file_path": "folder/note.md", "chunk_index": 1}},
+        ]
+        chroma.search.return_value = []
+        rag = MagicMock()
+        indexer = MagicMock()
+        learner = AutoLearner(chroma, rag, indexer)
+
+        note_meta = {"file_path": "folder/note.md", "title": "Titre generique", "tags": []}
+
+        with (
+            patch.object(learner, "_save_knowledge_artifact") as save_artifact,
+            patch.object(learner, "_set_status"),
+            patch.object(learner._question_answering, "generate_valid_qa_pair", return_value={"question": "Q?", "answer": "R"}),
+        ):
+            learner._process_note(note_meta, sleep_between_questions=0)
+
+        chroma.get_chunks_by_file_path.assert_called_once_with("folder/note.md", top_k=5)
+        chroma.search.assert_not_called()
+        save_artifact.assert_called_once()
+
     def test_process_note_updates_relative_path_after_obsirag_rename(self, tmp_settings):
         chroma = MagicMock()
         chroma.search.return_value = [{"text": "Extrait utile"}]
@@ -1039,8 +1224,23 @@ class TestAutoLearner:
         questions = learner._generate_questions("contenu", already_asked=["ancienne question ?"])
 
         assert questions == ["Quelle est l'évolution récente du sujet ?"]
-        sent_prompt = learner._rag._llm.chat.call_args[0][0][0]["content"]
+        sent_messages = learner._rag._llm.chat.call_args[0][0]
+        assert sent_messages[0]["role"] == "system"
+        sent_prompt = sent_messages[1]["content"]
         assert "<deja_posees>" in sent_prompt
 
         learner._rag._llm.chat.side_effect = RuntimeError("boom")
         assert learner._generate_questions("contenu") == []
+
+    def test_generate_questions_extracts_inline_question_from_verbose_answer(self):
+        learner = AutoLearner(MagicMock(), MagicMock(), MagicMock())
+        learner._rag._llm.chat.return_value = (
+            "Voici la question la plus pertinente : Quel impact mesuré a eu la diffusion de playlists musicales "
+            "sur le moral des astronautes pendant les missions spatiales ? Réponds avec des études récentes."
+        )
+
+        questions = learner._generate_questions("contenu")
+
+        assert questions == [
+            "Quel impact mesuré a eu la diffusion de playlists musicales sur le moral des astronautes pendant les missions spatiales ?"
+        ]

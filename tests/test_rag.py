@@ -276,6 +276,18 @@ class TestRAGConversationBehavior:
         assert 'A["Dune: Part Three Tournage"]' in normalized
         assert 'B["Premiere revelation visuelle (mars)"]' in normalized
 
+    def test_normalize_final_answer_rewrites_non_latin_segments_to_french(self, rag, mock_llm):
+        mock_llm.chat.return_value = "Réponse entièrement en français avec la même idée."
+
+        normalized = rag._normalize_final_answer(
+            "Réponse partielle en français puis 中文 pour finir.",
+            "Quel est le lien entre ces notes ?",
+            "relation",
+        )
+
+        assert normalized == "Réponse entièrement en français avec la même idée."
+        mock_llm.chat.assert_called_once()
+
     def test_mark_primary_sources_flags_dominant_note(self, rag):
         chunks = [
             _make_chunk(title="Python pour data science", text="Python et pandas.", fp="python.md"),
@@ -787,6 +799,25 @@ class TestRAGQuery:
     def test_query_temporal_intent_uses_date_search(self, rag, mock_chroma):
         rag.query("Qu'est-ce que j'ai noté cette semaine ?")
         mock_chroma.search_by_date_range.assert_called()
+
+    def test_filter_obsirag_generated_chunks_removes_internal_artifacts(self, rag):
+        kept = _make_chunk(title="Source", text="Texte", fp="notes/source.md")
+        dropped = _make_chunk(title="Insight", text="Texte", fp="obsirag/insights/test.md")
+
+        filtered = rag._filter_obsirag_generated_chunks([kept, dropped])
+
+        assert filtered == [kept]
+
+    def test_query_can_exclude_obsirag_generated_chunks(self, rag):
+        kept = _make_chunk(title="Source", text="Texte", fp="notes/source.md")
+        dropped = _make_chunk(title="Insight", text="Texte", fp="obsirag/insights/test.md")
+
+        with patch.object(rag, "_retrieve", return_value=([kept, dropped], "general")):
+            answer, sources = rag.query("Qu'est-ce que Python ?", exclude_obsirag_generated=True)
+
+        assert isinstance(answer, str)
+        assert len(sources) == 1
+        assert sources[0]["metadata"]["file_path"] == "notes/source.md"
 
 
 # ---------------------------------------------------------------------------

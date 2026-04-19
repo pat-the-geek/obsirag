@@ -14,6 +14,13 @@ class AutoLearnWebEnrichment:
         self._owner = owner
 
     @staticmethod
+    def build_search_query(query: str) -> str:
+        query = str(query or "").strip()
+        if not query:
+            return ""
+        return f"{query} explication analyse histoire contexte"
+
+    @staticmethod
     def fetch_url_content(url: str, max_chars: int = 3000) -> str:
         if url.lower().endswith(".pdf") or "/pdf" in url.lower():
             logger.debug(f"URL PDF ignorée : {url[:60]}")
@@ -76,8 +83,8 @@ class AutoLearnWebEnrichment:
             f"Format : paragraphes courts avec sous-titres Markdown si pertinent."
         )
         try:
-            return self._owner._rag._llm.chat(
-                [{"role": "user", "content": prompt}],
+            return self._owner._chat_user_visible_french(
+                prompt,
                 temperature=0.3,
                 max_tokens=self._owner._MAX_TOKENS_RESPONSE,
                 operation="autolearn_web_synthesis",
@@ -90,7 +97,7 @@ class AutoLearnWebEnrichment:
         try:
             from ddgs import DDGS
 
-            enriched_query = f"{query} explication analyse histoire contexte"
+            enriched_query = self.build_search_query(query)
             with DDGS() as ddgs:
                 results = list(ddgs.text(enriched_query, max_results=15))
             trusted = [
@@ -103,7 +110,17 @@ class AutoLearnWebEnrichment:
                 except Exception:
                     pass
             selected = trusted[:3] if trusted else results[:3]
-            return [result for result in selected if result.get("body")]
+            enriched_results: list[dict] = []
+            for result in selected:
+                body = result.get("body", "")
+                full_text = self.fetch_url_content(result.get("href", "")) if result.get("href") else ""
+                if not body and not full_text:
+                    continue
+                enriched = dict(result)
+                if full_text:
+                    enriched["full_text"] = full_text
+                enriched_results.append(enriched)
+            return enriched_results
         except Exception as exc:
             try:
                 self._owner._metrics.increment("autolearn_web_search_error_total")
@@ -134,8 +151,8 @@ class AutoLearnWebEnrichment:
             f"et du contexte qui enrichissent la compréhension du sujet. Sois précis et complet."
         )
         try:
-            return self._owner._rag._llm.chat(
-                [{"role": "user", "content": prompt}],
+            return self._owner._chat_user_visible_french(
+                prompt,
                 temperature=0.3,
                 max_tokens=self._owner._MAX_TOKENS_RESPONSE,
                 operation="autolearn_enrich",
@@ -158,18 +175,30 @@ class AutoLearnWebEnrichment:
                 content=content[:3000],
                 already_asked_section=already_asked_section,
             )
-            answer = self._owner._rag._llm.chat(
-                [{"role": "user", "content": prompt}],
+            answer = self._owner._chat_user_visible_french(
+                prompt,
                 temperature=0.7,
                 max_tokens=150,
                 operation="autolearn_questions",
             )
-            prefix = re.compile(r"^[•\*\-]?\s*(?:Q\d+[.:）]|Question\s*\d*[.:]|\d+[.)]\s*)?\s*", re.I)
-            for line in answer.strip().splitlines():
-                cleaned = prefix.sub("", line.strip()).strip()
-                if len(cleaned) > 10 and cleaned.endswith("?"):
-                    return [cleaned]
+            question = self._extract_question(answer)
+            if question:
+                return [question]
             return []
         except Exception as exc:
             logger.debug(f"Génération de question échouée : {exc}")
             return []
+
+    @staticmethod
+    def _extract_question(answer: str) -> str | None:
+        prefix = re.compile(r"^[•\*\-]?\s*(?:Q\d+[.:）]|Question\s*\d*[.:]|\d+[.)]\s*)?\s*", re.I)
+        for line in answer.strip().splitlines():
+            cleaned = prefix.sub("", line.strip()).strip()
+            if len(cleaned) > 10 and cleaned.endswith("?"):
+                return cleaned
+
+        inline_match = re.search(r"((?:Quel(?:le|s)?|Quoi|Comment|Pourquoi|Quand|O[uù]|Combien|En quoi|Dans quelle mesure)[^?]{8,}\?)", answer.strip(), re.I)
+        if inline_match:
+            return inline_match.group(1).strip()
+
+        return None

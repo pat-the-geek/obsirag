@@ -50,7 +50,7 @@ pandas>=2.2.0
 # Utilitaires dates
 python-dateutil>=2.9.0
 
-# NER — extraction d'entités nommées (modèle multilingue chargé dans Dockerfile)
+# NER — extraction d'entités nommées (modèle multilingue requis au setup)
 spacy>=3.7.0
 
 # Recherche web (auto-learner)

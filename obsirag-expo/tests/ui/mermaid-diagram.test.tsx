@@ -17,6 +17,18 @@ describe('normalizeMermaidCode', () => {
     expect(normalized.split('\n')).toHaveLength(3);
   });
 
+  it('sanitizes accents emojis and special punctuation before rendering', () => {
+    const normalized = normalizeMermaidCode([
+      'flowchart TD',
+      'A[Réponse spéciale 🚀 — édition élève…] --> B[Décision finale ✅]',
+    ].join('\n'));
+
+    expect(normalized).toContain('A[Reponse speciale - edition eleve...] --> B[Decision finale ]');
+    expect(normalized).not.toContain('é');
+    expect(normalized).not.toContain('🚀');
+    expect(normalized).not.toContain('✅');
+  });
+
   it('keeps the mermaid code hidden by default and reveals it in a panel', () => {
     let tree!: renderer.ReactTestRenderer;
 

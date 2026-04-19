@@ -1,7 +1,9 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Linking, Platform, Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { WebView } from 'react-native-webview';
-import mermaidModule from 'mermaid';
+
+import { normalizeMermaidCode } from './mermaid-code';
+import { buildAppTheme, useAppTheme } from '../../theme/app-theme';
 
 type MermaidDiagramProps = {
   code: string;
@@ -10,72 +12,20 @@ type MermaidDiagramProps = {
 };
 
 export function MermaidDiagram({ code, tone = 'light', fullscreen = false }: MermaidDiagramProps) {
+  const activeTheme = useAppTheme();
+  const theme = activeTheme.resolvedMode === tone ? activeTheme : buildAppTheme(tone === 'dark' ? 'dark' : 'light');
   const { height: viewportHeight } = useWindowDimensions();
   const [isCodeOpen, setIsCodeOpen] = useState(false);
-  const [webSvg, setWebSvg] = useState<string | null>(null);
-  const [webError, setWebError] = useState<string | null>(null);
-  const webRenderId = useRef(`obsirag_mermaid_${Math.random().toString(36).slice(2)}`);
   const sourceCode = useMemo(() => code.trim().replace(/\r\n/g, '\n'), [code]);
   const trimmedCode = useMemo(() => normalizeMermaidCode(sourceCode), [sourceCode]);
   const codeLineCount = useMemo(() => trimmedCode.split('\n').filter(Boolean).length, [trimmedCode]);
   const height = useMemo(() => estimateMermaidHeight(trimmedCode, fullscreen ? viewportHeight : undefined), [fullscreen, trimmedCode, viewportHeight]);
-  const html = useMemo(() => buildMermaidHtml(trimmedCode, { fullscreen }), [fullscreen, trimmedCode]);
-  const webHtml = useMemo(() => buildStaticMermaidHtml({ svg: webSvg, error: webError, fullscreen }), [fullscreen, webError, webSvg]);
-  const isJestRuntime = Boolean((globalThis as { __OBSIRAG_JEST__?: boolean }).__OBSIRAG_JEST__);
-
-  useEffect(() => {
-    if (Platform.OS !== 'web' || isJestRuntime) {
-      return undefined;
-    }
-
-    let cancelled = false;
-    setWebSvg(null);
-    setWebError(null);
-
-    Promise.resolve()
-      .then(async () => {
-        const mermaidContainer = document.createElement('div');
-        mermaidContainer.setAttribute('data-obsirag-mermaid-render', 'true');
-        mermaidContainer.style.position = 'absolute';
-        mermaidContainer.style.left = '-99999px';
-        mermaidContainer.style.top = '0';
-        mermaidContainer.style.width = '1px';
-        mermaidContainer.style.height = '1px';
-        mermaidContainer.style.overflow = 'hidden';
-        document.body.appendChild(mermaidContainer);
-
-        const mermaid = await loadMermaidLibrary();
-        mermaid.initialize({
-          startOnLoad: false,
-          securityLevel: 'loose',
-          theme: 'base',
-          themeVariables: buildThemeVariables(),
-        });
-        return mermaid.render(webRenderId.current, trimmedCode, mermaidContainer).finally(() => {
-          mermaidContainer.remove();
-        });
-      })
-      .then((result) => {
-        if (!cancelled) {
-          setWebSvg(result.svg);
-        }
-      })
-      .catch((error: unknown) => {
-        if (!cancelled) {
-          const detail = error instanceof Error && error.message.trim() ? ` Detail: ${error.message.trim()}` : '';
-          setWebError(`Le rendu Mermaid a echoue.${detail} Consultez la rubrique Code Mermaid ci-dessous.`);
-        }
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [isJestRuntime, trimmedCode]);
+  const html = useMemo(() => buildMermaidHtml(trimmedCode, theme, { fullscreen }), [fullscreen, theme, trimmedCode]);
 
   return (
-    <View style={[styles.card, fullscreen ? styles.cardFullscreen : null, tone === 'dark' ? styles.cardDark : styles.cardLight]}>
+    <View style={[styles.card, fullscreen ? styles.cardFullscreen : null, { backgroundColor: theme.colors.mediaSurface, borderColor: theme.colors.border }]}>
       <View style={styles.headerRow}>
-        <Text style={[styles.title, tone === 'dark' ? styles.titleDark : styles.titleLight]}>Diagramme Mermaid</Text>
+        <Text style={[styles.title, { color: theme.colors.text }]}>Diagramme Mermaid</Text>
         <View style={styles.headerActions}>
           {!fullscreen ? (
             <Pressable
@@ -84,19 +34,19 @@ export function MermaidDiagram({ code, tone = 'light', fullscreen = false }: Mer
                 require('expo-router').router.push('/mermaid-viewer');
               }}
             >
-              <Text style={styles.link}>Plein ecran</Text>
+              <Text style={[styles.link, { color: theme.colors.link }]}>Plein ecran</Text>
             </Pressable>
           ) : null}
           <Pressable onPress={() => { void Linking.openURL(buildMermaidLiveUrl(trimmedCode)); }}>
-            <Text style={styles.link}>Live</Text>
+            <Text style={[styles.link, { color: theme.colors.link }]}>Live</Text>
           </Pressable>
         </View>
       </View>
       {Platform.OS === 'web' ? (
         <iframe
-          srcDoc={webHtml}
+          srcDoc={html}
           data-testid="markdown-mermaid-diagram"
-          style={{ width: '100%', height, border: 'none', backgroundColor: '#f6fbff' }}
+          style={{ width: '100%', height, border: 'none', backgroundColor: theme.colors.mediaCanvas }}
           sandbox="allow-scripts allow-same-origin"
           title="Diagramme Mermaid"
         />
@@ -104,31 +54,31 @@ export function MermaidDiagram({ code, tone = 'light', fullscreen = false }: Mer
         <WebView
           originWhitelist={['*']}
           source={{ html }}
-          style={[styles.webview, { height }]}
+          style={[styles.webview, { height, backgroundColor: theme.colors.mediaCanvas }]}
           scrollEnabled={false}
           nestedScrollEnabled={false}
         />
       )}
-      <Text style={[styles.caption, tone === 'dark' ? styles.captionDark : styles.captionLight]}>
+      <Text style={[styles.caption, { color: theme.colors.textMuted }]}>
         {fullscreen
           ? 'Utilisez les boutons de zoom ou faites glisser le diagramme pour le deplacer.'
           : Platform.OS === 'web'
             ? 'Un mode plein ecran permet de zoomer et de deplacer le diagramme.'
             : 'Touchez Plein ecran pour zoomer et deplacer le diagramme.'}
       </Text>
-      <View style={[styles.codePanel, tone === 'dark' ? styles.codePanelDark : styles.codePanelLight]}>
+      <View style={[styles.codePanel, { backgroundColor: theme.colors.surfaceMuted, borderColor: theme.colors.border }]}>
         <Pressable testID="mermaid-code-toggle" style={styles.codePanelHeader} onPress={() => setIsCodeOpen((current) => !current)}>
           <View style={styles.codePanelHeaderCopy}>
-            <Text style={[styles.codePanelTitle, tone === 'dark' ? styles.titleDark : styles.titleLight]}>Code Mermaid</Text>
-            <Text style={[styles.codePanelCaption, tone === 'dark' ? styles.captionDark : styles.captionLight]}>
+            <Text style={[styles.codePanelTitle, { color: theme.colors.text }]}>Code Mermaid</Text>
+            <Text style={[styles.codePanelCaption, { color: theme.colors.textMuted }]}>
               {codeLineCount} ligne{codeLineCount > 1 ? 's' : ''}
             </Text>
           </View>
-          <Text style={styles.link}>{isCodeOpen ? 'Masquer' : 'Afficher'}</Text>
+          <Text style={[styles.link, { color: theme.colors.link }]}>{isCodeOpen ? 'Masquer' : 'Afficher'}</Text>
         </Pressable>
         {isCodeOpen ? (
           <View testID="mermaid-code-panel-content" style={styles.codePanelContent}>
-            <Text selectable style={[styles.codeBlock, tone === 'dark' ? styles.codeBlockDark : styles.codeBlockLight]}>
+            <Text selectable style={[styles.codeBlock, { backgroundColor: theme.colors.codeSurface, color: theme.colors.codeText }]}>
               {trimmedCode}
             </Text>
           </View>
@@ -146,28 +96,9 @@ function estimateMermaidHeight(code: string, viewportHeight?: number) {
   return Math.max(220, Math.min(560, 140 + lines * 22));
 }
 
-export function normalizeMermaidCode(code: string) {
-  return code
-    .trim()
-    .replace(/\r\n/g, '\n')
-    .replace(/(\][ \t]{2,})([A-Za-z][A-Za-z0-9_]*\s*(?:-->|---|==>|-.->|-\.->))/g, ']\n$2')
-    .replace(/(\)[ \t]{2,})([A-Za-z][A-Za-z0-9_]*\s*(?:-->|---|==>|-.->|-\.->))/g, ')\n$2')
-    .replace(/(\}[ \t]{2,})([A-Za-z][A-Za-z0-9_]*\s*(?:-->|---|==>|-.->|-\.->))/g, '}\n$2')
-    .split('\n')
-    .map((line) =>
-      line.replace(/\b([A-Za-z][A-Za-z0-9_]*)\[(?!["`])([^\]\n]+)\]/g, (_match, nodeId: string, label: string) => {
-        if (!/[():]/.test(label)) {
-          return `${nodeId}[${label}]`;
-        }
+export { normalizeMermaidCode } from './mermaid-code';
 
-        const escapedLabel = label.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-        return `${nodeId}["${escapedLabel}"]`;
-      }),
-    )
-    .join('\n');
-}
-
-function buildMermaidHtml(code: string, options?: { fullscreen?: boolean }) {
+function buildMermaidHtml(code: string, theme: ReturnType<typeof buildAppTheme>, options?: { fullscreen?: boolean }) {
   const codeJson = JSON.stringify(code);
   const fullscreen = Boolean(options?.fullscreen);
   return `<!DOCTYPE html>
@@ -180,8 +111,8 @@ function buildMermaidHtml(code: string, options?: { fullscreen?: boolean }) {
       html, body {
         width: 100%;
         min-height: 100%;
-        background: #f6fbff;
-        color: #111111;
+        background: ${theme.colors.mediaCanvas};
+        color: ${theme.colors.text};
         font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
       }
       body {
@@ -201,8 +132,8 @@ function buildMermaidHtml(code: string, options?: { fullscreen?: boolean }) {
         gap: 10px;
         padding: 8px 10px;
         border-radius: 10px;
-        background: rgba(255, 255, 255, 0.92);
-        border: 1px solid #c8ddea;
+        background: ${theme.colors.surface};
+        border: 1px solid ${theme.colors.border};
       }
       #toolbarLeft {
         display: flex;
@@ -211,15 +142,15 @@ function buildMermaidHtml(code: string, options?: { fullscreen?: boolean }) {
         flex-wrap: wrap;
       }
       #zoomValue {
-        color: #244761;
+        color: ${theme.colors.text};
         font-size: 12px;
         font-weight: 700;
       }
       .toolButton {
-        border: 1px solid #b7cfe2;
+        border: 1px solid ${theme.colors.border};
         border-radius: 999px;
-        background: #ffffff;
-        color: #244761;
+        background: ${theme.colors.surfaceMuted};
+        color: ${theme.colors.text};
         font-weight: 700;
         font-size: 12px;
         padding: 6px 10px;
@@ -231,8 +162,8 @@ function buildMermaidHtml(code: string, options?: { fullscreen?: boolean }) {
         min-height: ${fullscreen ? '420px' : '220px'};
         overflow: auto;
         border-radius: 10px;
-        background: #f6fbff;
-        border: 1px solid #d9e6f0;
+        background: ${theme.colors.mediaCanvas};
+        border: 1px solid ${theme.colors.border};
       }
       #out {
         display: flex;
@@ -251,9 +182,9 @@ function buildMermaidHtml(code: string, options?: { fullscreen?: boolean }) {
         display: block;
       }
       #err {
-        color: #2f2419;
-        background: #fffdfa;
-        border: 1px solid #ded5c9;
+        color: ${theme.colors.text};
+        background: ${theme.colors.surface};
+        border: 1px solid ${theme.colors.border};
         border-radius: 10px;
         padding: 10px;
         white-space: pre-wrap;
@@ -267,7 +198,7 @@ function buildMermaidHtml(code: string, options?: { fullscreen?: boolean }) {
         align-items: center;
         justify-content: center;
         min-height: 120px;
-        color: #49657f;
+        color: ${theme.colors.textMuted};
         font-size: 12px;
       }
     </style>
@@ -304,7 +235,7 @@ function buildMermaidHtml(code: string, options?: { fullscreen?: boolean }) {
         let dragStartY = 0;
         let scrollStartLeft = 0;
         let scrollStartTop = 0;
-        const themeVariables = ${JSON.stringify(buildThemeVariables())};
+        const themeVariables = ${JSON.stringify(buildThemeVariables(theme))};
 
         function applyScale() {
           if (outputElement) {
@@ -456,27 +387,27 @@ function buildMermaidHtml(code: string, options?: { fullscreen?: boolean }) {
 </html>`;
 }
 
-function buildThemeVariables() {
+function buildThemeVariables(theme: ReturnType<typeof buildAppTheme>) {
   return {
     fontFamily: "system-ui,-apple-system,'Segoe UI',Helvetica,Arial,sans-serif",
     fontSize: '13px',
-    background: '#ffffff',
-    primaryColor: '#dbeafe',
-    primaryTextColor: '#1a1a1a',
-    primaryBorderColor: '#0066b8',
-    lineColor: '#0066b8',
-    secondaryColor: '#ffedd5',
-    tertiaryColor: '#ede9fe',
-    mainBkg: '#dbeafe',
-    nodeBorder: '#0066b8',
-    clusterBkg: '#f0f4ff',
-    clusterBorder: '#d97706',
-    titleColor: '#7c3aed',
-    edgeLabelBackground: '#ffffff',
-    textColor: '#1a1a1a',
-    secondaryTextColor: '#1a1a1a',
-    tertiaryTextColor: '#1a1a1a',
-    clusterTextColor: '#1a1a1a',
+    background: theme.colors.mediaCanvas,
+    primaryColor: theme.colors.entityPersonSurface,
+    primaryTextColor: theme.colors.entityPersonText,
+    primaryBorderColor: theme.colors.primary,
+    lineColor: theme.colors.primary,
+    secondaryColor: theme.colors.entityOrganizationSurface,
+    tertiaryColor: theme.colors.entityConceptSurface,
+    mainBkg: theme.colors.entityPersonSurface,
+    nodeBorder: theme.colors.primary,
+    clusterBkg: theme.colors.surfaceMuted,
+    clusterBorder: theme.colors.warningText,
+    titleColor: theme.colors.text,
+    edgeLabelBackground: theme.colors.surface,
+    textColor: theme.colors.text,
+    secondaryTextColor: theme.colors.entityOrganizationText,
+    tertiaryTextColor: theme.colors.entityConceptText,
+    clusterTextColor: theme.colors.text,
   };
 }
 
@@ -484,8 +415,6 @@ type MermaidRuntime = {
   initialize: (config: Record<string, unknown>) => void;
   render: (id: string, code: string, container?: Element) => Promise<{ svg: string }>;
 };
-
-let mermaidLibraryPromise: Promise<MermaidRuntime> | null = null;
 
 export function resolveMermaidLibrary(moduleValue: unknown): MermaidRuntime {
   const candidate = extractDefaultExport(moduleValue);
@@ -500,11 +429,6 @@ export function resolveMermaidLibrary(moduleValue: unknown): MermaidRuntime {
   }
 
   return candidate as MermaidRuntime;
-}
-
-function loadMermaidLibrary() {
-  mermaidLibraryPromise ??= Promise.resolve(resolveMermaidLibrary(mermaidModule));
-  return mermaidLibraryPromise;
 }
 
 function extractDefaultExport(moduleValue: unknown) {
@@ -617,14 +541,6 @@ const styles = StyleSheet.create({
     flex: 1,
     borderRadius: 18,
   },
-  cardLight: {
-    backgroundColor: '#eef6fb',
-    borderColor: '#c8ddea',
-  },
-  cardDark: {
-    backgroundColor: '#15191f',
-    borderColor: '#2c3a47',
-  },
   headerRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -638,14 +554,7 @@ const styles = StyleSheet.create({
   title: {
     fontWeight: '700',
   },
-  titleLight: {
-    color: '#244761',
-  },
-  titleDark: {
-    color: '#e8f0f8',
-  },
   link: {
-    color: '#2a5f95',
     fontWeight: '700',
   },
   codePanel: {
@@ -653,14 +562,6 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     borderWidth: 1,
     padding: 12,
-  },
-  codePanelLight: {
-    backgroundColor: '#fbf8f3',
-    borderColor: '#ded5c9',
-  },
-  codePanelDark: {
-    backgroundColor: '#1a2028',
-    borderColor: '#32404f',
   },
   codePanelHeader: {
     flexDirection: 'row',
@@ -694,14 +595,6 @@ const styles = StyleSheet.create({
       default: 'monospace',
     }),
   },
-  codeBlockLight: {
-    backgroundColor: '#fffdfa',
-    color: '#2f2419',
-  },
-  codeBlockDark: {
-    backgroundColor: '#0f141a',
-    color: '#e8f0f8',
-  },
   webview: {
     width: '100%',
     backgroundColor: '#f6fbff',
@@ -709,11 +602,5 @@ const styles = StyleSheet.create({
   caption: {
     fontSize: 12,
     lineHeight: 18,
-  },
-  captionLight: {
-    color: '#49657f',
-  },
-  captionDark: {
-    color: '#a9bdd0',
   },
 });

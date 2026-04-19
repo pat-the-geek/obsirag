@@ -19,6 +19,7 @@ jest.mock('@tanstack/react-query', () => ({
 jest.mock('expo-router', () => ({
   useRouter: () => ({ push: mockPush }),
   useLocalSearchParams: () => mockGraphSearchParams,
+  usePathname: () => '/graph',
 }));
 
 jest.mock('../../components/graph/knowledge-graph', () => ({
