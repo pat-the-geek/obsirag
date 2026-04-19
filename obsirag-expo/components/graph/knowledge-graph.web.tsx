@@ -208,6 +208,7 @@ export function KnowledgeGraph({ data, isActive = true, focusedNodeId, onSelectN
           randomSeed: 7,
         },
         physics: {
+          solver: 'barnesHut',
           barnesHut: {
             gravitationalConstant: physics.gravitationalConstant,
             centralGravity: physics.centralGravity,
@@ -216,9 +217,11 @@ export function KnowledgeGraph({ data, isActive = true, focusedNodeId, onSelectN
             damping: physics.damping,
             avoidOverlap: physics.avoidOverlap,
           },
+          adaptiveTimestep: true,
+          timestep: 0.45,
           maxVelocity: physics.maxVelocity,
           minVelocity: physics.minVelocity,
-          stabilization: { iterations: physics.iterations, fit: true },
+          stabilization: { iterations: physics.iterations, fit: true, updateInterval: 20 },
         },
         interaction: {
           hover: hoverEnabled,
@@ -226,6 +229,7 @@ export function KnowledgeGraph({ data, isActive = true, focusedNodeId, onSelectN
           navigationButtons: false,
           keyboard: false,
           multiselect: false,
+          hoverConnectedEdges: true,
           zoomView: true,
           dragView: true,
           dragNodes: performanceProfile.enableNodeDrag,
@@ -421,7 +425,13 @@ export function KnowledgeGraph({ data, isActive = true, focusedNodeId, onSelectN
                   hover: `rgba(71,85,105,${neighborhoodFade.edgeOpacity})`,
                   inherit: false,
                 },
-          width: isConnectedToActive ? 2.2 : isConnectedToHovered ? 1.8 : isRelated ? 1 : neighborhoodFade.edgeWidth,
+          width: isConnectedToActive
+            ? Math.max(2.8, baseEdge.width + 1.15)
+            : isConnectedToHovered
+              ? Math.max(2.2, baseEdge.width + 0.7)
+              : isRelated
+                ? baseEdge.width
+                : neighborhoodFade.edgeWidth,
         });
       }
     };
@@ -480,6 +490,7 @@ export function KnowledgeGraph({ data, isActive = true, focusedNodeId, onSelectN
       activeNodeId = nodeId;
       applyVisualState();
       network.selectNodes([nodeId]);
+      network.startSimulation();
       const baseScale = Math.max(fitScaleRef.current, MIN_BASE_SCALE);
       network.focus(nodeId, {
         scale: Math.max(baseScale * 1.1, baseScale * preferredScaleRef.current),
@@ -537,6 +548,20 @@ export function KnowledgeGraph({ data, isActive = true, focusedNodeId, onSelectN
         if (performanceProfile.enableHover) {
           applyVisualState();
         }
+      });
+    }
+
+    if (performanceProfile.enableNodeDrag) {
+      network.on('dragStart', () => {
+        hoveredNodeId = null;
+        hideTooltip();
+      });
+
+      network.on('dragEnd', () => {
+        if (destroyed || networkRef.current !== network) {
+          return;
+        }
+        network.startSimulation();
       });
     }
 
@@ -686,6 +711,7 @@ function buildPreparedGraph(data: GraphData) {
   const groupColors = buildGroupColorMap(data.nodes.map((node) => node.group));
   const labelBehavior = buildLabelBehavior(data.nodes.length);
   const heavyProfile = buildGraphPerformanceProfile(data.nodes.length);
+  const nodeDegreeMap = new Map(data.nodes.map((node) => [node.id, node.degree]));
   const nodes: GraphNodeRecord[] = data.nodes.map((node) => ({
     ...node,
     fullLabel: node.label,
@@ -703,8 +729,8 @@ function buildPreparedGraph(data: GraphData) {
         border: '#f8fafc',
       },
     },
-    value: Math.max(12, Math.min(36, 12 + node.degree * 1.7)),
-    mass: Math.max(1, Math.min(6, 1 + node.degree / 4)),
+    value: buildNodeValue(node.degree),
+    mass: buildNodeMass(node.degree),
     font: { color: '#e2e8f0', size: 13, face: 'Inter, system-ui, sans-serif' },
     labelHighlightBold: true,
     shadow: {
@@ -723,7 +749,7 @@ function buildPreparedGraph(data: GraphData) {
     color: { color: 'rgba(148, 163, 184, 0.42)', highlight: '#f8fafc', hover: '#f8fafc', inherit: false },
     smooth: { type: 'continuous' },
     arrows: { to: { enabled: false, scaleFactor: 0 } },
-    width: 1,
+    width: buildEdgeWidth(nodeDegreeMap.get(edge.source) ?? 0, nodeDegreeMap.get(edge.target) ?? 0),
     selectionWidth: 2.4,
   }));
 
@@ -736,70 +762,87 @@ function buildGraphScene(data: GraphData, windowWidth: number) {
   return { width: baseWidth, height: heightBase };
 }
 
-function buildVisPhysics(nodeCount: number) {
+function buildNodeMass(degree: number) {
+  return Math.max(1.6, Math.min(9, 1.6 + Math.sqrt(Math.max(0, degree)) * 1.35));
+}
+
+function buildNodeValue(degree: number) {
+  return Math.max(12, Math.min(42, 12 + Math.sqrt(Math.max(0, degree)) * 5.2));
+}
+
+function buildEdgeWidth(sourceDegree: number, targetDegree: number) {
+  const sharedDegree = Math.max(0, sourceDegree) + Math.max(0, targetDegree);
+  return Math.max(0.95, Math.min(2.6, 0.9 + Math.sqrt(sharedDegree) * 0.18));
+}
+
+function buildObsidianPhysicsPreset(nodeCount: number) {
   if (nodeCount > 700) {
     return {
-      gravitationalConstant: -7600,
-      centralGravity: 0.16,
-      springLength: 84,
-      springConstant: 0.028,
-      damping: 0.38,
-      avoidOverlap: 0.98,
-      maxVelocity: 20,
-      minVelocity: 0.9,
-      iterations: 60,
+      gravitationalConstant: -8800,
+      centralGravity: 0.12,
+      springLength: 104,
+      springConstant: 0.024,
+      damping: 0.42,
+      avoidOverlap: 1,
+      maxVelocity: 18,
+      minVelocity: 0.88,
+      iterations: 96,
     };
   }
   if (nodeCount > 320) {
     return {
-      gravitationalConstant: -10400,
-      centralGravity: 0.12,
-      springLength: 96,
-      springConstant: 0.03,
-      damping: 0.32,
-      avoidOverlap: 0.96,
-      maxVelocity: 28,
-      minVelocity: 0.68,
-      iterations: 120,
+      gravitationalConstant: -13800,
+      centralGravity: 0.1,
+      springLength: 138,
+      springConstant: 0.026,
+      damping: 0.3,
+      avoidOverlap: 1,
+      maxVelocity: 30,
+      minVelocity: 0.62,
+      iterations: 220,
     };
   }
   if (nodeCount > 220) {
     return {
-      gravitationalConstant: -9200,
-      centralGravity: 0.16,
-      springLength: 118,
-      springConstant: 0.038,
-      damping: 0.25,
-      avoidOverlap: 0.94,
-      maxVelocity: 40,
-      minVelocity: 0.7,
-      iterations: 280,
+      gravitationalConstant: -11800,
+      centralGravity: 0.11,
+      springLength: 152,
+      springConstant: 0.031,
+      damping: 0.24,
+      avoidOverlap: 0.98,
+      maxVelocity: 38,
+      minVelocity: 0.66,
+      iterations: 360,
     };
   }
   if (nodeCount > 120) {
     return {
-      gravitationalConstant: -7600,
-      centralGravity: 0.2,
-      springLength: 128,
-      springConstant: 0.041,
-      damping: 0.22,
-      avoidOverlap: 0.9,
-      maxVelocity: 44,
-      minVelocity: 0.72,
-      iterations: 240,
+      gravitationalConstant: -9800,
+      centralGravity: 0.14,
+      springLength: 172,
+      springConstant: 0.035,
+      damping: 0.2,
+      avoidOverlap: 0.96,
+      maxVelocity: 42,
+      minVelocity: 0.68,
+      iterations: 320,
     };
   }
   return {
-    gravitationalConstant: -6200,
-    centralGravity: 0.26,
-    springLength: 148,
-    springConstant: 0.043,
-    damping: 0.18,
-    avoidOverlap: 0.82,
-    maxVelocity: 50,
-    minVelocity: 0.75,
-    iterations: 180,
+    gravitationalConstant: -8400,
+    centralGravity: 0.16,
+    springLength: 194,
+    springConstant: 0.036,
+    damping: 0.17,
+    avoidOverlap: 0.92,
+    maxVelocity: 44,
+    minVelocity: 0.7,
+    iterations: 260,
   };
+}
+
+function buildVisPhysics(nodeCount: number) {
+  return buildObsidianPhysicsPreset(nodeCount);
 }
 
 function buildGraphPerformanceProfile(nodeCount: number) {
@@ -835,12 +878,28 @@ function buildGraphPerformanceProfile(nodeCount: number) {
     return {
       heavy: true,
       enableHover: false,
-      enableNodeDrag: false,
+      enableNodeDrag: true,
       enableEdgeSmoothing: true,
-      disablePhysicsAfterStabilization: true,
-      skipIdleVisualRefresh: true,
-      hideEdgesWhileInteracting: true,
-      enableAnimatedFit: false,
+      disablePhysicsAfterStabilization: false,
+      skipIdleVisualRefresh: false,
+      hideEdgesWhileInteracting: false,
+      enableAnimatedFit: true,
+      dragKickIterations: 64,
+      enableTooltipHover: true,
+    };
+  }
+
+  if (nodeCount > 220) {
+    return {
+      heavy: false,
+      enableHover: true,
+      enableNodeDrag: true,
+      enableEdgeSmoothing: true,
+      disablePhysicsAfterStabilization: false,
+      skipIdleVisualRefresh: false,
+      hideEdgesWhileInteracting: false,
+      enableAnimatedFit: true,
+      dragKickIterations: 72,
       enableTooltipHover: true,
     };
   }
@@ -854,6 +913,7 @@ function buildGraphPerformanceProfile(nodeCount: number) {
     skipIdleVisualRefresh: false,
     hideEdgesWhileInteracting: false,
     enableAnimatedFit: true,
+    dragKickIterations: 84,
     enableTooltipHover: true,
   };
 }
@@ -907,66 +967,66 @@ function shouldRenderInitialLabel(degree: number, threshold: number) {
 function buildLabelBehavior(nodeCount: number) {
   if (nodeCount > 320) {
     return {
-      globalThreshold: 1.32,
-      relatedThreshold: 1.02,
-      priorityThreshold: 0.98,
-      priorityDegree: 12,
+      globalThreshold: 1.24,
+      relatedThreshold: 0.96,
+      priorityThreshold: 0.88,
+      priorityDegree: 10,
     };
   }
   if (nodeCount > 180) {
     return {
-      globalThreshold: 1.2,
-      relatedThreshold: 0.98,
-      priorityThreshold: 0.94,
-      priorityDegree: 9,
+      globalThreshold: 1.12,
+      relatedThreshold: 0.9,
+      priorityThreshold: 0.84,
+      priorityDegree: 7,
     };
   }
   if (nodeCount > 96) {
     return {
-      globalThreshold: 1.08,
-      relatedThreshold: 0.92,
-      priorityThreshold: 0.88,
-      priorityDegree: 7,
+      globalThreshold: 1,
+      relatedThreshold: 0.82,
+      priorityThreshold: 0.76,
+      priorityDegree: 5,
     };
   }
   return {
-    globalThreshold: 0.94,
-    relatedThreshold: 0.84,
-    priorityThreshold: 0.82,
-    priorityDegree: 4,
+    globalThreshold: 0.9,
+    relatedThreshold: 0.76,
+    priorityThreshold: 0.72,
+    priorityDegree: 3,
   };
 }
 
 function buildNeighborhoodFade(nodeCount: number) {
   if (nodeCount > 320) {
     return {
-      nodeOpacity: 0.22,
-      fontOpacity: 0.28,
-      edgeOpacity: 0.16,
-      edgeWidth: 0.55,
+      nodeOpacity: 0.16,
+      fontOpacity: 0.2,
+      edgeOpacity: 0.12,
+      edgeWidth: 0.48,
     };
   }
   if (nodeCount > 180) {
     return {
-      nodeOpacity: 0.26,
-      fontOpacity: 0.32,
-      edgeOpacity: 0.18,
-      edgeWidth: 0.58,
+      nodeOpacity: 0.2,
+      fontOpacity: 0.24,
+      edgeOpacity: 0.14,
+      edgeWidth: 0.52,
     };
   }
   if (nodeCount > 96) {
     return {
-      nodeOpacity: 0.3,
-      fontOpacity: 0.36,
-      edgeOpacity: 0.2,
-      edgeWidth: 0.62,
+      nodeOpacity: 0.24,
+      fontOpacity: 0.28,
+      edgeOpacity: 0.16,
+      edgeWidth: 0.56,
     };
   }
   return {
-    nodeOpacity: 0.36,
-    fontOpacity: 0.42,
-    edgeOpacity: 0.24,
-    edgeWidth: 0.68,
+    nodeOpacity: 0.3,
+    fontOpacity: 0.34,
+    edgeOpacity: 0.2,
+    edgeWidth: 0.6,
   };
 }
 
@@ -1029,19 +1089,17 @@ function ensureVisTooltipStyles() {
     .obsirag-graph-tooltip__card {
       display: flex;
       flex-direction: column;
-  if (nodeCount > 96) {
-    return {
-      heavy: false,
-      enableHover: true,
-      enableNodeDrag: true,
-      enableEdgeSmoothing: true,
-      disablePhysicsAfterStabilization: false,
-      skipIdleVisualRefresh: false,
-      hideEdgesWhileInteracting: false,
-      enableAnimatedFit: true,
-      enableTooltipHover: true,
-    };
-  }
+      gap: 14px;
+      padding: 16px;
+    }
+    .obsirag-graph-tooltip__title {
+      color: #f8fafc;
+      font-size: 15px;
+      font-weight: 700;
+      line-height: 1.35;
+    }
+    .obsirag-graph-tooltip__meta {
+      display: flex;
       flex-wrap: wrap;
       gap: 8px;
       color: #cbd5e1;

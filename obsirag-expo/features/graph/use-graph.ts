@@ -16,6 +16,7 @@ export function useGraph(filters?: GraphQueryFilters) {
   return useQuery({
     queryKey: ['graph', backendUrl, useMockServer ? 'mock' : 'live', filters],
     queryFn: () => api.getGraph(filters),
+    placeholderData: (previousData) => previousData,
   });
 }
 
@@ -26,5 +27,6 @@ export function useGraphSubgraph(noteId?: string, depth = 1, filters?: GraphQuer
     queryKey: ['graph', backendUrl, useMockServer ? 'mock' : 'live', 'subgraph', noteId, depth, filters],
     queryFn: () => api.getGraphSubgraph(noteId as string, depth, filters),
     enabled: Boolean(noteId),
+    placeholderData: (previousData) => previousData,
   });
 }
