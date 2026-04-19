@@ -1,5 +1,8 @@
 # ObsiRAG
 
+[![ObsiRAG Expo Quality](https://github.com/pat-the-geek/obsirag/actions/workflows/obsirag-expo-quality.yml/badge.svg)](https://github.com/pat-the-geek/obsirag/actions/workflows/obsirag-expo-quality.yml)
+[![ObsiRAG Expo Web Export Smoke](https://github.com/pat-the-geek/obsirag/actions/workflows/obsirag-expo-web-export-smoke.yml/badge.svg)](https://github.com/pat-the-geek/obsirag/actions/workflows/obsirag-expo-web-export-smoke.yml)
+
 ![ObsiRAG logo](https://raw.githubusercontent.com/pat-the-geek/obsirag/main/src/ui/static/android-chrome-512x512.png)
 
 Un système RAG (Retrieval-Augmented Generation) local pour votre coffre Obsidian, tournant nativement en Python sur macOS et utilisant **MLX-LM** (Apple Silicon) comme moteur IA local et **ChromaDB** comme base vectorielle.
@@ -146,6 +149,26 @@ Pour generer ce build :
 ```
 
 Ensuite `./start.sh` detecte automatiquement `obsirag-expo/dist/index.html` et sert l'interface sur le meme port que l'API.
+
+### Non-regression du build web exporte
+
+Pour verifier qu'un export web complet reste demarrable dans un navigateur reel, sans erreur console bloquante et avec disparition correcte du shell de preboot :
+
+```bash
+cd obsirag-expo
+npm run test:web-export
+```
+
+Ce smoke test automatise :
+
+- `npm run web:export`,
+- le service local du repertoire `dist/` avec fallback SPA,
+- l'ouverture de la page dans Chromium headless via Playwright,
+- la verification qu'un rendu utile apparait dans `#root`,
+- l'absence d'erreurs `pageerror` et `console.error` pendant le bootstrap,
+- et la disparition effective du shell `#obsirag-preboot`.
+
+Ce test est egalement execute en CI sur les changements touches dans `obsirag-expo/`.
 
 ## Acces reseau local ou Tailscale
 

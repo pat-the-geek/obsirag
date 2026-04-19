@@ -1,10 +1,16 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { create } from 'zustand';
-import { createJSONStorage, persist } from 'zustand/middleware';
+import { persist } from 'zustand/middleware';
+import type { PersistStorage, StorageValue } from 'zustand/middleware';
 
 import { normalizeBackendUrlInput } from '../features/auth/backend-url';
+import type { ThemeMode } from '../theme/app-theme';
 
 const DEFAULT_BACKEND_URL = normalizeBackendUrlInput(process.env.EXPO_PUBLIC_DEFAULT_BACKEND_URL ?? process.env.API_PUBLIC_BASE_URL ?? '') || 'http://localhost:8000';
+
+function logStorageFailure(operation: 'read' | 'write' | 'delete', error: unknown): void {
+  console.error(`App store persistence ${operation} failed. Falling back to in-memory state.`, error);
+}
 
 function migrateBackendUrl(value: unknown): string {
   if (typeof value !== 'string') {
@@ -21,6 +27,28 @@ function migrateBackendUrl(value: unknown): string {
   }
 
   return trimmedValue || DEFAULT_BACKEND_URL;
+}
+
+function coerceThemeMode(value: unknown): ThemeMode {
+  return value === 'light' || value === 'dark' || value === 'quiet' || value === 'abyss' || value === 'system'
+    ? value
+    : 'system';
+}
+
+function coerceStringRecord(value: unknown): Record<string, string> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return {};
+  }
+
+  return Object.fromEntries(Object.entries(value).filter(([, entryValue]) => typeof entryValue === 'string'));
+}
+
+function coerceBooleanRecord(value: unknown): Record<string, boolean> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return {};
+  }
+
+  return Object.fromEntries(Object.entries(value).filter(([, entryValue]) => typeof entryValue === 'boolean'));
 }
 
 type AppStoreState = {
@@ -47,6 +75,73 @@ type AppStoreState = {
   openMermaidViewer: (value: { code: string; tone: 'light' | 'dark' }) => void;
   clearMermaidViewer: () => void;
   setHasHydrated: (value: boolean) => void;
+};
+
+function sanitizePersistedState(state: unknown): Partial<AppStoreState> {
+  if (!state || typeof state !== 'object' || Array.isArray(state)) {
+    return {};
+  }
+
+  const candidate = state as Partial<AppStoreState>;
+
+  return {
+    backendUrl: migrateBackendUrl(candidate.backendUrl),
+    accessToken: typeof candidate.accessToken === 'string' ? candidate.accessToken : '',
+    useMockServer: typeof candidate.useMockServer === 'boolean' ? candidate.useMockServer : false,
+    activeConversationId: typeof candidate.activeConversationId === 'string' ? candidate.activeConversationId : undefined,
+    themeMode: coerceThemeMode(candidate.themeMode),
+    drafts: coerceStringRecord(candidate.drafts),
+    sourcePanels: coerceBooleanRecord(candidate.sourcePanels),
+  };
+}
+
+const safeAppStoreStorage: PersistStorage<Partial<AppStoreState>> = {
+  getItem: async (name) => {
+    let rawValue: string | null;
+
+    try {
+      rawValue = await AsyncStorage.getItem(name);
+    } catch (error) {
+      logStorageFailure('read', error);
+      return null;
+    }
+
+    if (!rawValue) {
+      return null;
+    }
+
+    try {
+      const parsedValue = JSON.parse(rawValue) as StorageValue<Partial<AppStoreState>>;
+
+      return {
+        state: sanitizePersistedState(parsedValue?.state),
+        version: typeof parsedValue?.version === 'number' ? parsedValue.version : 0,
+      };
+    } catch (error) {
+      try {
+        await AsyncStorage.removeItem(name);
+      } catch (removeError) {
+        logStorageFailure('delete', removeError);
+      }
+
+      logStorageFailure('read', error);
+      return null;
+    }
+  },
+  setItem: async (name, value) => {
+    try {
+      await AsyncStorage.setItem(name, JSON.stringify(value));
+    } catch (error) {
+      logStorageFailure('write', error);
+    }
+  },
+  removeItem: async (name) => {
+    try {
+      await AsyncStorage.removeItem(name);
+    } catch (error) {
+      logStorageFailure('delete', error);
+    }
+  },
 };
 
 export const useAppStore = create<AppStoreState>()(
@@ -93,13 +188,9 @@ export const useAppStore = create<AppStoreState>()(
     {
       name: 'obsirag-expo-store',
       version: 4,
-      storage: createJSONStorage(() => AsyncStorage),
+      storage: safeAppStoreStorage,
       migrate: (persistedState) => {
-        const state = (persistedState ?? {}) as Partial<AppStoreState>;
-        return {
-          ...state,
-          backendUrl: migrateBackendUrl(state.backendUrl),
-        };
+        return sanitizePersistedState(persistedState);
       },
       onRehydrateStorage: () => (state) => {
         state?.setHasHydrated(true);

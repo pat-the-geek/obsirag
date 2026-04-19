@@ -306,6 +306,29 @@ describe('MessageBubble', () => {
     expect(tree.root.findByProps({ testID: 'message-query-overview-response' })).toBeTruthy();
   });
 
+  it('does not render a separate DDG follow-up for hybrid answers', () => {
+    const message: ChatMessage = {
+      id: 'assistant-hybrid-overview',
+      role: 'assistant',
+      content: '## Reponse principale\n\nContenu du coffre affiche dans la bulle principale.',
+      createdAt: '2026-04-19T12:00:00Z',
+      provenance: 'hybrid',
+      queryOverview: {
+        query: 'Qui a fait le premier pas sur la lune ?',
+        searchQuery: 'Qui a fait le premier pas sur la lune ? explication analyse histoire contexte',
+        summary: 'Neil Armstrong a pose le premier pas sur la Lune lors d\'Apollo 11.',
+        sources: [],
+      },
+    };
+
+    const tree = renderer.create(<MessageBubble message={message} />);
+    const markdownNodes = tree.root.findAllByType(MarkdownNote);
+
+    expect(markdownNodes).toHaveLength(1);
+    expect(markdownNodes[0]?.props.markdown).toContain('Contenu du coffre affiche dans la bulle principale.');
+    expect(tree.root.findAllByProps({ testID: 'message-query-overview-response' })).toHaveLength(0);
+  });
+
   it('keeps the main assistant response visible when Mermaid content is present alongside a DDG overview', () => {
     const message: ChatMessage = {
       id: 'assistant-web-mermaid',

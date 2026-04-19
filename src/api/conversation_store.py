@@ -26,7 +26,10 @@ class ApiConversationStore:
         payload = StoredConversationCollectionModel.model_validate(
             self._store.load({"conversations": [], "updatedAt": datetime.now(UTC).isoformat()})
         )
-        return [ConversationDetailModel.model_validate(item.model_dump()) for item in payload.conversations]
+        return [
+            self._normalize_conversation(ConversationDetailModel.model_validate(item.model_dump()))
+            for item in payload.conversations
+        ]
 
     def get(self, conversation_id: str) -> ConversationDetailModel | None:
         return next((item for item in self.list() if item.id == conversation_id), None)
@@ -202,6 +205,9 @@ class ApiConversationStore:
 
     @staticmethod
     def _normalize_conversation(conversation: ConversationDetailModel) -> ConversationDetailModel:
+        for message in conversation.messages:
+            if message.role == "assistant" and message.provenance != "web" and not message.sentinel:
+                message.queryOverview = None
         if not conversation.title.strip():
             conversation.title = ApiConversationStore._derive_title(conversation.messages)
         return conversation

@@ -1,6 +1,7 @@
 # Runbook — Incident Performance ObsiRAG
 
 ## 1. Détection
+
 - **Alertes** :
   - Surveillez les métriques critiques (ChromaStore, RAG, auto-learner) via les exports :
     - `scripts/export_chroma_perf_report.py`
@@ -13,6 +14,7 @@
   - Alertes dans la CI ou lors de la validation locale
 
 ## 2. Diagnostic
+
 - **Collecte d’évidence** :
   - Récupérez les logs récents (`logs/`, logs/validation/)
   - Exportez les rapports de performance :
@@ -26,7 +28,30 @@
   - Identifiez les métriques hors seuil (voir docs/performances.md)
   - Vérifiez les changements récents (git log, tracker)
 
+### Incident frontend web exporte
+
+Si l'incident concerne une page blanche, un bootstrap web Expo bloque ou une regression d'artefact statique :
+
+```bash
+cd obsirag-expo
+npm run test:web-export
+```
+
+Ce test permet de distinguer rapidement :
+
+- un export casse,
+- une erreur console au demarrage,
+- un `#root` qui ne rend rien,
+- ou un shell de preboot qui ne se masque jamais.
+
+En cas d'echec, conserver dans le ticket :
+
+- le message d'assertion exact,
+- la derniere erreur console ou page error remontee,
+- et le `root snapshot` final quand il est present.
+
 ## 3. Remédiation
+
 - **Rollback rapide** :
   - Désactivez les features récentes via feature flags dans `.env` ou `src/config.py` :
     - `rag_backpressure_enabled`, `rag_answer_cache_enabled`, etc.
@@ -37,6 +62,7 @@
   - Revalidez avec les benchmarks/tests
 
 ## 4. Documentation & Communication
+
 - Documentez l’incident dans le tracker (ticket, changelog)
 - Ajoutez un résumé dans ce runbook (section incidents)
 - Prévenez l’équipe concernée
@@ -51,4 +77,9 @@
 
 ---
 
-*Voir aussi : docs/performances.md, scripts/validate_local.sh, tests/test_rag.py, tests/test_chroma_store.py*
+## Voir aussi
+
+- `docs/performances.md`
+- `scripts/validate_local.sh`
+- `tests/test_rag.py`
+- `tests/test_chroma_store.py`

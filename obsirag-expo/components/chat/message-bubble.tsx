@@ -46,6 +46,7 @@ export function MessageBubble({
   const shouldHideAssistantMainBubble = Boolean(
     !isUser && hasRenderableQueryOverview && !hasMermaidContent && (message.sentinel || message.provenance === 'web'),
   );
+  const shouldRenderQueryOverviewBubble = Boolean(!isUser && hasRenderableQueryOverview && (message.sentinel || message.provenance === 'web'));
   const isPendingAssistant = Boolean(!isUser && (message.id === 'streaming-assistant' || message.id === 'pending-web-assistant'));
   const showWebSearchAction = Boolean(!isUser && !isPendingAssistant && webSearchSuggestion && onSuggestWebSearch);
   const showDeleteAction = Boolean(!isUser && !isPendingAssistant && onDeleteMessage);
@@ -55,6 +56,7 @@ export function MessageBubble({
   const [displayedAssistantContent, setDisplayedAssistantContent] = useState(
     isUser || process.env.NODE_ENV === 'test' ? targetAssistantContent : '',
   );
+  const displayedQueryOverviewContent = shouldHideAssistantMainBubble ? displayedAssistantContent : ddgMarkdown;
   const displayedAssistantContentRef = useRef(displayedAssistantContent);
   const [pendingFrameIndex, setPendingFrameIndex] = useState(0);
   const assistantTone = theme.isDark ? 'dark' : 'light';
@@ -205,7 +207,7 @@ export function MessageBubble({
           </View>
         </Animated.View>
       ) : null}
-      {!isUser && hasRenderableQueryOverview ? (
+      {!isUser && shouldRenderQueryOverviewBubble ? (
         <Animated.View style={assistantRevealStyle}>
           <View
             testID="message-query-overview-response"
@@ -217,7 +219,7 @@ export function MessageBubble({
             </View>
             <View style={[styles.queryOverviewBox, { backgroundColor: queryOverviewBackground, borderColor: queryOverviewBorder }]}>
               <MarkdownNote
-                markdown={displayedAssistantContent}
+                markdown={displayedQueryOverviewContent}
                 tone={assistantTone}
                 {...(highlightEntities ? { entityHighlights: highlightEntities } : {})}
                 {...(onOpenNote ? { onOpenNote } : {})}

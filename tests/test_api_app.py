@@ -1103,12 +1103,13 @@ def test_create_message_uses_autolearn_hybrid_answer_when_vault_response_is_weak
     payload = response.json()
     assert payload["content"].startswith("Ada Lovelace a documente")
     assert payload["provenance"] == "hybrid"
-    assert payload["queryOverview"]["summary"] == "Vue hybride issue du pipeline autolearner."
+    assert payload["queryOverview"] is None
     assert payload["enrichmentPath"].startswith("autolearn-web:")
 
     stored = store.get("conv-hybrid")
     assert stored is not None
     assert stored.messages[1].provenance == "hybrid"
+    assert stored.messages[1].queryOverview is None
 
 
 def test_stream_message_emits_streamlit_style_enrichment_panels(tmp_path: Path, tmp_settings):
@@ -1255,7 +1256,96 @@ def test_stream_message_uses_autolearn_hybrid_answer_when_web_enrichment_is_need
     stored = store.get("conv-stream-hybrid")
     assert stored is not None
     assert stored.messages[1].provenance == "hybrid"
-    assert stored.messages[1].queryOverview is not None
+    assert stored.messages[1].queryOverview is None
+
+
+def test_conversation_store_clears_legacy_hybrid_query_overview_on_read(tmp_path: Path, tmp_settings):
+    store_path = tmp_path / "api" / "conversations.json"
+    store_path.parent.mkdir(parents=True, exist_ok=True)
+    store_path.write_text(
+        json.dumps(
+            {
+                "conversations": [
+                    {
+                        "id": "legacy-hybrid",
+                        "title": "Legacy hybrid",
+                        "updatedAt": "2026-04-19T14:00:00+00:00",
+                        "draft": "",
+                        "messages": [
+                            {
+                                "id": "user-1",
+                                "role": "user",
+                                "content": "Qui a fait le premier pas sur la lune ?",
+                                "createdAt": "2026-04-19T13:49:36+00:00",
+                                "sources": [],
+                                "primarySource": None,
+                                "stats": None,
+                                "timeline": [],
+                                "queryOverview": None,
+                                "entityContexts": [],
+                                "enrichmentPath": None,
+                                "provenance": "unknown",
+                                "sentinel": False,
+                            },
+                            {
+                                "id": "assistant-1",
+                                "role": "assistant",
+                                "content": "Neil Armstrong a effectue le premier pas sur la Lune.",
+                                "createdAt": "2026-04-19T13:51:23+00:00",
+                                "sources": [],
+                                "primarySource": None,
+                                "stats": None,
+                                "timeline": [],
+                                "queryOverview": {
+                                    "query": "Qui a fait le premier pas sur la lune ?",
+                                    "searchQuery": "Qui a fait le premier pas sur la lune ? explication analyse histoire contexte",
+                                    "summary": "Neil Armstrong a effectue le premier pas sur la Lune lors d'Apollo 11.",
+                                    "sources": [],
+                                },
+                                "entityContexts": [],
+                                "enrichmentPath": "autolearn-web:moon-step",
+                                "provenance": "hybrid",
+                                "sentinel": False,
+                            },
+                            {
+                                "id": "assistant-2",
+                                "role": "assistant",
+                                "content": "Les notes mentionnent Artemis III et Artemis IV, sans details supplementaires.",
+                                "createdAt": "2026-04-19T14:01:23+00:00",
+                                "sources": [],
+                                "primarySource": None,
+                                "stats": None,
+                                "timeline": [],
+                                "queryOverview": {
+                                    "query": "Parle moi de Artemis 3 et 4",
+                                    "searchQuery": "Parle moi de Artemis 3 et 4 explication analyse histoire contexte",
+                                    "summary": "Vue d'ensemble obsolète en double.",
+                                    "sources": [],
+                                },
+                                "entityContexts": [],
+                                "enrichmentPath": None,
+                                "provenance": "vault",
+                                "sentinel": False,
+                            },
+                        ],
+                        "lastGenerationStats": None,
+                    }
+                ],
+                "updatedAt": "2026-04-19T14:00:00+00:00",
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    store = ApiConversationStore(store_path)
+    conversation = store.get("legacy-hybrid")
+
+    assert conversation is not None
+    assert conversation.messages[1].provenance == "hybrid"
+    assert conversation.messages[1].queryOverview is None
+    assert conversation.messages[2].provenance == "vault"
+    assert conversation.messages[2].queryOverview is None
 
 
 def test_graph_subgraph_returns_focused_neighbors(tmp_settings):

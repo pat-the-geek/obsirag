@@ -1785,6 +1785,9 @@ def _build_assistant_message(
 ) -> ChatMessageModel:
     source_models = _build_source_models(sources)
     primary_source = next((item for item in source_models if item.isPrimary), None)
+    normalized_provenance = _normalize_assistant_provenance(provenance)
+    sentinel = is_not_in_vault(answer)
+    allow_query_overview = normalized_provenance == "web" or sentinel
     return ChatMessageModel(
         id=f"assistant-{datetime.now(UTC).timestamp()}",
         role="assistant",
@@ -1793,11 +1796,11 @@ def _build_assistant_message(
         sources=source_models,
         primarySource=primary_source,
         timeline=timeline,
-        queryOverview=_query_overview_model(query_overview),
+        queryOverview=_query_overview_model(query_overview) if allow_query_overview else None,
         entityContexts=_entity_context_models(entity_contexts),
         enrichmentPath=enrichment_path,
-        provenance=_normalize_assistant_provenance(provenance),
-        sentinel=is_not_in_vault(answer),
+        provenance=normalized_provenance,
+        sentinel=sentinel,
         stats=_build_generation_stats(answer, started_at),
     )
 
