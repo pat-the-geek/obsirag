@@ -15,6 +15,9 @@ import { formatMetadataDate, formatSizeBytes, joinMetadataParts } from '../../ut
 import { buildNoteRoute } from '../../utils/note-route';
 
 const appIcon = require('../../assets/app-icon.png');
+const appPackage = require('../../package.json') as {
+  dependencies?: Record<string, string>;
+};
 
 type HeroBadgeTone = 'frontend' | 'ai' | 'backend' | 'runtime';
 
@@ -166,14 +169,14 @@ function buildDashboardBadges(data: NonNullable<ReturnType<typeof useSystemStatu
   const runtime = data.runtime;
   const llmName = formatModelName(runtime?.llmModel ?? 'LLM local');
   return [
-    { icon: 'UI', label: 'React 18.3', tone: 'frontend' },
-    { icon: 'EX', label: 'Expo 52', tone: 'frontend' },
+    { icon: 'UI', label: `React ${formatReactBadgeVersion(appPackage.dependencies?.react)}`, tone: 'frontend' },
+    { icon: 'EX', label: `Expo ${formatExpoBadgeVersion(appPackage.dependencies?.expo)}`, tone: 'frontend' },
     { icon: 'AI', label: `${runtime?.llmProvider ?? 'MLX'} local`, tone: 'ai' },
     { icon: 'LLM', label: llmName, tone: 'ai' },
     { icon: 'EMB', label: shortModelLabel(runtime?.embeddingModel, 'MiniLM'), tone: 'ai' },
     { icon: 'NER', label: shortModelLabel(runtime?.nerModel, 'xx_ent_wiki_sm'), tone: 'ai' },
     { icon: 'API', label: data.backendReachable ? 'FastAPI online' : 'FastAPI offline', tone: 'backend' },
-    { icon: 'DB', label: `${runtime?.vectorStore ?? 'ChromaDB'} 1.5`, tone: 'backend' },
+    { icon: 'DB', label: formatVectorStoreLabel(runtime?.vectorStore), tone: 'backend' },
     { icon: 'RUN', label: data.autolearn?.managedBy === 'worker' || runtime?.autolearnMode === 'worker' ? 'Auto-learn worker' : 'Auto-learn intégré', tone: 'runtime' },
     { icon: 'OK', label: data.llmAvailable ? 'LLM prêt' : 'LLM en attente', tone: 'runtime' },
   ];
@@ -186,6 +189,40 @@ function formatModelName(model: string) {
   }
   const compact = trimmed.split('/').pop() ?? trimmed;
   return compact.replace(/-4bit$/i, ' 4bit');
+}
+
+function formatReactBadgeVersion(version: string | undefined) {
+  const normalized = normalizeSemver(version);
+  if (!normalized) {
+    return 'React';
+  }
+
+  const [major = normalized, minor] = normalized.split('.');
+  return minor ? `${major}.${minor}` : major;
+}
+
+function formatExpoBadgeVersion(version: string | undefined) {
+  const normalized = normalizeSemver(version);
+  if (!normalized) {
+    return 'SDK';
+  }
+
+  return normalized.split('.')[0] ?? normalized;
+}
+
+function normalizeSemver(version: string | undefined) {
+  const trimmed = version?.trim();
+  if (!trimmed) {
+    return '';
+  }
+
+  const match = trimmed.match(/(\d+\.\d+\.\d+|\d+\.\d+|\d+)/);
+  return match?.[0] ?? '';
+}
+
+function formatVectorStoreLabel(value: string | undefined) {
+  const trimmed = value?.trim();
+  return trimmed || 'ChromaDB';
 }
 
 function shortModelLabel(model: string | undefined, fallback: string) {

@@ -1,6 +1,6 @@
 import React from 'react';
 import renderer, { act } from 'react-test-renderer';
-import { Pressable, Text } from 'react-native';
+import { Text } from 'react-native';
 
 const mockPush = jest.fn();
 const mockReplace = jest.fn();
@@ -43,6 +43,26 @@ jest.mock('../../services/storage/secure-session', () => ({
 }));
 
 import SettingsScreen from '../../app/(tabs)/settings';
+
+function collectText(value: unknown): string[] {
+  if (typeof value === 'string' || typeof value === 'number') {
+    return [String(value)];
+  }
+
+  if (Array.isArray(value)) {
+    return value.flatMap((item) => collectText(item));
+  }
+
+  if (value && typeof value === 'object' && 'props' in value) {
+    return collectText((value as { props?: { children?: unknown } }).props?.children);
+  }
+
+  return [];
+}
+
+function pressableContainsLabel(node: renderer.ReactTestInstance, label: string) {
+  return node.findAllByType(Text).some((textNode: renderer.ReactTestInstance) => collectText(textNode.props.children).join('') === label);
+}
 
 describe('settings screen', () => {
   beforeEach(() => {
@@ -125,9 +145,7 @@ describe('settings screen', () => {
     expect(renderedText).toContain('Atelier');
     expect(renderedText).toContain('Noctis');
 
-    const darkOption = tree.root.findAllByType(Pressable).find((node) =>
-      node.findAllByType(Text).some((textNode) => textNode.props.children === 'Dark+'),
-    );
+    const darkOption = tree.root.findAll((node) => typeof node.props.onPress === 'function').find((node) => pressableContainsLabel(node, 'Dark+'));
 
     expect(darkOption).toBeTruthy();
 
@@ -141,9 +159,7 @@ describe('settings screen', () => {
   it('allows selecting the new Noctis theme', () => {
     const tree = renderer.create(<SettingsScreen />);
 
-    const abyssOption = tree.root.findAllByType(Pressable).find((node) =>
-      node.findAllByType(Text).some((textNode) => textNode.props.children === 'Noctis'),
-    );
+    const abyssOption = tree.root.findAll((node) => typeof node.props.onPress === 'function').find((node) => pressableContainsLabel(node, 'Noctis'));
 
     expect(abyssOption).toBeTruthy();
 

@@ -1,5 +1,5 @@
 import React from 'react';
-import renderer from 'react-test-renderer';
+import renderer, { act } from 'react-test-renderer';
 
 const mockUseSegments = jest.fn();
 const mockUseServerConfig = jest.fn();
@@ -47,6 +47,14 @@ import AuthLayout from '../../app/(auth)/_layout';
 import IndexRoute from '../../app/index';
 import TabsLayout from '../../app/(tabs)/_layout';
 
+function renderWithAct(element: React.ReactElement) {
+  let tree!: renderer.ReactTestRenderer;
+  act(() => {
+    tree = renderer.create(element);
+  });
+  return tree;
+}
+
 describe('auth routing guards', () => {
   beforeEach(() => {
     mockUseSegments.mockReturnValue(['(auth)', 'server-config']);
@@ -61,14 +69,14 @@ describe('auth routing guards', () => {
     const sessionSentinel = { isLoading: false, isError: true, data: undefined };
     mockUseSessionStatus.mockImplementation(() => sessionSentinel);
 
-    const tree = renderer.create(<AuthLayout />);
+    const tree = renderWithAct(<AuthLayout />);
 
     expect(() => tree.root.findByProps({ testID: 'stack' })).not.toThrow();
     expect(mockUseSessionStatus).not.toHaveBeenCalled();
   });
 
   it('does not redirect repeatedly when auth layout is already on server-config', () => {
-    const tree = renderer.create(<AuthLayout />);
+    const tree = renderWithAct(<AuthLayout />);
 
     expect(() => tree.root.findByProps({ testID: 'stack' })).not.toThrow();
     expect(() => tree.root.findByProps({ testID: 'redirect' })).toThrow();
@@ -77,7 +85,7 @@ describe('auth routing guards', () => {
   it('redirects tabs session errors directly to server-config', () => {
     mockUseSegments.mockReturnValue(['(tabs)', 'index']);
 
-    const tree = renderer.create(<TabsLayout />);
+    const tree = renderWithAct(<TabsLayout />);
 
     expect(tree.root.findByProps({ testID: 'redirect' }).props.children).toBe('/(auth)/server-config');
   });
@@ -86,7 +94,7 @@ describe('auth routing guards', () => {
     mockUseSegments.mockReturnValue(['(auth)', 'login']);
     mockUseSessionStatus.mockReturnValue({ isLoading: false, isError: false, data: { authenticated: true } });
 
-    const tree = renderer.create(<AuthLayout />);
+    const tree = renderWithAct(<AuthLayout />);
 
     expect(tree.root.findByProps({ testID: 'redirect' }).props.children).toBe('/(tabs)');
   });
@@ -96,7 +104,7 @@ describe('auth routing guards', () => {
     mockUseSessionStatus.mockReturnValue({ isLoading: false, isError: false, data: { authenticated: true } });
     mockUseStoreHydrated.mockReturnValue(true);
 
-    const tree = renderer.create(<IndexRoute />);
+    const tree = renderWithAct(<IndexRoute />);
 
     expect(tree.root.findByProps({ testID: 'redirect' }).props.children).toBe('/(tabs)');
   });

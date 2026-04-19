@@ -29,13 +29,15 @@ describe('useConversation', () => {
     latestResult = null;
   });
 
-  afterEach(() => {
-    if (testRenderer) {
-      testRenderer.unmount();
-      testRenderer = null;
-    }
-    queryClient?.clear();
-    queryClient = null;
+  afterEach(async () => {
+    await act(async () => {
+      if (testRenderer) {
+        testRenderer.unmount();
+        testRenderer = null;
+      }
+      queryClient?.clear();
+      queryClient = null;
+    });
   });
 
   it('keeps explicit web search question and pending message when the backend conversation is refetched', async () => {

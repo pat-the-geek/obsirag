@@ -36,7 +36,9 @@ describe('useStreamMessage', () => {
 
   afterEach(() => {
     if (testRenderer) {
-      testRenderer.unmount();
+      act(() => {
+        testRenderer?.unmount();
+      });
       testRenderer = null;
     }
     queryClient?.clear();
@@ -98,7 +100,7 @@ describe('useStreamMessage', () => {
 
     const conversation = queryClient.getQueryData<ConversationDetail>(['conversation', 'conv-1']);
     expect(conversation?.messages.at(-1)?.content).toBe('Bonjour monde');
-    expect(conversation?.messages.at(-1)?.timeline).toEqual(['Generation MLX']);
+    expect(conversation?.messages.at(-1)?.timeline).toEqual(['Réponse en préparation', 'Generation MLX']);
     expect(mockSetDraft).toHaveBeenCalledWith('conv-1', '');
   });
 });

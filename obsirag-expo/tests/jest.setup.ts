@@ -1,5 +1,38 @@
 Object.assign(globalThis, { __OBSIRAG_JEST__: true });
 
+Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+
+const nativeSourceCodeMock = {
+  getConstants: () => ({ scriptURL: '' }),
+};
+
+jest.mock('react-native/Libraries/NativeModules/specs/NativeSourceCode', () => ({
+  __esModule: true,
+  default: nativeSourceCodeMock,
+}));
+
+jest.mock('react-native/src/private/specs_DEPRECATED/modules/NativeSourceCode', () => ({
+  __esModule: true,
+  default: nativeSourceCodeMock,
+}));
+
+if (typeof window !== 'undefined' && typeof window.dispatchEvent !== 'function') {
+  Object.assign(window, {
+    dispatchEvent: jest.fn(() => true),
+  });
+}
+
+const reactTestRenderer = require('react-test-renderer') as typeof import('react-test-renderer');
+const originalCreate = reactTestRenderer.create.bind(reactTestRenderer);
+
+reactTestRenderer.create = ((...args: Parameters<typeof reactTestRenderer.create>) => {
+  let tree!: ReturnType<typeof reactTestRenderer.create>;
+  reactTestRenderer.act(() => {
+    tree = originalCreate(...args);
+  });
+  return tree;
+}) as typeof reactTestRenderer.create;
+
 jest.mock('@react-native-async-storage/async-storage', () => ({
   __esModule: true,
   default: {

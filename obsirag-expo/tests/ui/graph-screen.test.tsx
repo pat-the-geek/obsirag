@@ -196,7 +196,10 @@ describe('GraphScreen', () => {
   });
 
   it('renders a visual graph and supports focus/open actions', () => {
-    const tree = renderer.create(<GraphScreen />);
+    let tree!: renderer.ReactTestRenderer;
+    act(() => {
+      tree = renderer.create(<GraphScreen />);
+    });
 
     const texts = tree.root.findAllByType(Text).flatMap((node) => {
       const value = node.props.children;
@@ -278,7 +281,10 @@ describe('GraphScreen', () => {
   it('initializes the tag filter from route params', () => {
     mockGraphSearchParams = { tag: 'nasa' };
 
-    const tree = renderer.create(<GraphScreen />);
+    let tree!: renderer.ReactTestRenderer;
+    act(() => {
+      tree = renderer.create(<GraphScreen />);
+    });
     const texts = tree.root.findAllByType(Text).flatMap((node) => {
       const value = node.props.children;
       return Array.isArray(value) ? value : [value];

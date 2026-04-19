@@ -33,13 +33,15 @@ describe('useExplicitWebSearch', () => {
     mockInvalidateQueries.mockClear();
   });
 
-  afterEach(() => {
-    if (testRenderer) {
-      testRenderer.unmount();
-      testRenderer = null;
-    }
-    queryClient?.clear();
-    queryClient = null;
+  afterEach(async () => {
+    await act(async () => {
+      if (testRenderer) {
+        testRenderer.unmount();
+        testRenderer = null;
+      }
+      queryClient?.clear();
+      queryClient = null;
+    });
   });
 
   afterAll(() => {

@@ -87,6 +87,10 @@ describe('dashboard screen', () => {
     expect(renderedText).toContain('mlx-community/Qwen2.5-7B-Instruct-4bit');
     expect(renderedText).toContain('Source runtime: API FastAPI live');
     expect(renderedText).toContain('Backend: http://192.168.1.217:8000');
+    expect(renderedText).toContain('React 19.1');
+    expect(renderedText).toContain('Expo 54');
+    expect(renderedText).toContain('ChromaDB');
+    expect(renderedText).not.toContain('ChromaDB 1.5');
     expect(renderedText).toContain('Mode live');
     expect(renderedText).toContain('Indexation: Aucun traitement en cours');
     expect(renderedText).not.toContain('Indexation: Indexation terminée');
