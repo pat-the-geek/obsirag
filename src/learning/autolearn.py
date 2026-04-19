@@ -634,7 +634,7 @@ class AutoLearner:
 
         if self._is_first_insight_run():
             logger.info("Auto-learner : première utilisation détectée — mode accéléré dans 120s")
-            # Délai de 120s avant de charger MLX : laisse Streamlit démarrer complètement
+            # Délai de 120s avant de charger MLX : laisse l'interface démarrer complètement
             # et évite le crash Metal GPU lors des redémarrages rapides par launchd.
             def _delayed_bulk():
                 import time as _time

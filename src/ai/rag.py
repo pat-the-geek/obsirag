@@ -36,7 +36,7 @@ class _AnswerCache:
     """Cache mémoire réponse RAG avec TTL.
 
     Clé = SHA-1 de (query normalisée + historique condensé).
-    Évite les doubles inférences sur les rechargements de page Streamlit
+    Évite les doubles inférences sur les rechargements de page UI
     ou les requêtes identiques soumises en rafale.
     TTL par défaut : 300 s (5 min).
     """

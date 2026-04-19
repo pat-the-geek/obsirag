@@ -896,7 +896,7 @@ def test_create_message_deduplicates_duplicate_sources_in_response(tmp_path: Pat
     assert [item.filePath for item in stored.messages[1].sources] == ["Space/Artemis II.md", "Space/Orion.md"]
 
 
-def test_create_message_returns_streamlit_style_enrichment_panels(tmp_path: Path, tmp_settings):
+def test_create_message_returns_legacy_style_enrichment_panels(tmp_path: Path, tmp_settings):
     store = ApiConversationStore(tmp_path / "api" / "conversations.json")
     service_manager = _StubServiceManager()
     service_manager.learner.lookup_wuddai_entity_contexts.return_value = [
@@ -1112,7 +1112,7 @@ def test_create_message_uses_autolearn_hybrid_answer_when_vault_response_is_weak
     assert stored.messages[1].queryOverview is None
 
 
-def test_stream_message_emits_streamlit_style_enrichment_panels(tmp_path: Path, tmp_settings):
+def test_stream_message_emits_legacy_style_enrichment_panels(tmp_path: Path, tmp_settings):
     store = ApiConversationStore(tmp_path / "api" / "conversations.json")
     service_manager = _StubServiceManager()
     service_manager.learner.lookup_wuddai_entity_contexts.return_value = [
@@ -1399,7 +1399,7 @@ def test_graph_subgraph_returns_focused_neighbors(tmp_settings):
     assert payload["filterOptions"]["folders"] == ["Science", "Space"]
 
 
-def test_graph_returns_streamlit_style_complete_payload(tmp_settings):
+def test_graph_returns_legacy_style_complete_payload(tmp_settings):
     service_manager = _StubServiceManager()
     notes = [
         {

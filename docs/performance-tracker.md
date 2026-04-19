@@ -33,7 +33,7 @@ Objectif sprint: reduire la latence de generation MLX (hotspot #1 = 99.27%) par 
 | PERF-12 | S4 | Patrick | DONE | Pre-chauffe prompt systeme: TTFT -2s | Benchmark PERF-11/12 (AB, n=20): TTFT moyen 2.451s, P95 3.845s | OK |
 | PERF-13 | S4 | Patrick | DONE | max_tokens adaptatif par intent | Caps activés + AB10: total moyen 15.048s (P95 28.078s), completions observées <= 700 tokens | MIXTE (latence totale en légère baisse, TTFT/TPS à surveiller) |
 | PERF-14 | S4 | Patrick | DONE | Backpressure stable | `_InferenceBackpressure` dans `rag.py` : 1 inférence active, max_queue=2, timeout=120s, rejet immédiat si saturé — 7 tests unitaires (99/99 pass) | OK |
-| PERF-15 | S4 | Patrick | DONE | P99 -20% | (a) `_AnswerCache` TTL 5 min, 128 entrées — supprime les doublons Streamlit/requêtes rafales ; (b) `_retry_forced_study_synthesis` conditionné à ≥ 2 notes distinctes — élimine le 2e appel LLM inutile sur source unique — 12 nouveaux tests (111/111 pass) | OK (mesure P99 à valider en bench AB) |
+| PERF-15 | S4 | Patrick | DONE | P99 -20% | (a) `_AnswerCache` TTL 5 min, 128 entrées — supprime les doublons de rechargement UI et les requêtes rafales ; (b) `_retry_forced_study_synthesis` conditionné à ≥ 2 notes distinctes — élimine le 2e appel LLM inutile sur source unique — 12 nouveaux tests (111/111 pass) | OK (mesure P99 à valider en bench AB) |
 | PERF-16 | S5 | Patrick | DONE | Canary 10/30/100 | Feature flags `rag_backpressure_enabled`/`rag_answer_cache_enabled` dans `config.py` ; `scripts/canary_validation.py` 3 phases (2/6/20 req), seuils PERF-02, Go/No-Go par phase, rapport JSON — 16 tests unitaires (127/127 pass) | OK |
 | PERF-17 | S5 | Patrick | TODO | Runbook incident pret | - | - |
 | PERF-18 | S5 | Patrick | TODO | ROI final publie | - | - |

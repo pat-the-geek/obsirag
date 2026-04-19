@@ -150,4 +150,4 @@ sequenceDiagram
 
 ## Note d'architecture
 
-Les séquences ci-dessus décrivent le runtime principal actuel : `launchd` pour le worker auto-learner persistant, FastAPI pour le backend applicatif, et Expo web pour l'interface principale. Les flux Streamlit historiques ne sont plus la référence opératoire du produit.
+Les séquences ci-dessus décrivent le runtime principal actuel : `launchd` pour le worker auto-learner persistant, FastAPI pour le backend applicatif, et Expo web pour l'interface principale. Les flux historiques de l'ancienne UI ne sont plus la référence opératoire du produit.

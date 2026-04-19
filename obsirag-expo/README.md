@@ -4,7 +4,7 @@ Client Expo Router pour la reecriture d'ObsiRAG en React Native + TypeScript.
 
 ## Objectif
 
-Ce sous-projet fournit l'interface produit principale actuelle d'ObsiRAG, basee sur Expo web, et remplace l'ancien role central de l'UI Streamlit. Il fournit notamment :
+Ce sous-projet fournit l'interface produit principale actuelle d'ObsiRAG, basee sur Expo web. Il fournit notamment :
 
 - Expo Router
 - React Query

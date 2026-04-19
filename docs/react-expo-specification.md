@@ -13,7 +13,7 @@ Il est concu pour etre importe tel quel dans un nouveau projet afin de guider :
 - les exigences non fonctionnelles,
 - le plan de livraison.
 
-Le but n'est pas de reproduire Streamlit a l'identique, mais de conserver les invariants utiles d'ObsiRAG tout en basculant vers une application moderne, mobile-first, multi-plateforme.
+Le but n'est pas de reproduire l'ancienne interface a l'identique, mais de conserver les invariants utiles d'ObsiRAG tout en basculant vers une application moderne, mobile-first, multi-plateforme.
 
 ## 2. Decision d'architecture
 
@@ -1032,9 +1032,9 @@ Exigences minimales :
 
 ### 25.2 Ce qui doit etre remplace
 
-- UI Streamlit,
-- etat session purement Streamlit,
-- widgets et flux de rendu specifiques Streamlit.
+- ancienne UI web,
+- etat session purement lie au runtime historique,
+- widgets et flux de rendu specifiques a cette interface.
 
 ### 25.3 Strategie recommandee
 

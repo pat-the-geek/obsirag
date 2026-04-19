@@ -178,7 +178,7 @@ export default function ConversationDetailScreen() {
               {messages.length === 0 ? (
                 <View style={[styles.emptyStateCard, { backgroundColor: theme.colors.surfaceMuted, borderColor: theme.colors.border }]}>
                   <Text style={[styles.emptyStateTitle, { color: theme.colors.text }]}>Exemples de questions</Text>
-                  <Text style={[styles.emptyStateBody, { color: theme.colors.textMuted }]}>Le chat Streamlit propose des points d'entree rapides. La version Expo reprend ici des suggestions pour lancer un premier tour utile.</Text>
+                  <Text style={[styles.emptyStateBody, { color: theme.colors.textMuted }]}>Cette vue propose des points d'entree rapides pour lancer un premier tour utile.</Text>
                   <View style={styles.emptyStateActions}>
                     {quickActions.map((item) => (
                       <Pressable key={item} style={[styles.emptyStateActionButton, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]} onPress={() => setDraft(conversationId, item)}>

@@ -183,7 +183,7 @@ API_PUBLIC_BASE_URL=http://tailscale-host.example.ts.net:8000
 ```
 
 - `API_PUBLIC_BASE_URL` doit pointer vers le nom DNS Tailscale, le nom mDNS local ou un host LAN stable de la machine qui heberge ObsiRAG.
-- Pour l'ancienne UI Streamlit uniquement, `STREAMLIT_SERVER_ADDRESS=0.0.0.0` permet aussi une exposition reseau. Cette variable ne pilote pas le runtime Expo + FastAPI.
+- `STREAMLIT_SERVER_ADDRESS=0.0.0.0` ne concerne que l'interface legacy optionnelle. Cette variable ne pilote pas le runtime Expo + FastAPI.
 - Eviter `localhost` ou `127.0.0.1` dans la configuration saisie depuis une autre machine : ces adresses designent la machine cliente, pas le Mac qui heberge ObsiRAG.
 
 ### URLs a utiliser depuis une autre machine
@@ -735,7 +735,7 @@ python scripts/benchmark_model_shortlist.py \
 | IA | MLX-LM (Apple Silicon, sans serveur) |
 | Base vectorielle | ChromaDB |
 | Embeddings | sentence-transformers — `paraphrase-multilingual-MiniLM-L12-v2` (384 dim, CPU) |
-| Interface | Expo web + FastAPI (runtime actuel), Streamlit hérité |
+| Interface | Expo web + FastAPI |
 | Graphe | NetworkX + Pyvis |
 | Recherche web | DuckDuckGo Search (sources fiables) |
 | Entités NER | spaCy + validation [WUDD.ai](http://localhost:5050) (top 5 000 entités officielles) |
@@ -770,7 +770,7 @@ cd obsirag
 # Configurer l'environnement
 cp .env.example .env
 # Éditer .env : renseigner VAULT_PATH, MLX_CHAT_MODEL, etc.
-# Pour exposer aussi l'UI Streamlit heritee sur le reseau : STREAMLIT_SERVER_ADDRESS=0.0.0.0
+# Pour exposer l'interface legacy optionnelle sur le reseau : STREAMLIT_SERVER_ADDRESS=0.0.0.0
 
 # Installer les dépendances Python et configurer le service
 ./setup.sh

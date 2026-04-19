@@ -5,12 +5,12 @@ Ce document suit les ameliorations recentes appliquees a ObsiRAG, leur portee fo
 Convention de lecture :
 
 - les sections qui parlent de FastAPI, Expo web, auto-learner, Chroma, RAG ou observabilite concernent le runtime produit actuel,
-- les sections qui parlent explicitement de pages Streamlit, de hot reload Streamlit ou de `session_state` documentent un heritage encore present dans le depot, utile pour maintenance mais non representatif du point d'entree principal actuel,
-- quand un lot melange les deux, les correctifs backend et stockages restent pertinents pour le produit actuel, meme si leur validation d'origine a ete faite via l'UI Streamlit heritee.
+- les sections qui parlent explicitement de pages UI heritees, de hot reload historique ou de `session_state` documentent un heritage encore present dans le depot, utile pour maintenance mais non representatif du point d'entree principal actuel,
+- quand un lot melange les deux, les correctifs backend et stockages restent pertinents pour le produit actuel, meme si leur validation d'origine a ete faite via l'ancienne UI hereditee.
 
 ## Mise a jour du 2026-04-12 (suite)
 
-Cette mise a jour contient surtout des ameliorations backend, stockage, learning et observabilite toujours utiles au runtime actuel. Quelques points de validation et de robustesse mentionnent encore Streamlit parce que cette surface etait alors utilisee comme UI de verification.
+Cette mise a jour contient surtout des ameliorations backend, stockage, learning et observabilite toujours utiles au runtime actuel. Quelques points de validation et de robustesse mentionnent encore l'ancienne UI parce que cette surface etait alors utilisee comme UI de verification.
 
 ### Correction bug accumulation _archive_ sur les insights
 
@@ -43,7 +43,7 @@ Cette mise a jour contient surtout des ameliorations backend, stockage, learning
 ### Sortie complete de `chroma_compat` du depot
 
 - Les pages `1_Brain.py`, `2_Insights.py`, `3_Settings.py`, `4_Note.py` et `app.py` appellent desormais directement les methodes publiques de `ChromaStore` au lieu de passer par `src/ui/chroma_compat.py`.
-- `services_cache.py` devient l'unique point de defense contre les objets `chroma` obsoletes conserves par un hot reload Streamlit partiel.
+- `services_cache.py` devient l'unique point de defense contre les objets `chroma` obsoletes conserves par un hot reload partiel de l'UI historique.
 - Le predicat `_is_services_instance_compatible()` verifie maintenant explicitement les methodes requises par le runtime UI : `list_notes_sorted_by_title`, `list_note_folders`, `list_note_tags`, `list_notes_by_type`, `list_recent_notes`, `list_user_notes`, `list_generated_notes`, `count_notes`, `get_backlinks`.
 - Le module `src/ui/chroma_compat.py` et ses tests dedies ont ete supprimes du depot.
 - `docs/architecture.md` ne documente plus `chroma_compat` comme filet de securite actif.
@@ -102,7 +102,7 @@ Cette mise a jour contient surtout des ameliorations backend, stockage, learning
 - Amelioration UX sur l'attente chat : pendant `query_stream`, la zone de statut affiche maintenant une progression d'activite en temps reel (etapes retrieval + temps ecoule) au lieu d'un message statique "Recherche dans le coffre…".
 - Evolution de cette amelioration : la progression est desormais pilotee par des evenements backend reels emis par `RAGPipeline`/`RetrievalStrategy` (intention detectee, mode de retrieval, nombre de passages retenus, preparation prompt, retry contexte), puis consommee par l'UI chat avec affichage du temps ecoule.
 - Ajout d'une timeline visible directement dans la conversation pendant la generation : phases `analyse → retrieval → contexte → generation`, avec etat courant et transitions completees en temps reel.
-- La timeline est maintenant persistée dans chaque message assistant (expander "Timeline activité" dans l'historique), pour rester visible après la fin de la génération et après rerun Streamlit.
+- La timeline est maintenant persistée dans chaque message assistant (expander "Timeline activité" dans l'historique), pour rester visible après la fin de la génération et après rerun de l'UI.
 - Renforcement du garde-fou runtime dans `services_cache.py` : la compatibilite de l'instance singleton verifie aussi la signature de `rag.query_stream` (presence de `progress_callback`) pour forcer une reconstruction propre en cas de hot reload partiel vers une instance RAG obsolete.
 
 ### Index et acces aux artefacts (suite 2026-04-12)
@@ -214,20 +214,20 @@ Cette mise a jour contient surtout des ameliorations backend, stockage, learning
 
 ## Mise a jour du 2026-04-11
 
-Cette mise a jour documente principalement un lot de stabilisation de l'UI Streamlit heritee. Elle reste utile pour comprendre certains helpers partages et garde-fous runtime encore presents dans le depot, mais ne decrit pas l'interface produit principale actuelle, qui est desormais Expo web sur backend FastAPI.
+Cette mise a jour documente principalement un lot de stabilisation de l'UI heritee. Elle reste utile pour comprendre certains helpers partages et garde-fous runtime encore presents dans le depot, mais ne decrit pas l'interface produit principale actuelle, qui est desormais Expo web sur backend FastAPI.
 
 ### Experience chat
 
-- Ajout d'un etat de session par fil de discussion dans l'UI Streamlit.
+- Ajout d'un etat de session par fil de discussion dans l'UI hereditee.
 - Persistance du brouillon, des messages et des statistiques de generation par thread.
 - Restauration correcte du thread actif lors des changements de conversation.
 - Conservation des statistiques de la derniere generation dans le fil courant au lieu d'un etat global ambigu.
-- Correction d'un cas d'erreur Streamlit sur la remise a zero du brouillon de fil en deplacant la mutation de `chat_thread_draft` dans un callback compatible avec les widgets.
+- Correction d'un cas d'erreur UI sur la remise a zero du brouillon de fil en deplacant la mutation de `chat_thread_draft` dans un callback compatible avec les widgets.
 
 ### Graphe et navigation dans le coffre
 
-- Stabilisation de la page Cerveau apres des erreurs d'import a chaud dans Streamlit en passant par un import de module plus robuste.
-- Durcissement complementaire de la page Cerveau face aux objets `ChromaStore` obsoletes conserves par le hot reload Streamlit.
+- Stabilisation de la page Cerveau apres des erreurs d'import a chaud dans l'UI hereditee en passant par un import de module plus robuste.
+- Durcissement complementaire de la page Cerveau face aux objets `ChromaStore` obsoletes conserves par le hot reload historique.
 - Remplacement des derniers scans ad hoc de dossiers et tags visibles dans la page Cerveau par des helpers Chroma explicites.
 - Ajout de filtres par type de note et de resumes associes dans l'exploration du graphe.
 - Uniformisation de l'affichage des badges de type et des couleurs associees aux notes.
@@ -242,11 +242,11 @@ Cette mise a jour documente principalement un lot de stabilisation de l'UI Strea
 - Ajout de `list_notes_by_type()`, `list_insight_notes()`, `list_synapse_notes()` et `list_report_notes()` pour sortir la page Insights des parcours bruts de repertoires d'artefacts.
 - Le cycle normal de l'auto-learner repart maintenant d'une liste de notes utilisateur plutot que d'un `list_notes()` brut pour son full-scan et la decouverte de synapses.
 
-### Rendu HTML et compatibilite Streamlit
+### Rendu HTML et compatibilite UI
 
 - Suppression des usages de `components.html` devenus deprecies.
 - Introduction du helper partage `src/ui/html_embed.py`.
-- Debut d'extraction des generateurs HTML UI vers des helpers purs testables hors runtime Streamlit.
+- Debut d'extraction des generateurs HTML UI vers des helpers purs testables hors runtime interactif.
 - Extraction du rendu Mermaid du chat vers un helper dedie, en plus du visualiseur de note.
 - Renforcement de la verification du HTML Pyvis genere pour le graphe et de ses hooks d'interaction Obsidian/UI.
 - Rendu des documents HTML complets via `st.iframe` avec URL `data:` encodee en base64.
@@ -263,7 +263,7 @@ Cette mise a jour documente principalement un lot de stabilisation de l'UI Strea
 - Ajout d'une verification minimale du HTML genere pour Mermaid et pour le graphe Pyvis.
 - Ajout de tests dedies pour `src/ui/html_embed.py`.
 - Ajout de tests dedies pour les helpers Mermaid du chat et du visualiseur.
-- Ajout de tests dedies pour `src/ui/services_cache.py` et `src/ui/chroma_compat.py` afin de couvrir le correctif de compatibilite runtime Streamlit.
+- Ajout de tests dedies pour `src/ui/services_cache.py` et `src/ui/chroma_compat.py` afin de couvrir le correctif de compatibilite runtime historique.
 - Renforcement des assertions HTML du graphe Pyvis pour verifier explicitement les hooks d'ouverture de note et le fallback `postMessage` du rendu Brain.
 - Ajout d'un helper pur pour preparer et etiqueter les entrees d'artefacts de la page Insights, avec assertions dediees sur ce rendu minimal.
 - Validation complete de la suite `pytest --no-cov` : 470 tests passes.
@@ -276,8 +276,8 @@ Cette mise a jour documente principalement un lot de stabilisation de l'UI Strea
 - Verification du redemarrage de l'interface legacy : reponse HTTP 200 sur `http://127.0.0.1:8501`.
 - Verification des logs de demarrage : pas de nouvelle erreur bloquante observee sur la derniere relance.
 - Verification complementaire apres reconstruction des services : la page Cerveau rebati correctement un graphe de 527 noeuds et 640 aretes apres redemarrage.
-- Documentation d'un protocole operatoire de diagnostic, purge de cache et relance locale pour les hot reload Streamlit incomplets.
-- Extension du protocole Streamlit avec le cas specifique des cles `session_state` liees a un widget qui doivent etre mutees via callback ou avant instanciation.
+- Documentation d'un protocole operatoire de diagnostic, purge de cache et relance locale pour les hot reload incomplets de l'UI hereditee.
+- Extension du protocole de l'UI hereditee avec le cas specifique des cles `session_state` liees a un widget qui doivent etre mutees via callback ou avant instanciation.
 
 ## Commits associes
 
@@ -285,9 +285,9 @@ Cette mise a jour documente principalement un lot de stabilisation de l'UI Strea
 - `ba18d71` - Add tests for HTML embed helper
 - `98e59ea` - Extract Mermaid UI helpers and expand Chroma note APIs
 - `019b960` - Refine note listing helpers and autolearn filtering
-- `5b51a46` - Harden Streamlit runtime compatibility
+- `5b51a46` - Harden legacy UI runtime compatibility
 - `c719480` - Expand Chroma note helpers and Brain checks
-- `1e6945f` - Fix chat draft reset in Streamlit
+- `1e6945f` - Fix chat draft reset in legacy UI
 
 ## Impact produit
 
@@ -295,7 +295,7 @@ Cette mise a jour documente principalement un lot de stabilisation de l'UI Strea
 - Le suivi des conversations, des artefacts et des metriques s'appuie sur des API plus explicites et plus testees.
 - Le cycle d'auto-apprentissage evite mieux de rebalayer les artefacts internes comme s'il s'agissait de notes source.
 - Le risque de regression sur le rendu HTML integre et sur certains helpers UI partages est mieux couvert par les tests.
-- Les correctifs cites sur le hot reload Streamlit ameliorent surtout la maintenance de l'UI legacy encore presente dans le depot.
+- Les correctifs cites sur le hot reload historique ameliorent surtout la maintenance de l'UI legacy encore presente dans le depot.
 
 ## Prochaines ameliorations a poursuivre
 
