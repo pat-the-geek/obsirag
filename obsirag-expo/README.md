@@ -20,14 +20,15 @@ Le backend RAG Python n'est pas reimplementé ici. Le projet est concu pour etre
 - dashboard systeme
 - liste des conversations
 - detail de conversation avec streaming SSE backend ou fallback mock
-- affichage des sources, de la note principale et de la provenance coffre/web/hybride
+- selection du provider par conversation (`MLX` local ou `Euria`)
+- affichage des sources, de la note principale, du provider effectif et de la provenance coffre/web/hybride
 - recherche sur le web via le backend avec resume de requete et sources DDG
 - affichage des contextes d'entites detectees (NER) renvoyes par l'API
 - liste des insights
 - detail d'insight
 - vue graphe avec filtres, recherche texte, spotlight et notes recentes
-- vue note
-- settings
+- vue note avec retour vers la conversation d'origine si ouverte depuis le chat
+- settings avec theme, taille du texte et diagnostics runtime
 
 ## Apercu visuel
 
@@ -125,13 +126,20 @@ Pour iOS, il est recommande d'utiliser une URL backend distante stable plutot qu
 
 Le store local demarre desormais en mode live avec une API ObsiRAG sur `http://localhost:8000`.
 
+Au demarrage, le client verifie la session via `/api/v1/session`. Si l'ecran `server-config` est atteint alors qu'une session valide existe deja, il redirige automatiquement vers `/(tabs)`. Quand cet ecran est ouvert volontairement depuis `Settings`, il reste en place grace au parametre `allowStay=1`.
+
 Les endpoints principaux deja exploites par le client sont :
 
+- `/api/v1/session`
 - `/api/v1/system/status`
 - `/api/v1/conversations`
+- `/api/v1/conversations/:id/messages`
+- `/api/v1/conversations/:id/messages/stream`
 - `/api/v1/notes/search`
 - `/api/v1/graph` et `/api/v1/graph/subgraph`
 - `/api/v1/web-search`
+
+Les requetes de chat et de recherche web peuvent transporter `useEuria: true` pour demander explicitement le provider Euria. Le backend renvoie alors aussi `llmProvider` sur les messages et les reponses web, ce que l'UI affiche dans les badges de fil.
 
 Si tu veux revenir en mode mock :
 
@@ -144,6 +152,18 @@ Si ton backend exige un token :
 2. renseigner l'URL du backend,
 3. saisir le token,
 4. enregistrer la session.
+
+Si tu veux activer Euria cote backend, configure aussi les variables serveur `EURIA_URL` et `EURIA_BEARER` dans le depot principal avant de lancer l'API.
+
+## Reglages d'interface
+
+L'ecran `Settings` expose maintenant :
+
+- le theme global,
+- la taille du texte (`Petite`, `Standard`, `Grande`) via deux actions rapides `zoom-out` et `zoom-in`,
+- le statut runtime du backend,
+- la verification de session,
+- l'acces manuel a la configuration serveur sans casser le bootstrap normal.
 
 ## Mode mock
 
@@ -173,7 +193,7 @@ Le mode mock reste disponible pour travailler sans backend.
 
 ## Prochaines etapes conseillees
 
-1. renforcer le garde de session et les redirections auth
-2. remplacer le rendu texte des notes par un renderer markdown complet
+1. etendre encore la propagation de la taille de texte aux derniers ecrans secondaires
+2. ajouter des tests e2e sur la selection de provider et le bootstrap `server-config`
 3. enrichir la navigation du graphe et des sources
-4. ajouter tests unitaires et e2e Expo
+4. consolider la documentation des contrats API Expo/FastAPI

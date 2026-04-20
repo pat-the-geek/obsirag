@@ -50,6 +50,36 @@ En cas d'echec, conserver dans le ticket :
 - la derniere erreur console ou page error remontee,
 - et le `root snapshot` final quand il est present.
 
+### Incident app bloquee sur Reglages backend
+
+Si l'application web reste sur `server-config` alors que le backend semble sain :
+
+1. verifier la session backend :
+
+```bash
+curl -sS http://127.0.0.1:8000/api/v1/session
+curl -sS -X POST http://127.0.0.1:8000/api/v1/session
+```
+
+Le cas nominal pour un runtime ouvert est un payload contenant `authenticated=true`, `requiresAuth=false` et un `backendUrlHint` coherent.
+
+2. verifier que le frontend exporte le bon bundle :
+
+```bash
+cd obsirag-expo
+npm run web:export
+cd ..
+./stop.sh
+./start.sh
+curl -sS http://127.0.0.1:8000/ | grep -o '_expo/static/js/web/entry-[A-Za-z0-9]*\.js' | head -n 1
+```
+
+3. si le serveur sert bien le dernier bundle mais que le navigateur affiche encore `server-config`, faire un hard refresh ou vider les donnees du site pour eliminer un cache stale.
+
+4. si le blocage persiste apres reload, verifier que l'acces manuel depuis `Settings` n'utilise pas un lien volontaire avec `allowStay=1`, ce qui desactive l'auto-sortie de l'ecran.
+
+5. en cas de doute sur la configuration provider, verifier aussi que `EURIA_URL` et `EURIA_BEARER` sont correctement charges si le fil utilise Euria.
+
 ## 3. Remédiation
 
 - **Rollback rapide** :

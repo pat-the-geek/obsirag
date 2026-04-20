@@ -54,35 +54,71 @@ sequenceDiagram
     participant CS as ChromaStore
     participant AP as AnswerPrompting
     participant MLX as MLXClient
+    participant EURIA as EuriaClient
     participant ES as EntityServices
     participant WS as WebSearch
 
     U->>EXPO: saisie question
-    EXPO->>API: POST /api/v1/conversations/:id/messages/stream
-    API->>RAG: stream_answer(question, history)
-    activate RAG
-    RAG->>RAG: resolve_question(question, history)
-    RAG->>RS: retrieve(resolved_question)
-    activate RS
-    RS->>CS: search(query, k=…)
-    CS-->>RS: chunks[]
-    RS-->>RAG: chunks[]
-    deactivate RS
-    RAG->>AP: build_messages(question, chunks, history)
-    AP->>CS: get_chunks_by_note_title / get_chunks_by_file_path
-    CS-->>AP: linked_chunks[]
-    AP-->>RAG: messages[]
-    RAG->>MLX: stream(messages)
-    MLX-->>API: tokens / answer
+    EXPO->>API: POST /api/v1/conversations/:id/messages/stream (+ useEuria?)
+    alt useEuria = false
+        API->>RAG: stream_answer(question, history)
+        activate RAG
+        RAG->>RAG: resolve_question(question, history)
+        RAG->>RS: retrieve(resolved_question)
+        activate RS
+        RS->>CS: search(query, k=…)
+        CS-->>RS: chunks[]
+        RS-->>RAG: chunks[]
+        deactivate RS
+        RAG->>AP: build_messages(question, chunks, history)
+        AP->>CS: get_chunks_by_note_title / get_chunks_by_file_path
+        CS-->>AP: linked_chunks[]
+        AP-->>RAG: messages[]
+        RAG->>MLX: stream(messages)
+        MLX-->>API: tokens / answer
+        deactivate RAG
+    else useEuria = true
+        API->>API: choisir Euria comme provider du tour
+        API->>CS: build local RAG context si disponible
+        CS-->>API: rag_context + sources?
+        alt contexte local disponible
+            API->>EURIA: chat(messages + rag_context)
+            EURIA-->>API: answer
+        else contexte insuffisant
+            API->>EURIA: chat(messages)
+            EURIA-->>API: direct answer
+        end
+    end
     API->>ES: lookup entity contexts(question, answer)
     ES-->>API: entityContexts[]
     opt information absente du coffre
-        API->>WS: web_search(question)
+        API->>WS: web_search(question) ou consolidation web Euria + DDG
         WS-->>API: queryOverview + sources web
     end
-    deactivate RAG
-    API-->>EXPO: SSE tokens + sources + note principale + provenance
+    API-->>EXPO: SSE tokens + sources + note principale + provenance + llmProvider
     EXPO-->>U: réponse progressive
+```
+
+---
+
+## 2.1 Bootstrap session et ecran backend
+
+```mermaid
+sequenceDiagram
+    participant U as Utilisateur
+    participant EXPO as Client Expo
+    participant API as app.py
+
+    EXPO->>API: GET /api/v1/session
+    API-->>EXPO: authenticated + requiresAuth + backendUrlHint + mode
+    alt session valide pendant bootstrap
+        EXPO->>EXPO: quitter /(auth)/server-config
+        EXPO-->>U: ouverture de /(tabs)
+    else ouverture volontaire depuis Settings
+        U->>EXPO: ouvrir configuration backend
+        EXPO->>EXPO: router.push(/(auth)/server-config?allowStay=1)
+        EXPO-->>U: ecran de configuration reste ouvert
+    end
 ```
 
 ---

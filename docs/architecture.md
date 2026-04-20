@@ -10,7 +10,7 @@ ObsiRAG repose sur cinq blocs principaux :
 2. `ChromaStore` fournit l'index vectoriel et les accès de récupération.
 3. `RAGPipeline` résout les requêtes utilisateur en séparant désormais mieux retrieval et prompting.
 4. `AutoLearner` traite les notes en arrière-plan pour produire insights, synapses et synthèses.
-5. Le backend FastAPI et le client Expo exposent le chat, la recherche web, le graphe, les insights et le visualiseur de notes.
+5. Le backend FastAPI et le client Expo exposent le chat, la recherche web, le graphe, les insights et le visualiseur de notes, avec un choix de provider conversationnel entre MLX et Euria.
 
 ## Flux principal
 
@@ -49,9 +49,11 @@ Une requête suit ce chemin :
 2. `RAGPipeline` résout la question dans le fil si nécessaire,
 3. `RetrievalStrategy` choisit une stratégie de récupération,
 4. `AnswerPrompting` prépare le contexte et les messages,
-5. le backend MLX produit une réponse,
-6. le backend enrichit la réponse avec les contextes d'entités NER et, si le coffre est insuffisant, une synthèse de recherche web,
-7. `RAGPipeline` normalise la sortie et applique les garde-fous.
+5. le backend choisit le provider demande pour le tour courant: MLX local par defaut, ou Euria si `useEuria=true`,
+6. le provider produit une réponse, eventuellement ancree dans le coffre si un contexte RAG local existe,
+7. le backend enrichit la réponse avec les contextes d'entités NER et, si le coffre est insuffisant, une synthèse de recherche web,
+8. la sortie est annotee avec la provenance et le provider effectif,
+9. `RAGPipeline` normalise la sortie et applique les garde-fous.
 
 Précision importante sur le NER conversationnel :
 
@@ -94,8 +96,11 @@ Responsabilité : exposer les capacités produit réellement utilisées dans le 
 
 - FastAPI reste la façade unique pour les conversations, le statut système, le graphe, les notes, les insights et la recherche web,
 - Expo reste une couche de présentation et d'interaction, sans logique RAG embarquée,
-- les réponses de conversation peuvent transporter des sources, une note principale, un `queryOverview`, des `entityContexts` et une provenance explicite,
+- les réponses de conversation peuvent transporter des sources, une note principale, un `queryOverview`, des `entityContexts`, une provenance explicite et `llmProvider`,
+- le frontend peut demander `useEuria=true` au niveau d'un tour de conversation ou d'une recherche web explicite sans changer la configuration globale du runtime,
 - `entityContexts` doit rester le conteneur de référence pour les enrichissements NER du chat: type, notes liées, image éventuelle, ligne de preuve, explication de relation et connaissances web compactes,
+- l'ecran `server-config` a deux modes distincts: bootstrap avec auto-sortie si la session est deja valide, et acces manuel depuis `Settings` avec maintien explicite sur l'ecran,
+- les preferences UI persistantes incluent desormais le theme, la taille du texte et le provider conversationnel courant,
 - le graphe doit rester filtrable côté backend par texte, dossier, tag, type et profondeur de sous-graphe.
 
 ### UI héritée, hot reload et stratégie d'import
