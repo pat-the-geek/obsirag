@@ -101,10 +101,12 @@ class QueryOverviewModel(BaseModel):
 
 class WebSearchRequestModel(BaseModel):
     query: str = Field(min_length=1)
+    useEuria: bool = False
 
 
 class WebSearchResponseModel(BaseModel):
     content: str
+    llmProvider: str | None = None
     queryOverview: QueryOverviewModel
     entityContexts: list[EntityContextModel] = Field(default_factory=list)
     stats: GenerationStatsModel | None = None
@@ -147,6 +149,7 @@ class ChatMessageModel(BaseModel):
     role: Literal["user", "assistant", "system"]
     content: str
     createdAt: str
+    llmProvider: str | None = None
     sources: list[SourceRefModel] = Field(default_factory=list)
     primarySource: SourceRefModel | None = None
     stats: GenerationStatsModel | None = None
@@ -185,6 +188,7 @@ class CreateConversationRequest(BaseModel):
 
 class MessageCreateRequest(BaseModel):
     prompt: str = Field(min_length=1)
+    useEuria: bool = False
 
 
 class SaveConversationResponse(BaseModel):

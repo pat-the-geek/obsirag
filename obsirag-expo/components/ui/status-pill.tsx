@@ -1,6 +1,6 @@
 import { StyleSheet, Text, View } from 'react-native';
 
-import { useAppTheme } from '../../theme/app-theme';
+import { scaleFontSize, useAppFontScale, useAppTheme } from '../../theme/app-theme';
 
 type StatusPillProps = {
   label: string;
@@ -9,6 +9,7 @@ type StatusPillProps = {
 
 export function StatusPill({ label, tone = 'neutral' }: StatusPillProps) {
   const theme = useAppTheme();
+  const { scale } = useAppFontScale();
   const toneStyle = {
     neutral: { backgroundColor: theme.colors.neutralSurface, color: theme.colors.neutralText },
     success: { backgroundColor: theme.colors.successSurface, color: theme.colors.successText },
@@ -18,7 +19,7 @@ export function StatusPill({ label, tone = 'neutral' }: StatusPillProps) {
 
   return (
     <View style={[styles.base, { backgroundColor: toneStyle.backgroundColor }]}>
-      <Text style={[styles.text, { color: toneStyle.color }]}>{label}</Text>
+      <Text style={[styles.text, { color: toneStyle.color, fontSize: scaleFontSize(12, scale) }]}>{label}</Text>
     </View>
   );
 }

@@ -77,6 +77,8 @@ export type ChatMessage = {
   role: 'user' | 'assistant' | 'system';
   content: string;
   createdAt: string;
+  llmProvider?: string;
+  transient?: boolean;
   sources?: SourceRef[];
   primarySource?: SourceRef | null;
   stats?: GenerationStats;
@@ -226,6 +228,7 @@ export type SystemStatus = {
     processed: number;
     total: number;
     current?: string;
+    llmProvider?: string;
   };
   autolearn?: {
     active: boolean;
@@ -258,6 +261,7 @@ export type SessionState = {
 
 export type WebSearchResponse = {
   content: string;
+  llmProvider?: string;
   queryOverview: QueryOverview;
   entityContexts: EntityContext[];
   stats?: GenerationStats;

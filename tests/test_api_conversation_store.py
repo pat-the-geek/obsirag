@@ -89,3 +89,25 @@ class TestApiConversationStore:
         assert saved_path.exists()
         assert str(saved_path).startswith(str(tmp_settings.insights_dir))
         assert saved_path.read_text(encoding="utf-8").startswith("# Rapport Mission Artemis")
+
+    def test_save_report_markdown_uses_ascii_safe_filename_for_non_latin_title(self, tmp_path: Path, tmp_settings):
+        store = ApiConversationStore(tmp_path / "api" / "conversations.json")
+        conversation = ConversationDetailModel(
+            id="conv-3",
+            title="Mission Artemis",
+            updatedAt="2026-04-16T18:00:00",
+            draft="",
+            messages=[],
+        )
+
+        with patch("src.api.conversation_store.settings", tmp_settings):
+            store.upsert(conversation)
+            saved_path = store.save_report_markdown(
+                conversation.id,
+                "# Rapport\n",
+                title="Lopen_source_est_mort___ce_projet_majeur__Meta暂停与Mercor合作因数据泄露",
+            )
+
+        assert saved_path.exists()
+        assert "Meta-Mercor" in saved_path.name
+        assert "暂停" not in saved_path.name

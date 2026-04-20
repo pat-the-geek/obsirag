@@ -12,6 +12,7 @@ type MarkdownNoteProps = {
   onOpenTag?: (value: string) => void;
   variant?: 'default' | 'article';
   tone?: 'light' | 'dark';
+  theme?: AppTheme;
   entityHighlights?: EntityHighlight[];
 };
 
@@ -39,9 +40,9 @@ type InlineChunk =
   | { type: 'emphasis'; value: string }
   | { type: 'inline-code'; value: string };
 
-export function MarkdownNote({ markdown, onOpenNote, onOpenTag, variant = 'default', tone = 'light', entityHighlights }: MarkdownNoteProps) {
+export function MarkdownNote({ markdown, onOpenNote, onOpenTag, variant = 'default', tone = 'light', theme: preferredTheme, entityHighlights }: MarkdownNoteProps) {
   const activeTheme = useAppTheme();
-  const theme = activeTheme.resolvedMode === tone ? activeTheme : buildAppTheme(tone === 'dark' ? 'dark' : 'light');
+  const theme = preferredTheme ?? (activeTheme.resolvedMode === tone ? activeTheme : buildAppTheme(tone === 'dark' ? 'dark' : 'light'));
   const blocks = parseMarkdownBlocks(markdown);
 
   return (
@@ -116,7 +117,7 @@ export function MarkdownNote({ markdown, onOpenNote, onOpenTag, variant = 'defau
               contentContainerStyle={styles.tableScrollContent}
               testID="markdown-table"
             >
-              <View style={[styles.table, { borderColor: theme.colors.tableBorder, backgroundColor: theme.colors.tableSurface }]}>
+              <View testID="markdown-table-surface" style={[styles.table, { borderColor: theme.colors.tableBorder, backgroundColor: theme.colors.tableSurface }]}>
                 <View style={[styles.tableRow, styles.tableHeaderRow, { borderBottomColor: theme.colors.tableBorder, backgroundColor: theme.colors.tableHeaderSurface }]}>
                   {block.headers.map((cell, cellIndex) => (
                     <View key={`header-${cellIndex}`} style={[styles.tableCell, styles.tableHeaderCell, { width: block.widths[cellIndex] ?? 150 }]}>

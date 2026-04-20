@@ -11,16 +11,24 @@ import { buildNoteRoute, getCanonicalNotePath } from '../../../utils/note-route'
 
 export default function NoteScreen() {
   const router = useRouter();
-  const params = useLocalSearchParams<{ noteId: string }>();
+  const params = useLocalSearchParams<{ noteId: string; returnTo?: string }>();
   const noteId = useMemo(() => (Array.isArray(params.noteId) ? params.noteId[0] : params.noteId), [params.noteId]);
+  const returnTo = useMemo(
+    () => (Array.isArray(params.returnTo) ? params.returnTo[0] : params.returnTo) || '',
+    [params.returnTo],
+  );
   const { data, isLoading, isRefetching, refetch } = useNoteDetail(noteId);
+
+  const openNoteFromCurrentContext = (value: string) => {
+    router.push(buildNoteRoute(value, returnTo ? { returnTo } : undefined));
+  };
 
   useEffect(() => {
     const currentPath = getCanonicalNotePath(noteId);
     if (data?.filePath && currentPath && currentPath !== data.filePath) {
-      router.replace(buildNoteRoute(data.filePath));
+      router.replace(buildNoteRoute(data.filePath, returnTo ? { returnTo } : undefined));
     }
-  }, [data?.filePath, noteId, router]);
+  }, [data?.filePath, noteId, returnTo, router]);
 
   if (!noteId || isLoading || !data) {
     return (
@@ -32,14 +40,19 @@ export default function NoteScreen() {
 
   return (
     <Screen refreshing={isRefetching} onRefresh={refetch}>
+      {returnTo ? (
+        <Pressable testID="note-return-button" style={styles.returnButton} onPress={() => router.replace(returnTo)}>
+          <Text style={styles.returnButtonLabel}>Retour à la conversation</Text>
+        </Pressable>
+      ) : null}
       <NoteCard
         note={data}
-        onOpenNote={(value) => router.push(buildNoteRoute(value))}
+        onOpenNote={openNoteFromCurrentContext}
         onOpenTag={(value) => router.push(`/(tabs)/graph?tag=${encodeURIComponent(value)}`)}
       />
       <SectionCard title="Retrolinks">
         {data.backlinks.map((item) => (
-          <Pressable key={item.filePath} style={styles.linkCard} onPress={() => router.push(buildNoteRoute(item.filePath))}>
+          <Pressable key={item.filePath} style={styles.linkCard} onPress={() => openNoteFromCurrentContext(item.filePath)}>
             <Text style={styles.linkTitle}>{item.title}</Text>
             <Text style={styles.linkMeta}>{item.filePath}</Text>
             {joinMetadataParts([
@@ -58,7 +71,7 @@ export default function NoteScreen() {
       </SectionCard>
       <SectionCard title="Liens sortants">
         {data.links.map((item) => (
-          <Pressable key={item.filePath} style={styles.linkCard} onPress={() => router.push(buildNoteRoute(item.filePath))}>
+          <Pressable key={item.filePath} style={styles.linkCard} onPress={() => openNoteFromCurrentContext(item.filePath)}>
             <Text style={styles.linkTitle}>{item.title}</Text>
             <Text style={styles.linkMeta}>{item.filePath}</Text>
             {joinMetadataParts([
@@ -80,6 +93,19 @@ export default function NoteScreen() {
 }
 
 const styles = StyleSheet.create({
+  returnButton: {
+    alignSelf: 'flex-start',
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#d8cfc0',
+    backgroundColor: '#f8f3eb',
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+  },
+  returnButtonLabel: {
+    color: '#1f160c',
+    fontWeight: '700',
+  },
   linkCard: {
     borderRadius: 14,
     borderWidth: 1,

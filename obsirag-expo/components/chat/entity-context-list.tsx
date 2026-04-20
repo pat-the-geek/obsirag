@@ -1,6 +1,6 @@
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
-import { useAppTheme } from '../../theme/app-theme';
+import { scaleFontSize, useAppFontScale, useAppTheme } from '../../theme/app-theme';
 import { EntityContext } from '../../types/domain';
 import { MarkdownNote } from '../notes/markdown-note';
 
@@ -12,6 +12,7 @@ type EntityContextListProps = {
 
 export function EntityContextList({ entities, isOpen = false, onToggleOpen }: EntityContextListProps) {
   const theme = useAppTheme();
+  const { scale } = useAppFontScale();
   if (!entities?.length) {
     return null;
   }
@@ -20,14 +21,14 @@ export function EntityContextList({ entities, isOpen = false, onToggleOpen }: En
     <View style={[styles.container, { backgroundColor: theme.colors.surfaceMuted, borderColor: theme.colors.border }]}>
       <Pressable testID="entity-contexts-panel-toggle" style={styles.header} onPress={onToggleOpen}>
         <View style={styles.headerCopy}>
-          <Text style={[styles.title, { color: theme.colors.text }]}>Entités détectées</Text>
-          <Text style={[styles.caption, { color: theme.colors.textMuted }]}>{entities.length} entité{entities.length > 1 ? 's' : ''}</Text>
+          <Text style={[styles.title, { color: theme.colors.text, fontSize: scaleFontSize(13, scale) }]}>Entités détectées</Text>
+          <Text style={[styles.caption, { color: theme.colors.textMuted, fontSize: scaleFontSize(12, scale) }]}>{entities.length} entité{entities.length > 1 ? 's' : ''}</Text>
         </View>
-        <Text style={[styles.chevron, { color: theme.colors.primary }]}>{isOpen ? 'Masquer' : 'Afficher'}</Text>
+        <Text style={[styles.chevron, { color: theme.colors.primary, fontSize: scaleFontSize(12, scale) }]}>{isOpen ? 'Masquer' : 'Afficher'}</Text>
       </Pressable>
       {isOpen ? (
         <View testID="entity-contexts-panel-content" style={styles.content}>
-          <MarkdownNote markdown={buildEntityContextsMarkdown(entities)} tone={theme.isDark ? 'dark' : 'light'} />
+          <MarkdownNote markdown={buildEntityContextsMarkdown(entities)} tone={theme.isDark ? 'dark' : 'light'} theme={theme} />
         </View>
       ) : null}
     </View>

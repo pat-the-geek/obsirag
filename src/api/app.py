@@ -16,12 +16,14 @@ from typing import Any
 
 import frontmatter
 import networkx as nx
+from loguru import logger
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from src.ai.euria_client import EuriaClient
 from src.ai.mermaid_sanitizer import sanitize_mermaid_blocks
 from src.ai.web_search import (
     _format_query_overview_markdown,
@@ -99,6 +101,52 @@ STREAM_ENRICHMENT_STEPS: list[tuple[str, str]] = [
     ("web", "Recherche sur le web en cours..."),
     ("finalize", "Finalisation de la reponse"),
 ]
+
+_TRAILING_MARKDOWN_ARTIFACT_LINE_RE = re.compile(
+    r"^\s*(?:[>\-–—→]+\s*)?(?:\*{2,}|_{2,}|`{3,}|~{3,})\s*$"
+)
+_SIMPLE_ITALIC_WITH_EXTRA_CLOSING_STARS_RE = re.compile(r"(?<!\*)\*([^*\n]+?)\*{3}(?=$|[\s\).,;:!?])")
+_GLUED_UPPERCASE_TITLE_PREFIX_RE = re.compile(r"\b(DE|DU|DES|LE|LA|LES|ET)(?=[A-ZÀ-ÖØ-Þ]{3,})")
+
+
+def _collapse_repeated_line_blocks(text: str, *, max_block_size: int = 4) -> str:
+    lines = text.split("\n")
+    if len(lines) < 2:
+        return text
+
+    normalized = [re.sub(r"\s+", " ", line).strip() for line in lines]
+    kept: list[str] = []
+    kept_normalized: list[str] = []
+    index = 0
+
+    while index < len(lines):
+        collapsed = False
+        for block_size in range(min(max_block_size, (len(lines) - index) // 2), 0, -1):
+            current_block = normalized[index:index + block_size]
+            next_block = normalized[index + block_size:index + (2 * block_size)]
+            if not current_block or current_block != next_block:
+                continue
+            kept.extend(lines[index:index + block_size])
+            kept_normalized.extend(current_block)
+            index += block_size * 2
+            while index + block_size <= len(lines) and normalized[index:index + block_size] == current_block:
+                index += block_size
+            collapsed = True
+            break
+        if collapsed:
+            continue
+        kept.append(lines[index])
+        kept_normalized.append(normalized[index])
+        index += 1
+
+    deduped_lines: list[str] = []
+    previous_normalized = None
+    for raw_line, normalized_line in zip(kept, kept_normalized, strict=False):
+        if normalized_line and normalized_line == previous_normalized:
+            continue
+        deduped_lines.append(raw_line)
+        previous_normalized = normalized_line or None
+    return "\n".join(deduped_lines)
 
 
 class _SinglePageAppFiles(StaticFiles):
@@ -224,10 +272,180 @@ def _lookup_autolearn_web_results(user_text: str, svc) -> tuple[str, list[dict[s
     return search_query, autolearn_results if isinstance(autolearn_results, list) else []
 
 
+def _sanitize_assistant_answer_text(answer: str) -> str:
+    original = str(answer or "")
+    cleaned = original.replace("\r\n", "\n")
+    lines = cleaned.split("\n")
+    while lines and _TRAILING_MARKDOWN_ARTIFACT_LINE_RE.fullmatch(lines[-1] or ""):
+        lines.pop()
+    cleaned = "\n".join(lines)
+    cleaned = re.sub(
+        r"(?:\s+(?:[>\-–—→]+\s*)?(?:\*{2,}|_{2,}|`{3,}|~{3,})\s*)+$",
+        "",
+        cleaned,
+    )
+    cleaned = re.sub(r"(?<=[0-9A-Za-zÀ-ÖØ-öø-ÿ])\(", " (", cleaned)
+    cleaned = re.sub(r"\)(?=[0-9A-Za-zÀ-ÖØ-öø-ÿ])", ") ", cleaned)
+    cleaned = re.sub(r"(?<=[a-zà-öø-ÿ])(?=[A-ZÀ-ÖØ-Þ])", " ", cleaned)
+    cleaned = _GLUED_UPPERCASE_TITLE_PREFIX_RE.sub(r"\1 ", cleaned)
+    cleaned = re.sub(r"\b(leurs?)(?=[a-zà-öø-ÿ]{4,})", r"\1 ", cleaned)
+    cleaned = _SIMPLE_ITALIC_WITH_EXTRA_CLOSING_STARS_RE.sub(r"*\1*", cleaned)
+    cleaned = _collapse_repeated_line_blocks(cleaned)
+    cleaned = re.sub(r" {2,}", " ", cleaned)
+    cleaned = cleaned.strip()
+    return cleaned or original.strip()
+
+
+def _build_web_result_snippets(results: list[dict[str, Any]], *, max_results: int = 5) -> str:
+    snippets: list[str] = []
+    for item in results[:max_results]:
+        href = str(item.get("href") or "").strip()
+        title = str(item.get("title") or href or "Source web").strip()
+        body = str(item.get("full_text") or item.get("body") or "").strip()
+        if not body:
+            continue
+        snippets.append(f"**{title}** ({href})\n{body}")
+    return "\n\n".join(snippets)
+
+
+def _try_euria_native_web_answer(query: str, llm) -> str | None:
+    if not isinstance(llm, EuriaClient):
+        return None
+
+    prompt = (
+        f"Question : « {query} »\n\n"
+        "Fais une recherche web et donne une première réponse utile en français. "
+        "Reste factuel, signale l'incertitude si les résultats sont incomplets, et réponds uniquement avec la réponse."
+    )
+    try:
+        answer = llm.chat(
+            [{"role": "user", "content": prompt}],
+            temperature=0.2,
+            max_tokens=900,
+            operation="euria_native_web",
+            enable_web_search=True,
+        )
+    except Exception as exc:
+        logger.warning("Euria native web search unavailable for {!r}: {}", query, exc)
+        return None
+
+    cleaned = _sanitize_assistant_answer_text(answer)
+    return cleaned or None
+
+
+def _merge_euria_native_answer_with_ddg(
+    *,
+    query: str,
+    native_answer: str,
+    search_query: str,
+    web_results: list[dict[str, Any]],
+    rag_context: str,
+    llm,
+) -> str | None:
+    snippets = _build_web_result_snippets(web_results)
+    if not snippets:
+        return native_answer
+
+    prompt = (
+        f"Question initiale : « {query} »\n"
+        f"Requête DDG : « {search_query} »\n\n"
+        "Première réponse issue de la recherche web native Euria :\n"
+        f"{native_answer}\n\n"
+        "Contexte du coffre (à utiliser seulement s'il apporte un complément pertinent) :\n"
+        f"{rag_context or 'Aucun contexte utile du coffre.'}\n\n"
+        "Résultats DDG complémentaires :\n"
+        f"{snippets}\n\n"
+        "Réécris une réponse finale en français. "
+        "Conserve les éléments déjà corrects de la réponse Euria, complète-la avec les résultats DDG, "
+        "corrige ce qui doit l'être, et cite les sources web entre [crochets]. "
+        "N'invente rien au-delà des éléments fournis. Réponds uniquement avec la version finale."
+    )
+    try:
+        answer = llm.chat(
+            [{"role": "user", "content": prompt}],
+            temperature=0.2,
+            max_tokens=1100,
+            operation="euria_ddg_completion",
+            enable_web_search=False,
+        )
+    except Exception as exc:
+        logger.warning("Euria DDG completion failed for {!r}: {}", query, exc)
+        return None
+
+    cleaned = _sanitize_assistant_answer_text(answer)
+    return cleaned or None
+
+
+def _merge_euria_native_overview(
+    query: str,
+    native_answer: str | None,
+    overview: dict[str, Any],
+    llm,
+) -> dict[str, Any]:
+    normalized_overview = dict(overview or {})
+    if not native_answer:
+        if normalized_overview.get("summary"):
+            normalized_overview["summary"] = _sanitize_assistant_answer_text(str(normalized_overview.get("summary") or ""))
+        return normalized_overview
+
+    if not isinstance(llm, EuriaClient):
+        if not normalized_overview:
+            return {
+                "query": query,
+                "search_query": query,
+                "summary": native_answer,
+                "sources": [],
+            }
+        normalized_overview["summary"] = _sanitize_assistant_answer_text(str(normalized_overview.get("summary") or native_answer))
+        return normalized_overview
+
+    if not normalized_overview:
+        return {
+            "query": query,
+            "search_query": query,
+            "summary": native_answer,
+            "sources": [],
+        }
+
+    sources_block = "\n".join(
+        f"- {item.get('title') or item.get('href') or 'Source'} ({item.get('href') or ''})"
+        for item in (normalized_overview.get("sources") or [])[:8]
+        if item.get("href") or item.get("title")
+    )
+    prompt = (
+        f"Question initiale : « {query} »\n"
+        f"Première réponse web native Euria :\n{native_answer}\n\n"
+        "Vue d'ensemble DDG actuelle :\n"
+        f"{normalized_overview.get('summary') or ''}\n\n"
+        "Sources DDG disponibles :\n"
+        f"{sources_block or '- aucune source exploitable'}\n\n"
+        "Fusionne ces deux apports en une vue d'ensemble finale en français. "
+        "Format attendu : un court paragraphe d'ensemble puis 3 à 5 puces factuelles. "
+        "Quand une information vient des sources DDG, cite-la entre [crochets]. "
+        "Réponds uniquement avec la vue d'ensemble finale."
+    )
+    try:
+        merged_summary = llm.chat(
+            [{"role": "user", "content": prompt}],
+            temperature=0.2,
+            max_tokens=950,
+            operation="euria_ddg_overview_merge",
+            enable_web_search=False,
+        )
+    except Exception as exc:
+        logger.warning("Euria overview merge failed for {!r}: {}", query, exc)
+        normalized_overview["summary"] = _sanitize_assistant_answer_text(str(normalized_overview.get("summary") or native_answer))
+        return normalized_overview
+
+    normalized_overview["summary"] = _sanitize_assistant_answer_text(merged_summary)
+    return normalized_overview
+
+
 def _build_query_overview_from_autolearn_results(
     user_text: str,
     svc,
     web_results: list[dict[str, Any]] | None = None,
+    llm=None,
 ) -> dict[str, Any]:
     search_query, autolearn_results = _lookup_autolearn_web_results(user_text, svc)
     candidate_results = web_results if isinstance(web_results, list) and web_results else autolearn_results
@@ -239,7 +457,7 @@ def _build_query_overview_from_autolearn_results(
             user_text,
             search_query,
             candidate_results,
-            svc.llm,
+            llm or svc.llm,
         )
         return result if isinstance(result, dict) else {}
     except Exception:
@@ -253,18 +471,41 @@ def _compose_assistant_web_answer(
     sources: list[dict],
     svc,
     force: bool = False,
+    llm=None,
 ) -> dict[str, Any]:
     payload = {
-        "answer": answer,
+        "answer": _sanitize_assistant_answer_text(answer),
         "sources": list(sources or []),
         "query_overview": {},
         "provenance": "vault",
         "enrichment_path": None,
     }
+
+    def _apply_native_web_fallback(*, overview: dict[str, Any] | None = None, search_query: str | None = None) -> dict[str, Any]:
+        if not native_web_answer:
+            return payload
+        payload["answer"] = native_web_answer
+        payload["provenance"] = "web"
+        payload["query_overview"] = overview or {
+            "query": prompt,
+            "search_query": search_query or prompt,
+            "summary": native_web_answer,
+            "sources": [],
+        }
+        payload["enrichment_path"] = (
+            f"euria-native+ddg:{search_query}"
+            if search_query and search_query != prompt
+            else "euria-native-web"
+        )
+        return payload
+
     if not force and not _should_attempt_web_answer(answer, svc):
         return payload
 
+    native_web_answer = _try_euria_native_web_answer(prompt, llm)
     search_query, web_results = _lookup_autolearn_web_results(prompt, svc)
+    if native_web_answer and not web_results:
+        return _apply_native_web_fallback()
     if not web_results:
         return payload
 
@@ -281,58 +522,375 @@ def _compose_assistant_web_answer(
         for item in web_results
         if str(item.get("full_text") or item.get("body") or "").strip()
     ]
-    payload["query_overview"] = _build_query_overview_from_autolearn_results(prompt, svc, web_results)
+    payload["query_overview"] = _merge_euria_native_overview(
+        prompt,
+        native_web_answer,
+        _build_query_overview_from_autolearn_results(prompt, svc, web_results, llm=llm),
+        llm,
+    )
 
     if not snippets:
-        return payload
+        return _apply_native_web_fallback(overview=payload["query_overview"], search_query=search_query)
 
     if callable(snippets_relevant):
         try:
             if not snippets_relevant(prompt, snippets):
-                return payload
+                return _apply_native_web_fallback(overview=payload["query_overview"], search_query=search_query)
         except Exception:
-            return payload
+            return _apply_native_web_fallback(overview=payload["query_overview"], search_query=search_query)
 
     if not callable(build_rag_context) or not callable(compose_web_answer):
-        return payload
+        return _apply_native_web_fallback(overview=payload["query_overview"], search_query=search_query)
 
     try:
         rag_context, rag_sources = build_rag_context(prompt)
         compose_sources = list(sources or rag_sources or [])
-        enriched_answer, enriched_sources, used_web_results, provenance = compose_web_answer(
-            prompt,
-            rag_context,
-            compose_sources,
-            snippets,
-            web_results,
-        )
+        if native_web_answer and isinstance(llm, EuriaClient):
+            enriched_answer = _merge_euria_native_answer_with_ddg(
+                query=prompt,
+                native_answer=native_web_answer,
+                search_query=search_query,
+                web_results=web_results,
+                rag_context=rag_context,
+                llm=llm,
+            )
+            enriched_sources = compose_sources
+            used_web_results = web_results
+            provenance = "Web + Coffre" if compose_sources else "Web"
+        else:
+            enriched_answer, enriched_sources, used_web_results, provenance = compose_web_answer(
+                prompt,
+                rag_context,
+                compose_sources,
+                snippets,
+                web_results,
+            )
     except Exception:
-        return payload
+        return _apply_native_web_fallback(overview=payload["query_overview"], search_query=search_query)
 
     if not str(enriched_answer or "").strip():
-        return payload
+        return _apply_native_web_fallback(overview=payload["query_overview"], search_query=search_query)
+
+    enriched_answer = _sanitize_assistant_answer_text(str(enriched_answer))
+    if not enriched_answer:
+        return _apply_native_web_fallback(overview=payload["query_overview"], search_query=search_query)
 
     if callable(grounded_check):
         try:
             if str(provenance or "").strip() != "Coffre" and not grounded_check(enriched_answer, snippets):
-                return payload
+                return _apply_native_web_fallback(overview=payload["query_overview"], search_query=search_query)
         except Exception:
-            return payload
+            return _apply_native_web_fallback(overview=payload["query_overview"], search_query=search_query)
 
     if callable(is_weak_answer):
         try:
             if is_weak_answer(enriched_answer):
-                return payload
+                return _apply_native_web_fallback(overview=payload["query_overview"], search_query=search_query)
         except Exception:
-            return payload
+            return _apply_native_web_fallback(overview=payload["query_overview"], search_query=search_query)
 
     final_web_results = used_web_results if isinstance(used_web_results, list) and used_web_results else web_results
-    payload["query_overview"] = _build_query_overview_from_autolearn_results(prompt, svc, final_web_results)
-    payload["answer"] = str(enriched_answer)
+    payload["query_overview"] = _merge_euria_native_overview(
+        prompt,
+        native_web_answer,
+        _build_query_overview_from_autolearn_results(prompt, svc, final_web_results, llm=llm),
+        llm,
+    )
+    payload["answer"] = enriched_answer
     payload["sources"] = list(enriched_sources or sources or [])
     payload["provenance"] = _normalize_assistant_provenance(provenance)
-    payload["enrichment_path"] = f"autolearn-web:{search_query}"
+    payload["enrichment_path"] = (
+        f"euria-native+ddg:{search_query}"
+        if native_web_answer and isinstance(llm, EuriaClient)
+        else f"autolearn-web:{search_query}"
+    )
     return payload
+
+
+def _can_build_local_rag_context(svc) -> bool:
+    learner = getattr(svc, "learner", None)
+    question_answering = getattr(learner, "_question_answering", None)
+    build_rag_context = getattr(question_answering, "_build_rag_context", None)
+    return callable(build_rag_context)
+
+
+def _build_local_rag_context(prompt: str, svc) -> tuple[str, list[dict[str, Any]]]:
+    learner = getattr(svc, "learner", None)
+    question_answering = getattr(learner, "_question_answering", None)
+    build_rag_context = getattr(question_answering, "_build_rag_context", None)
+    if not callable(build_rag_context):
+        return "", []
+
+    try:
+        rag_context, rag_sources = build_rag_context(prompt)
+    except Exception:
+        return "", []
+
+    return str(rag_context or "").strip(), list(rag_sources or [])
+
+
+def _should_skip_euria_rag(prompt: str) -> bool:
+    normalized = str(prompt or "").strip().lower()
+    if not normalized or len(normalized) < 8:
+        return True
+
+    return bool(re.fullmatch(r"(?:salut|bonjour|bonsoir|merci|hello|hey|ok|merci beaucoup)[ !?.]*", normalized))
+
+
+def _build_rag_source_titles(rag_sources: list[dict[str, Any]]) -> str:
+    titles: list[str] = []
+    for item in rag_sources:
+        metadata = item.get("metadata") if isinstance(item, dict) else None
+        title = ""
+        if isinstance(metadata, dict):
+            title = str(metadata.get("note_title") or Path(str(metadata.get("file_path") or "")).stem).strip()
+        if title and title not in titles:
+            titles.append(title)
+    return ", ".join(f"[{title}]" for title in titles[:8])
+
+
+def _generate_euria_rag_answer(
+    *,
+    prompt: str,
+    history: list[dict[str, str]],
+    llm,
+    rag_context: str,
+    rag_sources: list[dict[str, Any]],
+) -> dict[str, Any]:
+    source_titles = _build_rag_source_titles(rag_sources)
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "Tu réponds en français, avec du Markdown valide et propre. "
+                "Appuie-toi d'abord sur le contexte du coffre fourni. "
+                "N'invente aucune information absente du contexte. "
+                "Si l'information demandée n'est pas dans le contexte, réponds exactement : "
+                '"Cette information n\'est pas dans ton coffre." '
+                "Quand tu utilises une note du coffre, cite son titre entre crochets. "
+                "Ne répète jamais une ligne, un paragraphe ou une section."
+            ),
+        },
+        *[
+            {"role": str(item.get("role") or "user"), "content": str(item.get("content") or "")}
+            for item in history
+            if str(item.get("content") or "").strip()
+        ],
+        {
+            "role": "user",
+            "content": (
+                "Contexte du coffre :\n"
+                f"{rag_context}\n\n"
+                f"Notes disponibles : {source_titles or 'non precisees'}\n\n"
+                f"Question : {prompt}"
+            ),
+        },
+    ]
+    answer = llm.chat(
+        messages,
+        temperature=0.2,
+        max_tokens=1700,
+        operation="conversation_euria_rag",
+        enable_web_search=False,
+    )
+    cleaned_answer = _sanitize_assistant_answer_text(answer)
+    if not cleaned_answer:
+        raise RuntimeError("Euria n'a renvoyé aucune réponse exploitable.")
+    return {
+        "answer": cleaned_answer,
+        "sources": list(rag_sources or []),
+        "provenance": "vault",
+        "query_overview": {},
+        "entity_contexts": [],
+        "enrichment_path": "euria-rag",
+        "rag_lookup_attempted": True,
+        "rag_context_used": True,
+    }
+
+
+def _maybe_upgrade_euria_result_with_web_fallback(*, prompt: str, result: dict[str, Any], llm, svc) -> dict[str, Any]:
+    answer = str(result.get("answer") or "")
+    if not _should_attempt_web_answer(answer, svc):
+        return result
+
+    web_result = _compose_assistant_web_answer(
+        prompt=prompt,
+        answer=answer,
+        sources=[],
+        svc=svc,
+        force=True,
+        llm=llm,
+    )
+    normalized_provenance = _normalize_assistant_provenance(str(web_result.get("provenance") or ""))
+    web_answer = _sanitize_assistant_answer_text(str(web_result.get("answer") or ""))
+    if not web_answer or normalized_provenance not in {"web", "hybrid"} or is_not_in_vault(web_answer):
+        return result
+
+    web_result["answer"] = web_answer
+    web_result["provenance"] = "web"
+    web_result["sources"] = []
+    web_result["rag_lookup_attempted"] = True
+    web_result["rag_context_used"] = False
+    return web_result
+
+
+def _generate_euria_answer_with_optional_rag(*, prompt: str, history: list[dict[str, str]], llm, svc) -> dict[str, Any]:
+    if _should_skip_euria_rag(prompt):
+        result = _generate_euria_direct_answer(prompt=prompt, history=history, llm=llm)
+        result.setdefault("rag_lookup_attempted", False)
+        result.setdefault("rag_context_used", False)
+        return _maybe_upgrade_euria_result_with_web_fallback(prompt=prompt, result=result, llm=llm, svc=svc)
+
+    rag_context, rag_sources = _build_local_rag_context(prompt, svc)
+    if rag_context:
+        rag_result = _generate_euria_rag_answer(
+            prompt=prompt,
+            history=history,
+            llm=llm,
+            rag_context=rag_context,
+            rag_sources=rag_sources,
+        )
+        web_fallback_result = _maybe_upgrade_euria_result_with_web_fallback(prompt=prompt, result=rag_result, llm=llm, svc=svc)
+        if web_fallback_result is not rag_result:
+            return web_fallback_result
+        rag_result.setdefault("rag_lookup_attempted", True)
+        rag_result.setdefault("rag_context_used", True)
+        return rag_result
+
+    result = _generate_euria_direct_answer(prompt=prompt, history=history, llm=llm)
+    result.setdefault("rag_lookup_attempted", _can_build_local_rag_context(svc))
+    result.setdefault("rag_context_used", False)
+    return _maybe_upgrade_euria_result_with_web_fallback(prompt=prompt, result=result, llm=llm, svc=svc)
+
+
+def _can_build_local_rag_context(svc) -> bool:
+    learner = getattr(svc, "learner", None)
+    question_answering = getattr(learner, "_question_answering", None)
+    build_rag_context = getattr(question_answering, "_build_rag_context", None)
+    return callable(build_rag_context)
+
+
+def _build_local_rag_context(prompt: str, svc) -> tuple[str, list[dict[str, Any]]]:
+    learner = getattr(svc, "learner", None)
+    question_answering = getattr(learner, "_question_answering", None)
+    build_rag_context = getattr(question_answering, "_build_rag_context", None)
+    if not callable(build_rag_context):
+        return "", []
+
+    try:
+        rag_context, rag_sources = build_rag_context(prompt)
+    except Exception:
+        return "", []
+
+    return str(rag_context or "").strip(), list(rag_sources or [])
+
+
+def _should_skip_euria_rag(prompt: str) -> bool:
+    normalized = str(prompt or "").strip().lower()
+    if not normalized or len(normalized) < 8:
+        return True
+
+    return bool(re.fullmatch(r"(?:salut|bonjour|bonsoir|merci|hello|hey|ok|merci beaucoup)[ !?.]*", normalized))
+
+
+def _build_rag_source_titles(rag_sources: list[dict[str, Any]]) -> str:
+    titles: list[str] = []
+    for item in rag_sources:
+        metadata = item.get("metadata") if isinstance(item, dict) else None
+        title = ""
+        if isinstance(metadata, dict):
+            title = str(metadata.get("note_title") or Path(str(metadata.get("file_path") or "")).stem).strip()
+        if title and title not in titles:
+            titles.append(title)
+    return ", ".join(f"[{title}]" for title in titles[:8])
+
+
+def _generate_euria_rag_answer(
+    *,
+    prompt: str,
+    history: list[dict[str, str]],
+    llm,
+    rag_context: str,
+    rag_sources: list[dict[str, Any]],
+) -> dict[str, Any]:
+    source_titles = _build_rag_source_titles(rag_sources)
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "Tu réponds en français, avec du Markdown valide et propre. "
+                "Appuie-toi d'abord sur le contexte du coffre fourni. "
+                "N'invente aucune information absente du contexte. "
+                "Si l'information demandée n'est pas dans le contexte, réponds exactement : "
+                '"Cette information n\'est pas dans ton coffre." '
+                "Quand tu utilises une note du coffre, cite son titre entre crochets. "
+                "Ne répète jamais une ligne, un paragraphe ou une section."
+            ),
+        },
+        *[
+            {"role": str(item.get("role") or "user"), "content": str(item.get("content") or "")}
+            for item in history
+            if str(item.get("content") or "").strip()
+        ],
+        {
+            "role": "user",
+            "content": (
+                "Contexte du coffre :\n"
+                f"{rag_context}\n\n"
+                f"Notes disponibles : {source_titles or 'non precisees'}\n\n"
+                f"Question : {prompt}"
+            ),
+        },
+    ]
+    answer = llm.chat(
+        messages,
+        temperature=0.2,
+        max_tokens=1700,
+        operation="conversation_euria_rag",
+        enable_web_search=False,
+    )
+    cleaned_answer = _sanitize_assistant_answer_text(answer)
+    if not cleaned_answer:
+        raise RuntimeError("Euria n'a renvoyé aucune réponse exploitable.")
+    return {
+        "answer": cleaned_answer,
+        "sources": list(rag_sources or []),
+        "provenance": "vault",
+        "query_overview": {},
+        "entity_contexts": [],
+        "enrichment_path": "euria-rag",
+        "rag_lookup_attempted": True,
+        "rag_context_used": True,
+    }
+
+
+def _generate_euria_answer_with_optional_rag(*, prompt: str, history: list[dict[str, str]], llm, svc) -> dict[str, Any]:
+    if _should_skip_euria_rag(prompt):
+        result = _generate_euria_direct_answer(prompt=prompt, history=history, llm=llm)
+        result.setdefault("rag_lookup_attempted", False)
+        result.setdefault("rag_context_used", False)
+        return _maybe_upgrade_euria_result_with_web_fallback(prompt=prompt, result=result, llm=llm, svc=svc)
+
+    rag_context, rag_sources = _build_local_rag_context(prompt, svc)
+    if rag_context:
+        rag_result = _generate_euria_rag_answer(
+            prompt=prompt,
+            history=history,
+            llm=llm,
+            rag_context=rag_context,
+            rag_sources=rag_sources,
+        )
+        web_fallback_result = _maybe_upgrade_euria_result_with_web_fallback(prompt=prompt, result=rag_result, llm=llm, svc=svc)
+        if web_fallback_result is not rag_result:
+            return web_fallback_result
+        rag_result.setdefault("rag_lookup_attempted", True)
+        rag_result.setdefault("rag_context_used", True)
+        return rag_result
+
+    result = _generate_euria_direct_answer(prompt=prompt, history=history, llm=llm)
+    result.setdefault("rag_lookup_attempted", _can_build_local_rag_context(svc))
+    result.setdefault("rag_context_used", False)
+    return _maybe_upgrade_euria_result_with_web_fallback(prompt=prompt, result=result, llm=llm, svc=svc)
 
 
 def _load_processing_status() -> dict[str, Any]:
@@ -668,39 +1226,69 @@ async def create_message(
     _: None = Depends(require_api_auth),
 ) -> ChatMessageModel:
     svc = get_service_manager()
+    try:
+        llm = _conversation_llm(svc, payload.useEuria)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    llm_provider = _conversation_llm_provider(payload.useEuria)
     user_message, history = _prepare_user_message(conversation_id, payload.prompt)
     conversation_store.append_messages(conversation_id, [user_message])
 
     started_at = time.perf_counter()
-    try:
-        result = _run_chat_generation_worker(prompt=payload.prompt, history=history)
-    except RuntimeError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    if payload.useEuria:
+        try:
+            result = _generate_euria_answer_with_optional_rag(prompt=payload.prompt, history=history, llm=llm, svc=svc)
+        except RuntimeError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
 
-    answer = str(result.get("answer") or "")
-    sources = list(result.get("sources") or [])
-    enriched_result = _compose_assistant_web_answer(
-        prompt=payload.prompt,
-        answer=answer,
-        sources=sources,
-        svc=svc,
-    )
-    answer = str(enriched_result.get("answer") or answer)
-    sources = list(enriched_result.get("sources") or sources)
-    provenance = str(enriched_result.get("provenance") or "vault")
-    enrichment_path = str(enriched_result.get("enrichment_path") or "") or None
-    sentinel = is_not_in_vault(answer)
-    source_models = _build_source_models(sources)
-    primary_source = next((item for item in source_models if item.isPrimary), None)
-    entity_contexts = _enrich_entity_contexts(
-        user_text=payload.prompt,
-        answer=answer,
-        entity_contexts=_lookup_conversation_entity_contexts(payload.prompt, answer, svc),
-        sources=source_models,
-        primary_source=primary_source,
-        svc=svc,
-    )
-    query_overview = enriched_result.get("query_overview") or (_lookup_query_overview(payload.prompt, svc) if sentinel else {})
+        answer = str(result.get("answer") or "")
+        sources = list(result.get("sources") or [])
+        provenance = str(result.get("provenance") or "vault")
+        enrichment_path = str(result.get("enrichment_path") or "") or None
+        source_models = _build_source_models(sources)
+        primary_source = next((item for item in source_models if item.isPrimary), None)
+        entity_contexts = _enrich_entity_contexts(
+            user_text=payload.prompt,
+            answer=answer,
+            entity_contexts=_lookup_conversation_entity_contexts(payload.prompt, answer, svc),
+            sources=source_models,
+            primary_source=primary_source,
+            svc=svc,
+            llm=llm,
+        )
+        query_overview = result.get("query_overview") or {}
+    else:
+        try:
+            result = _run_chat_generation_worker(prompt=payload.prompt, history=history, use_euria=payload.useEuria)
+        except RuntimeError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+        answer = str(result.get("answer") or "")
+        sources = list(result.get("sources") or [])
+        enriched_result = _compose_assistant_web_answer(
+            prompt=payload.prompt,
+            answer=answer,
+            sources=sources,
+            svc=svc,
+            llm=llm,
+        )
+        answer = str(enriched_result.get("answer") or answer)
+        sources = list(enriched_result.get("sources") or sources)
+        provenance = str(enriched_result.get("provenance") or "vault")
+        enrichment_path = str(enriched_result.get("enrichment_path") or "") or None
+        sentinel = is_not_in_vault(answer)
+        source_models = _build_source_models(sources)
+        primary_source = next((item for item in source_models if item.isPrimary), None)
+        entity_contexts = _enrich_entity_contexts(
+            user_text=payload.prompt,
+            answer=answer,
+            entity_contexts=_lookup_conversation_entity_contexts(payload.prompt, answer, svc),
+            sources=source_models,
+            primary_source=primary_source,
+            svc=svc,
+            llm=llm,
+        )
+        query_overview = enriched_result.get("query_overview") or (_lookup_query_overview(payload.prompt, svc, llm=llm) if sentinel else {})
     assistant_message = _build_assistant_message(
         answer=answer,
         sources=sources,
@@ -709,6 +1297,7 @@ async def create_message(
         query_overview=query_overview,
         entity_contexts=entity_contexts,
         provenance=provenance,
+        llm_provider=llm_provider,
         enrichment_path=enrichment_path,
     )
     conversation_store.append_messages(
@@ -726,16 +1315,78 @@ async def stream_message(
     _: None = Depends(require_api_auth),
 ) -> StreamingResponse:
     svc = get_service_manager()
+    try:
+        llm = _conversation_llm(svc, payload.useEuria)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    llm_provider = _conversation_llm_provider(payload.useEuria)
     user_message, history = _prepare_user_message(conversation_id, payload.prompt)
     conversation_store.append_messages(conversation_id, [user_message])
     started_at = time.perf_counter()
-    worker_task = asyncio.create_task(asyncio.to_thread(_run_chat_generation_worker, prompt=payload.prompt, history=history))
+    worker_task = None if payload.useEuria else asyncio.create_task(asyncio.to_thread(_run_chat_generation_worker, prompt=payload.prompt, history=history, use_euria=payload.useEuria))
 
     async def _event_stream():
         timeline: list[str] = []
         yield _sse_event("message_start", {"conversationId": conversation_id, "messageId": user_message.id})
         result: dict[str, Any] | None = None
         emitted_preparation_steps: set[str] = set()
+
+        if payload.useEuria:
+            euria_steps: list[tuple[str, str]] = [("analysis", "Analyse de la requete")]
+            if _can_build_local_rag_context(svc) and not _should_skip_euria_rag(payload.prompt):
+                euria_steps.append(("context", "Recherche dans le coffre"))
+            euria_steps.extend([
+                ("generation", "Generation via Euria"),
+                ("entities", "Extraction des entites NER"),
+                ("finalize", "Finalisation de la reponse"),
+            ])
+            for phase, status_message in euria_steps:
+                _append_timeline_step(timeline, status_message)
+                yield _sse_event("retrieval_status", {"phase": phase, "message": status_message})
+
+            try:
+                result = await asyncio.to_thread(_generate_euria_answer_with_optional_rag, prompt=payload.prompt, history=history, llm=llm, svc=svc)
+            except RuntimeError as exc:
+                yield _sse_event("message_error", {"detail": str(exc)})
+                return
+
+            answer = str(result.get("answer") or "")
+            sources = list(result.get("sources") or [])
+            source_models = _build_source_models(sources)
+            primary_source = next((item for item in source_models if item.isPrimary), None)
+            entity_contexts = _enrich_entity_contexts(
+                user_text=payload.prompt,
+                answer=answer,
+                entity_contexts=_lookup_conversation_entity_contexts(payload.prompt, answer, svc),
+                sources=source_models,
+                primary_source=primary_source,
+                svc=svc,
+                llm=llm,
+            )
+            assistant_message = _build_assistant_message(
+                answer=answer,
+                sources=sources,
+                started_at=started_at,
+                timeline=timeline,
+                query_overview=result.get("query_overview") or {},
+                entity_contexts=entity_contexts,
+                provenance=str(result.get("provenance") or "vault"),
+                llm_provider=llm_provider,
+                enrichment_path=str(result.get("enrichment_path") or "") or None,
+            )
+            if assistant_message.provenance == "web":
+                _append_timeline_step(timeline, "Recherche web via Euria")
+                assistant_message.timeline = timeline
+            for token in _iter_answer_tokens(answer):
+                yield _sse_event("token", {"token": token})
+            yield _sse_event("sources_ready", {"sources": [item.model_dump(mode="json") for item in assistant_message.sources]})
+            conversation_store.append_messages(
+                conversation_id,
+                [assistant_message],
+                last_generation_stats=assistant_message.stats,
+            )
+            yield _sse_event("message_complete", assistant_message.model_dump(mode="json"))
+            return
 
         for phase, status_message in STREAM_PREPARATION_STEPS:
             _append_timeline_step(timeline, status_message)
@@ -792,6 +1443,7 @@ async def stream_message(
                     sources=sources,
                     svc=svc,
                     force=should_attempt_web,
+                    llm=llm,
                 )
                 answer = str(enriched_result.get("answer") or answer)
                 sources = list(enriched_result.get("sources") or sources)
@@ -809,9 +1461,10 @@ async def stream_message(
                     sources=source_models,
                     primary_source=primary_source,
                     svc=svc,
+                    llm=llm,
                 )
                 if sentinel and not query_overview:
-                    query_overview = _lookup_query_overview(payload.prompt, svc)
+                    query_overview = _lookup_query_overview(payload.prompt, svc, llm=llm)
 
         for token in _iter_answer_tokens(answer):
             yield _sse_event("token", {"token": token})
@@ -826,6 +1479,7 @@ async def stream_message(
             query_overview=query_overview,
             entity_contexts=entity_contexts,
             provenance=provenance,
+            llm_provider=llm_provider,
             enrichment_path=enrichment_path,
         )
         conversation_store.append_messages(
@@ -1065,9 +1719,13 @@ def explicit_web_search(
     _: None = Depends(require_api_auth),
 ) -> WebSearchResponseModel:
     svc = get_service_manager()
+    try:
+        llm = _conversation_llm(svc, payload.useEuria)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     svc.signal_ui_active()
     started_at = time.perf_counter()
-    overview = _lookup_query_overview(payload.query, svc)
+    overview = _lookup_query_overview(payload.query, svc, llm=llm)
     if not overview:
         raise HTTPException(status_code=404, detail="No web results found")
 
@@ -1077,7 +1735,7 @@ def explicit_web_search(
         summary=str(overview.get("summary") or ""),
         sources=[_web_source_model(item) for item in (overview.get("sources") or []) if item.get("href")],
     )
-    content = _format_query_overview_markdown(overview)
+    content = _sanitize_assistant_answer_text(_format_query_overview_markdown(overview))
     content = sanitize_mermaid_blocks(content)
     entity_contexts = _enrich_entity_contexts(
         user_text=payload.query,
@@ -1086,9 +1744,11 @@ def explicit_web_search(
         sources=[],
         primary_source=None,
         svc=svc,
+        llm=llm,
     )
     return WebSearchResponseModel(
         content=content,
+        llmProvider=_conversation_llm_provider(payload.useEuria),
         queryOverview=query_overview,
         entityContexts=_entity_context_models(entity_contexts),
         stats=_build_generation_stats(content, started_at),
@@ -1781,9 +2441,12 @@ def _build_assistant_message(
     query_overview: dict[str, Any] | None = None,
     entity_contexts: list[dict[str, Any]] | None = None,
     provenance: str = "vault",
+    llm_provider: str | None = None,
     enrichment_path: str | None = None,
 ) -> ChatMessageModel:
     source_models = _build_source_models(sources)
+    answer = _sanitize_assistant_answer_text(answer)
+    answer = _linkify_answer_note_citations(answer, source_models)
     primary_source = next((item for item in source_models if item.isPrimary), None)
     normalized_provenance = _normalize_assistant_provenance(provenance)
     sentinel = is_not_in_vault(answer)
@@ -1793,6 +2456,7 @@ def _build_assistant_message(
         role="assistant",
         content=answer,
         createdAt=datetime.now(UTC).isoformat(),
+        llmProvider=llm_provider,
         sources=source_models,
         primarySource=primary_source,
         timeline=timeline,
@@ -1816,18 +2480,27 @@ def _lookup_conversation_entity_contexts(user_text: str, assistant_text: str, sv
         return []
 
 
-def _lookup_query_overview(user_text: str, svc) -> dict[str, Any]:
+def _lookup_query_overview(user_text: str, svc, llm=None) -> dict[str, Any]:
     if not user_text or len(user_text.strip()) < 3:
         return {}
 
-    autolearn_overview = _build_query_overview_from_autolearn_results(user_text, svc)
+    native_web_answer = _try_euria_native_web_answer(user_text, llm)
+    autolearn_overview = _build_query_overview_from_autolearn_results(user_text, svc, llm=llm)
     if autolearn_overview:
-        return autolearn_overview
+        return _merge_euria_native_overview(user_text, native_web_answer, autolearn_overview, llm)
 
     try:
-        result = build_query_overview_sync(user_text, svc.llm)
-        return result if isinstance(result, dict) else {}
+        result = build_query_overview_sync(user_text, llm or svc.llm)
+        normalized_result = result if isinstance(result, dict) else {}
+        return _merge_euria_native_overview(user_text, native_web_answer, normalized_result, llm)
     except Exception:
+        if native_web_answer:
+            return {
+                "query": user_text,
+                "search_query": user_text,
+                "summary": native_web_answer,
+                "sources": [],
+            }
         return {}
 
 
@@ -1874,6 +2547,7 @@ def _enrich_entity_contexts(
     sources: list[SourceRefModel],
     primary_source: SourceRefModel | None,
     svc,
+    llm=None,
 ) -> list[dict[str, Any]]:
     enriched: list[dict[str, Any]] = []
     evidence_rows: list[dict[str, Any]] = []
@@ -1899,7 +2573,7 @@ def _enrich_entity_contexts(
             }
         )
 
-    explanations = _generate_entity_relation_explanations(user_text, answer, evidence_rows, svc)
+    explanations = _generate_entity_relation_explanations(user_text, answer, evidence_rows, svc, llm=llm)
     for context, evidence in zip(enriched, evidence_rows, strict=False):
         context["relation_explanation"] = explanations.get(str(context.get("value") or "")) or _fallback_entity_relation_explanation(evidence)
 
@@ -1980,12 +2654,13 @@ def _generate_entity_relation_explanations(
     answer: str,
     evidence_rows: list[dict[str, Any]],
     svc,
+    llm=None,
 ) -> dict[str, str]:
     if not evidence_rows:
         return {}
 
-    llm = getattr(svc, "llm", None)
-    chat = getattr(llm, "chat", None)
+    selected_llm = llm or getattr(svc, "llm", None)
+    chat = getattr(selected_llm, "chat", None)
     if not callable(chat):
         return {}
 
@@ -2153,8 +2828,60 @@ def _decode_worker_payload(stdout: str) -> dict[str, Any]:
     raise RuntimeError("Le worker de génération a renvoyé une réponse invalide.")
 
 
-def _run_chat_generation_worker(*, prompt: str, history: list[dict[str, str]]) -> dict[str, Any]:
-    payload = json.dumps({"prompt": prompt, "history": history}, ensure_ascii=False)
+def _conversation_llm(svc, use_euria: bool):
+    if not use_euria:
+        return getattr(svc, "llm", None)
+    try:
+        return EuriaClient()
+    except ValueError as exc:
+        raise RuntimeError(str(exc)) from exc
+
+
+def _conversation_llm_provider(use_euria: bool) -> str:
+    return "Euria" if use_euria else "MLX"
+
+
+def _generate_euria_direct_answer(*, prompt: str, history: list[dict[str, str]], llm) -> dict[str, Any]:
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "Tu réponds en français, avec du Markdown valide et propre. "
+                "N'écris pas de balisage incomplet. "
+                "Si tu produis un tableau, utilise un vrai tableau Markdown avec des pipes. "
+                "Ne répète jamais une ligne, une ligne de tableau, un paragraphe ou une section. "
+                "Termine toujours proprement la réponse, sans couper un mot ni une emphase Markdown."
+            ),
+        },
+        *[
+            {"role": str(item.get("role") or "user"), "content": str(item.get("content") or "")}
+            for item in history
+            if str(item.get("content") or "").strip()
+        ],
+        {"role": "user", "content": prompt},
+    ]
+    answer = llm.chat(
+        messages,
+        temperature=0.3,
+        max_tokens=1700,
+        operation="conversation_euria_fast",
+        enable_web_search=False,
+    )
+    cleaned_answer = _sanitize_assistant_answer_text(answer)
+    if not cleaned_answer:
+        raise RuntimeError("Euria n'a renvoyé aucune réponse exploitable.")
+    return {
+        "answer": cleaned_answer,
+        "sources": [],
+        "provenance": "vault",
+        "query_overview": {},
+        "entity_contexts": [],
+        "enrichment_path": "euria-direct",
+    }
+
+
+def _run_chat_generation_worker(*, prompt: str, history: list[dict[str, str]], use_euria: bool = False) -> dict[str, Any]:
+    payload = json.dumps({"prompt": prompt, "history": history, "useEuria": use_euria}, ensure_ascii=False)
     project_root = str(Path(__file__).resolve().parents[2])
     primary_detail: str | None = None
     workers = [
@@ -2229,6 +2956,50 @@ def _build_source_models(sources: list[dict]) -> list[SourceRefModel]:
             continue
         deduped[source_key] = _merge_source_refs(current, source)
     return list(deduped.values())
+
+
+def _linkify_answer_note_citations(answer: str, sources: list[SourceRefModel]) -> str:
+    if not answer or not sources:
+        return answer
+
+    citation_map = _build_citation_source_map(sources)
+    if not citation_map:
+        return answer
+
+    pattern = re.compile(r"(?<!\[)\[([^\[\]\n]{2,200})\](?!\(|\])")
+
+    def _replace(match: re.Match[str]) -> str:
+        label = str(match.group(1) or "").strip()
+        if not label:
+            return match.group(0)
+        source = citation_map.get(_normalize_citation_key(label))
+        if source is None or not source.filePath:
+            return match.group(0)
+        target = source.filePath[:-3] if source.filePath.endswith(".md") else source.filePath
+        return f"[[{target}|{label}]]"
+
+    return pattern.sub(_replace, answer)
+
+
+def _build_citation_source_map(sources: list[SourceRefModel]) -> dict[str, SourceRefModel]:
+    mapping: dict[str, SourceRefModel] = {}
+    for source in sources:
+        if not source.filePath:
+            continue
+        candidates = {
+            _normalize_citation_key(str(source.noteTitle or "")),
+            _normalize_citation_key(Path(source.filePath).stem),
+        }
+        for candidate in candidates:
+            if candidate and candidate not in mapping:
+                mapping[candidate] = source
+    return mapping
+
+
+def _normalize_citation_key(value: str) -> str:
+    normalized = unicodedata.normalize("NFKC", str(value or "")).strip().lower()
+    normalized = normalized.replace("_", " ")
+    return " ".join(normalized.split())
 
 
 def _source_identity_key(source: SourceRefModel) -> str:

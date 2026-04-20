@@ -12,6 +12,7 @@ from src.learning.artifact_writer import AutoLearnArtifactWriter
 from src.learning.synapse_discovery import AutoLearnSynapseDiscovery
 from src.learning.web_enrichment import AutoLearnWebEnrichment
 from src.metrics import MetricsRecorder
+from src.storage.slugify import build_ascii_stem
 
 
 def _chunk(
@@ -99,6 +100,14 @@ class TestAnswerPromptingHelpers:
 
 @pytest.mark.unit
 class TestArtifactWriterHelpers:
+    def test_build_ascii_stem_replaces_non_latin_sequences_with_ascii_safe_separators(self):
+        assert build_ascii_stem(
+            "Lopen_source_est_mort___ce_projet_majeur__Meta暂停与Mercor合作因数据泄露",
+            fallback="artifact",
+            max_length=80,
+            separator="_",
+        ) == "Lopen_source_est_mort_ce_projet_majeur_Meta_Mercor"
+
     def test_filter_source_paths_prefers_user_sources_over_obsirag_artifacts(self):
         assert AutoLearnArtifactWriter.filter_source_paths([
             "obsirag/synapses/demo.md",

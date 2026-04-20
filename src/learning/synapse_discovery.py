@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 from loguru import logger
 
 from src.storage.safe_read import read_json_file
+from src.storage.slugify import build_ascii_stem
 
 if TYPE_CHECKING:
     from src.learning.autolearn import AutoLearner
@@ -158,8 +159,8 @@ class AutoLearnSynapseDiscovery:
             operation="autolearn_synapse",
         )
 
-        safe_a = re.sub(r"[^\w\s-]", "", title_a).strip().replace(" ", "_")[:40]
-        safe_b = re.sub(r"[^\w\s-]", "", title_b).strip().replace(" ", "_")[:40]
+        safe_a = build_ascii_stem(title_a, fallback="synapse_a", max_length=40, separator="_")
+        safe_b = build_ascii_stem(title_b, fallback="synapse_b", max_length=40, separator="_")
         date_str = datetime.now(UTC).strftime("%Y%m%d")
         out_dir = self._owner._get_settings().synapses_dir
         out_dir.mkdir(parents=True, exist_ok=True)

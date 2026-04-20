@@ -1,5 +1,14 @@
-export function buildNoteRoute(notePath: string) {
-  return `/(tabs)/note/${encodeURIComponent(notePath)}`;
+type NoteRouteOptions = {
+  returnTo?: string;
+};
+
+export function buildNoteRoute(notePath: string, options?: NoteRouteOptions) {
+  const encodedPath = encodeURIComponent(notePath);
+  const returnTo = options?.returnTo?.trim();
+  if (!returnTo) {
+    return `/(tabs)/note/${encodedPath}`;
+  }
+  return `/(tabs)/note/${encodedPath}?returnTo=${encodeURIComponent(returnTo)}`;
 }
 
 export function getCanonicalNotePath(value: string | null | undefined) {

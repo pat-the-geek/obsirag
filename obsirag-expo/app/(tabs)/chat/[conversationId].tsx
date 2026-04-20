@@ -34,6 +34,8 @@ export default function ConversationDetailScreen() {
   );
   const draft = useAppStore((state) => (conversationId ? state.drafts[conversationId] ?? '' : ''));
   const setDraft = useAppStore((state) => state.setDraft);
+  const useEuriaForConversation = useAppStore((state) => state.useEuriaForConversation);
+  const setUseEuriaForConversation = useAppStore((state) => state.setUseEuriaForConversation);
   const theme = useAppTheme();
   const { data, isLoading, isRefetching, refetch } = useConversation(conversationId);
   const messages = data?.messages ?? [];
@@ -78,6 +80,11 @@ export default function ConversationDetailScreen() {
     data?.updatedAt ? `Modifie le ${formatMetadataDate(data.updatedAt)}` : null,
     formatSizeBytes(data?.sizeBytes),
   ]);
+  const conversationRoute = conversationId ? `/(tabs)/chat/${conversationId}` : '';
+
+  const openNoteFromConversation = (notePath: string) => {
+    router.push(buildNoteRoute(notePath, conversationRoute ? { returnTo: conversationRoute } : undefined));
+  };
 
   const scrollThreadToBottom = () => {
     if (process.env.NODE_ENV === 'test' || typeof requestAnimationFrame !== 'function') {
@@ -159,6 +166,12 @@ export default function ConversationDetailScreen() {
           <View style={styles.headerCopy}>
             <Text style={[styles.headerTitle, { color: theme.colors.text }]}>{data.title}</Text>
             {conversationMetadata ? <Text style={[styles.headerMeta, { color: theme.colors.textSubtle }]}>{conversationMetadata}</Text> : null}
+            <View style={[styles.providerBadge, { backgroundColor: theme.colors.surfaceMuted, borderColor: theme.colors.border }] }>
+              <Text style={[styles.providerBadgeLabel, { color: theme.colors.textMuted }]}>Provider actif</Text>
+              <Text style={[styles.providerBadgeValue, { color: useEuriaForConversation ? theme.colors.primary : theme.colors.text }]}>
+                {useEuriaForConversation ? 'Euria' : 'Local (MLX)'}
+              </Text>
+            </View>
             <Text style={[styles.headerSubtitle, { color: theme.colors.textMuted }]}>Conversation centree, reponses developpees et actions contextuelles en bas d'ecran.</Text>
           </View>
         </View>
@@ -169,7 +182,7 @@ export default function ConversationDetailScreen() {
               <ConversationEntitySidebar
                 entities={aggregatedEntityContexts}
                 compact
-                onOpenNote={(notePath) => router.push(buildNoteRoute(notePath))}
+                onOpenNote={openNoteFromConversation}
                 onOpenTag={(tag) => router.push(`/(tabs)/graph?tag=${encodeURIComponent(tag)}`)}
               />
             ) : null}
@@ -197,9 +210,9 @@ export default function ConversationDetailScreen() {
                     message={message}
                     highlightEntities={aggregatedEntityContexts}
                     onSuggestWebSearch={(query) => explicitWebSearch.mutate(query)}
-                    onOpenNote={(notePath) => router.push(buildNoteRoute(notePath))}
+                    onOpenNote={openNoteFromConversation}
                     onOpenTag={(tag) => router.push(`/(tabs)/graph?tag=${encodeURIComponent(tag)}`)}
-                    onOpenPrimarySource={(notePath) => router.push(buildNoteRoute(notePath))}
+                    onOpenPrimarySource={openNoteFromConversation}
                     onDeleteMessage={confirmDeleteMessage}
                     onReusePrompt={(query) => setDraft(conversationId, query)}
                     {...(() => {
@@ -247,12 +260,13 @@ export default function ConversationDetailScreen() {
               <MessageComposer
                 value={draft}
                 onChangeText={(value) => setDraft(conversationId, value)}
-                onSubmit={() => {
-                  const trimmedDraft = draft.trim();
+                withEuria={useEuriaForConversation}
+                onToggleWithEuria={setUseEuriaForConversation}
+                onSubmit={(submittedValue) => {
+                  const trimmedDraft = submittedValue.trim();
                   if (!trimmedDraft) {
                     return;
                   }
-                  setDraft(conversationId, '');
                   scrollThreadToBottom();
                   streamMessage.mutate(trimmedDraft);
                 }}
@@ -272,12 +286,12 @@ export default function ConversationDetailScreen() {
                     return;
                   }
                   generateConversationReport.mutate(conversationId, {
-                    onSuccess: (result) => router.push(buildNoteRoute(result.path)),
+                    onSuccess: (result) => openNoteFromConversation(result.path),
                     onError: (error) => Alert.alert('Rapport impossible', error instanceof Error ? error.message : 'Erreur inconnue'),
                   });
                 }}
                 tertiaryActionDisabled={generateConversationReport.isPending}
-                disabled={streamMessage.isPending || !draft.trim()}
+                disabled={streamMessage.isPending}
                 {...(hasReportableConversation ? { tertiaryActionLabel: 'Rapport' } : {})}
               />
             </View>
@@ -287,7 +301,7 @@ export default function ConversationDetailScreen() {
             <ConversationEntitySidebar
               entities={aggregatedEntityContexts}
               maxHeight={asideEntityMaxHeight}
-              onOpenNote={(notePath) => router.push(buildNoteRoute(notePath))}
+              onOpenNote={openNoteFromConversation}
               onOpenTag={(tag) => router.push(`/(tabs)/graph?tag=${encodeURIComponent(tag)}`)}
             />
           ) : null}
@@ -384,6 +398,24 @@ const styles = StyleSheet.create({
   headerMeta: {
     fontSize: 12,
     lineHeight: 18,
+  },
+  providerBadge: {
+    alignSelf: 'flex-start',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    borderRadius: 999,
+    borderWidth: 1,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  providerBadgeLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  providerBadgeValue: {
+    fontSize: 12,
+    fontWeight: '800',
   },
   thread: {
     paddingTop: 12,

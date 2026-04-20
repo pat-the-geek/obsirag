@@ -631,6 +631,22 @@ class TestAutoLearner:
         assert "Connexion identifiée entièrement en français." in content
         assert "中文" not in content
 
+    def test_create_synapse_artifact_uses_ascii_safe_filename_for_non_latin_titles(self, tmp_settings):
+        chroma = MagicMock()
+        chroma.search.return_value = [{"text": "Extrait de la note A"}]
+        rag = MagicMock()
+        rag._llm.chat.return_value = "Connexion implicite entre les deux notes."
+        learner = AutoLearner(chroma, rag, MagicMock())
+
+        with patch("src.learning.autolearn.settings", tmp_settings):
+            learner._create_synapse_artifact(
+                {"file_path": "a.md", "title": "Meta暂停"},
+                {"file_path": "b.md", "title": "Mercor合作", "score": 0.83, "excerpt": "Extrait B"},
+            )
+
+        created = list(tmp_settings.synapses_dir.glob("Meta__Mercor_*.md"))
+        assert len(created) == 1
+
     def test_suggest_note_title_filters_keep_long_and_same_title_after_rewrite(self):
         learner = AutoLearner(MagicMock(), MagicMock(), MagicMock())
         learner._rag._llm.chat.side_effect = [

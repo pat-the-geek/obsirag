@@ -1,7 +1,7 @@
 import { PropsWithChildren } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 
-import { useAppTheme } from '../../theme/app-theme';
+import { scaleFontSize, useAppFontScale, useAppTheme } from '../../theme/app-theme';
 
 type SectionCardProps = PropsWithChildren<{
   title: string;
@@ -11,13 +11,14 @@ type SectionCardProps = PropsWithChildren<{
 
 export function SectionCard({ children, title, subtitle, headerAccessory }: SectionCardProps) {
   const theme = useAppTheme();
+  const { scale } = useAppFontScale();
 
   return (
     <View style={[styles.card, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border, shadowColor: theme.colors.shadow }]}>
       <View style={styles.headerRow}>
         <View style={styles.titleBlock}>
-          <Text style={[styles.title, { color: theme.colors.text }]}>{title}</Text>
-          {subtitle ? <Text style={[styles.subtitle, { color: theme.colors.textMuted }]}>{subtitle}</Text> : null}
+          <Text style={[styles.title, { color: theme.colors.text, fontSize: scaleFontSize(18, scale) }]}>{title}</Text>
+          {subtitle ? <Text style={[styles.subtitle, { color: theme.colors.textMuted, fontSize: scaleFontSize(13, scale) }]}>{subtitle}</Text> : null}
         </View>
         {headerAccessory ? <View style={styles.headerAccessory}>{headerAccessory}</View> : null}
       </View>

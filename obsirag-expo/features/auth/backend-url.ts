@@ -46,3 +46,18 @@ export function resolveSessionBackendUrlHint(currentBackendUrl: string, backendU
 
   return normalizedHint;
 }
+
+export function resolveLocalWebBackendUrl(currentBackendUrl: string, browserOrigin?: string | null): string | null {
+  const normalizedCurrentUrl = normalizeBackendUrlInput(currentBackendUrl);
+  const normalizedBrowserOrigin = normalizeBackendUrlInput(browserOrigin ?? '');
+
+  if (!normalizedCurrentUrl || !normalizedBrowserOrigin || normalizedCurrentUrl === normalizedBrowserOrigin) {
+    return null;
+  }
+
+  if (!isLocalOnlyUrl(normalizedBrowserOrigin) || isLocalOnlyUrl(normalizedCurrentUrl)) {
+    return null;
+  }
+
+  return normalizedBrowserOrigin;
+}

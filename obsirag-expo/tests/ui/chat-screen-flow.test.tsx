@@ -34,11 +34,13 @@ const mockDeleteConversationMessageMutate = jest.fn();
 const mockExplicitWebSearchMutate = jest.fn();
 const mockStreamMessageMutate = jest.fn();
 const mockSetDraft = jest.fn();
+const mockSetUseEuriaForConversation = jest.fn();
 const mockScrollToEnd = jest.fn();
 const alertSpy = jest.spyOn(Alert, 'alert');
 const originalConfirm = globalThis.confirm;
 const mockConfirm = jest.fn();
 let mockDraftValue = '';
+let mockUseEuriaForConversation = false;
 let mockStreamMessageState = { mutate: mockStreamMessageMutate, isPending: false, error: null as Error | null };
 let mockExplicitWebSearchState = { mutate: mockExplicitWebSearchMutate, isPending: false };
 let mockConversationData: ConversationDetail | undefined = {
@@ -109,11 +111,16 @@ jest.mock('../../store/app-store', () => ({
   useAppStore: (selector: (state: Record<string, unknown>) => unknown) =>
     selector({
       drafts: { 'conv-1': mockDraftValue },
+      useEuriaForConversation: mockUseEuriaForConversation,
       setDraft: (conversationId: string, value: string) => {
         mockSetDraft(conversationId, value);
         if (conversationId === 'conv-1') {
           mockDraftValue = value;
         }
+      },
+      setUseEuriaForConversation: (value: boolean) => {
+        mockSetUseEuriaForConversation(value);
+        mockUseEuriaForConversation = value;
       },
     }),
 }));
@@ -229,8 +236,10 @@ describe('ConversationDetailScreen', () => {
     mockExplicitWebSearchMutate.mockReset();
     mockStreamMessageMutate.mockReset();
     mockSetDraft.mockReset();
+    mockSetUseEuriaForConversation.mockReset();
     mockScrollToEnd.mockReset();
     mockDraftValue = '';
+    mockUseEuriaForConversation = false;
     alertSpy.mockReset();
     mockConfirm.mockReset();
     mockStreamMessageState = { mutate: mockStreamMessageMutate, isPending: false, error: null };
@@ -243,6 +252,8 @@ describe('ConversationDetailScreen', () => {
     expect(textTreeContains(tree, 'Rechercher sur le web')).toBe(true);
     expect(textTreeContains(tree, 'Modifie le')).toBe(true);
     expect(textTreeContains(tree, '4 ko')).toBe(true);
+    expect(textTreeContains(tree, 'Provider actif')).toBe(true);
+    expect(textTreeContains(tree, 'Local (MLX)')).toBe(true);
     expect(tree.root.findByProps({ testID: 'message-composer-secondary-action' })).toBeTruthy();
     expect(tree.root.findByProps({ testID: 'message-composer-tertiary-action' })).toBeTruthy();
 
@@ -254,6 +265,25 @@ describe('ConversationDetailScreen', () => {
     expect(mockSaveConversationMutate.mock.calls[0][0]).toBe('conv-1');
   });
 
+  it('shows Euria as the active provider when the conversation toggle is enabled', () => {
+    mockUseEuriaForConversation = true;
+
+    const tree = renderer.create(<ConversationDetailScreen />);
+
+    expect(textTreeContains(tree, 'Provider actif')).toBe(true);
+    expect(textTreeContains(tree, 'Euria')).toBe(true);
+  });
+
+  it('updates the conversation provider when the checkbox is toggled', () => {
+    const tree = renderer.create(<ConversationDetailScreen />);
+
+    act(() => {
+      tree.root.findByProps({ testID: 'message-composer-euria-toggle' }).props.onPress();
+    });
+
+    expect(mockSetUseEuriaForConversation).toHaveBeenCalledWith(true);
+  });
+
   it('clears the draft immediately and scrolls to the bottom when sending a question', () => {
     const tree = renderer.create(<ConversationDetailScreen />);
     const input = tree.root.findByProps({ testID: 'message-composer-input' });
@@ -263,14 +293,9 @@ describe('ConversationDetailScreen', () => {
     });
 
     act(() => {
-      tree.update(<ConversationDetailScreen />);
-    });
-
-    act(() => {
       tree.root.findByProps({ testID: 'message-composer-submit' }).props.onPress();
     });
 
-    expect(mockSetDraft).toHaveBeenCalledWith('conv-1', 'Nouvelle question sur Artemis II');
     expect(mockSetDraft).toHaveBeenCalledWith('conv-1', '');
     expect(mockScrollToEnd).toHaveBeenCalled();
     expect(mockStreamMessageMutate).toHaveBeenCalledWith('Nouvelle question sur Artemis II');
@@ -299,7 +324,7 @@ describe('ConversationDetailScreen', () => {
 
     expect(mockGenerateConversationReportMutate).toHaveBeenCalled();
     expect(mockGenerateConversationReportMutate.mock.calls[0][0]).toBe('conv-1');
-    expect(mockRouterPush).toHaveBeenCalledWith(`/(tabs)/note/${encodeURIComponent('obsirag/insights/2026-04/rapport_test.md')}`);
+    expect(mockRouterPush).toHaveBeenCalledWith(`/(tabs)/note/${encodeURIComponent('obsirag/insights/2026-04/rapport_test.md')}?returnTo=${encodeURIComponent('/(tabs)/chat/conv-1')}`);
   });
 
   it('asks for confirmation before deleting an assistant response', () => {
@@ -554,7 +579,7 @@ describe('ConversationDetailScreen', () => {
       sourcePressable?.props.onPress();
     });
 
-    expect(mockRouterPush).toHaveBeenCalledWith('/(tabs)/note/Notes%2FAda.md');
+    expect(mockRouterPush).toHaveBeenCalledWith(`/(tabs)/note/${encodeURIComponent('Notes/Ada.md')}?returnTo=${encodeURIComponent('/(tabs)/chat/conv-1')}`);
   });
 
   it('keeps sources collapsed by default and toggles them on demand', () => {

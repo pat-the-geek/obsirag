@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Animated, Easing, Pressable, StyleSheet, Text, View } from 'react-native';
 
-import { useAppTheme } from '../../theme/app-theme';
+import { scaleFontSize, scaleLineHeight, useAppFontScale, useAppTheme } from '../../theme/app-theme';
 import { ChatMessage, EntityContext } from '../../types/domain';
 import { MarkdownNote, renderEntityHighlightedText } from '../notes/markdown-note';
 import { EntityContextList } from './entity-context-list';
@@ -37,6 +37,7 @@ export function MessageBubble({
   onDeleteMessage,
 }: MessageBubbleProps) {
   const theme = useAppTheme();
+  const { scale } = useAppFontScale();
   const isUser = message.role === 'user';
   const revealProgress = useRef(new Animated.Value(isUser || process.env.NODE_ENV === 'test' ? 1 : 0)).current;
   const [sourcesOpen, setSourcesOpen] = useState(false);
@@ -51,13 +52,12 @@ export function MessageBubble({
   const showWebSearchAction = Boolean(!isUser && !isPendingAssistant && webSearchSuggestion && onSuggestWebSearch);
   const showDeleteAction = Boolean(!isUser && !isPendingAssistant && onDeleteMessage);
   const ddgMarkdown = buildDdgMarkdown(message);
+  const providerLabel = formatProviderLabel(message.llmProvider);
+  const provenanceLabel = formatProvenanceLabel(message.provenance);
   const targetAssistantContent = shouldHideAssistantMainBubble ? ddgMarkdown : message.content;
   const statsLabel = !isUser && !isPendingAssistant ? formatGenerationStats(message.stats) : null;
-  const [displayedAssistantContent, setDisplayedAssistantContent] = useState(
-    isUser || process.env.NODE_ENV === 'test' ? targetAssistantContent : '',
-  );
-  const displayedQueryOverviewContent = shouldHideAssistantMainBubble ? displayedAssistantContent : ddgMarkdown;
-  const displayedAssistantContentRef = useRef(displayedAssistantContent);
+  const displayedAssistantContent = targetAssistantContent;
+  const displayedQueryOverviewContent = ddgMarkdown;
   const [pendingFrameIndex, setPendingFrameIndex] = useState(0);
   const assistantTone = theme.isDark ? 'dark' : 'light';
   const userBubbleBackground = theme.isDark ? theme.colors.primaryMuted : '#191919';
@@ -67,10 +67,6 @@ export function MessageBubble({
   const assistantBubbleBorder = theme.isDark ? theme.colors.border : '#ddd4c8';
   const queryOverviewBackground = theme.isDark ? theme.colors.surfaceMuted : '#fbf8f3';
   const queryOverviewBorder = theme.isDark ? theme.colors.border : '#ded5c9';
-
-  useEffect(() => {
-    displayedAssistantContentRef.current = displayedAssistantContent;
-  }, [displayedAssistantContent]);
 
   useEffect(() => {
     if (isUser || process.env.NODE_ENV === 'test') {
@@ -89,42 +85,6 @@ export function MessageBubble({
     animation.start();
     return () => animation.stop();
   }, [isUser, message.id, revealProgress]);
-
-  useEffect(() => {
-    if (isUser || process.env.NODE_ENV === 'test') {
-      setDisplayedAssistantContent(targetAssistantContent);
-      return undefined;
-    }
-
-    if (!targetAssistantContent) {
-      setDisplayedAssistantContent('');
-      return undefined;
-    }
-
-    const currentValue = displayedAssistantContentRef.current;
-    const nextStart = targetAssistantContent.startsWith(currentValue) ? currentValue : '';
-    if (nextStart !== currentValue) {
-      setDisplayedAssistantContent(nextStart);
-    }
-
-    let visibleLength = nextStart.length;
-    if (visibleLength >= targetAssistantContent.length) {
-      setDisplayedAssistantContent(targetAssistantContent);
-      return undefined;
-    }
-
-    const timer = setInterval(() => {
-      const remaining = targetAssistantContent.length - visibleLength;
-      const step = Math.max(1, Math.ceil(remaining / 12));
-      visibleLength = Math.min(targetAssistantContent.length, visibleLength + step);
-      setDisplayedAssistantContent(targetAssistantContent.slice(0, visibleLength));
-      if (visibleLength >= targetAssistantContent.length) {
-        clearInterval(timer);
-      }
-    }, 16);
-
-    return () => clearInterval(timer);
-  }, [isUser, targetAssistantContent]);
 
   useEffect(() => {
     if (process.env.NODE_ENV === 'test' || !isPendingAssistant || targetAssistantContent.trim()) {
@@ -169,15 +129,35 @@ export function MessageBubble({
                 : [styles.assistantBubble, { backgroundColor: assistantBubbleBackground, borderColor: assistantBubbleBorder }],
             ]}
           >
+            {!isUser ? (
+              <View style={styles.assistantHeader}>
+                <Text style={[styles.assistantRole, styles.role, { color: theme.colors.text, fontSize: scaleFontSize(12, scale) }]}>ObsiRAG</Text>
+                <View style={styles.assistantBadgeRow}>
+                  {provenanceLabel ? (
+                    <View
+                      testID="message-provenance-badge"
+                      style={[styles.providerBadge, { backgroundColor: theme.colors.surfaceMuted, borderColor: theme.colors.border }]}
+                    >
+                      <Text style={[styles.providerBadgeText, { color: theme.colors.textMuted, fontSize: scaleFontSize(11, scale) }]}>{provenanceLabel}</Text>
+                    </View>
+                  ) : null}
+                  {providerLabel ? (
+                    <View style={[styles.providerBadge, { backgroundColor: theme.colors.surfaceMuted, borderColor: theme.colors.border }]}>
+                      <Text style={[styles.providerBadgeText, { color: theme.colors.textMuted, fontSize: scaleFontSize(11, scale) }]}>{providerLabel}</Text>
+                    </View>
+                  ) : null}
+                </View>
+              </View>
+            ) : null}
             {isUser ? (
-              <Text style={[styles.userContent, { color: userTextColor }]}>{renderEntityHighlightedText(message.content, 'dark', highlightEntities, undefined, `user-${message.id}`, theme)}</Text>
+              <Text style={[styles.userContent, { color: userTextColor, fontSize: scaleFontSize(15, scale), lineHeight: scaleLineHeight(22, scale) }]}>{renderEntityHighlightedText(message.content, 'dark', highlightEntities, undefined, `user-${message.id}`, theme)}</Text>
             ) : isPendingAssistant && !displayedAssistantContent.trim() ? (
               <View testID="assistant-pending-state" style={styles.pendingState}>
                 <View style={styles.pendingTitleRow}>
-                  <Text style={[styles.pendingTitle, { color: theme.colors.text }]}>Réponse en préparation</Text>
-                  <Text style={[styles.pendingGlyph, { color: theme.colors.textSubtle }]}>{PENDING_RESPONSE_FRAMES[pendingFrameIndex]}</Text>
+                  <Text style={[styles.pendingTitle, { color: theme.colors.text, fontSize: scaleFontSize(15, scale) }]}>Réponse en préparation</Text>
+                  <Text style={[styles.pendingGlyph, { color: theme.colors.textSubtle, fontSize: scaleFontSize(16, scale) }]}>{PENDING_RESPONSE_FRAMES[pendingFrameIndex]}</Text>
                 </View>
-                <Text style={[styles.pendingCaption, { color: theme.colors.textMuted }]}>{message.timeline?.[message.timeline.length - 1] ?? 'Traitement en cours'}</Text>
+                <Text style={[styles.pendingCaption, { color: theme.colors.textMuted, fontSize: scaleFontSize(13, scale), lineHeight: scaleLineHeight(18, scale) }]}>{message.timeline?.[message.timeline.length - 1] ?? 'Traitement en cours'}</Text>
               </View>
             ) : (
               <MarkdownNote
@@ -214,8 +194,23 @@ export function MessageBubble({
             style={[styles.base, styles.followUpBubble, { backgroundColor: assistantBubbleBackground, borderColor: assistantBubbleBorder }]}
           >
             <View style={styles.followUpHeader}>
-              <Text style={[styles.assistantRole, { color: theme.colors.text }]}>ObsiRAG</Text>
-              <Text style={[styles.followUpLabel, { color: theme.colors.textMuted }]}>Vue d'ensemble DDG</Text>
+              <View style={styles.followUpMeta}>
+                <Text style={[styles.assistantRole, styles.role, { color: theme.colors.text, fontSize: scaleFontSize(12, scale) }]}>ObsiRAG</Text>
+                {provenanceLabel ? (
+                  <View
+                    testID="message-provenance-badge"
+                    style={[styles.providerBadge, { backgroundColor: theme.colors.surfaceMuted, borderColor: theme.colors.border }]}
+                  >
+                    <Text style={[styles.providerBadgeText, { color: theme.colors.textMuted, fontSize: scaleFontSize(11, scale) }]}>{provenanceLabel}</Text>
+                  </View>
+                ) : null}
+                {providerLabel ? (
+                  <View style={[styles.providerBadge, { backgroundColor: theme.colors.surfaceMuted, borderColor: theme.colors.border }]}>
+                    <Text style={[styles.providerBadgeText, { color: theme.colors.textMuted, fontSize: scaleFontSize(11, scale) }]}>{providerLabel}</Text>
+                  </View>
+                ) : null}
+              </View>
+              <Text style={[styles.followUpLabel, { color: theme.colors.textMuted, fontSize: scaleFontSize(12, scale) }]}>Vue d'ensemble DDG</Text>
             </View>
             <View style={[styles.queryOverviewBox, { backgroundColor: queryOverviewBackground, borderColor: queryOverviewBorder }]}>
               <MarkdownNote
@@ -237,7 +232,7 @@ export function MessageBubble({
               style={[styles.deleteActionButton, { backgroundColor: theme.colors.dangerSurface, borderColor: theme.colors.danger }]}
               onPress={() => onDeleteMessage?.(message.id)}
             >
-              <Text style={[styles.deleteActionLabel, { color: theme.colors.dangerPillText }]}>Supprimer la réponse</Text>
+              <Text style={[styles.deleteActionLabel, { color: theme.colors.dangerPillText, fontSize: scaleFontSize(12, scale) }]}>Supprimer la réponse</Text>
             </Pressable>
           ) : null}
           {showWebSearchAction ? (
@@ -246,12 +241,12 @@ export function MessageBubble({
               style={[styles.webSearchActionButton, { backgroundColor: theme.colors.warningSurface, borderColor: theme.colors.warningText }]}
               onPress={() => onSuggestWebSearch?.(webSearchSuggestion!)}
             >
-              <Text style={[styles.webSearchActionLabel, { color: theme.colors.warningText }]}>Rechercher sur le web</Text>
+              <Text style={[styles.webSearchActionLabel, { color: theme.colors.warningText, fontSize: scaleFontSize(12, scale) }]}>Rechercher sur le web</Text>
             </Pressable>
           ) : null}
         </View>
       ) : null}
-      {statsLabel ? <Text testID="message-generation-stats" style={[styles.statsText, { color: theme.colors.textSubtle }]}>{statsLabel}</Text> : null}
+      {statsLabel ? <Text testID="message-generation-stats" style={[styles.statsText, { color: theme.colors.textSubtle, fontSize: scaleFontSize(11, scale), lineHeight: scaleLineHeight(14, scale) }]}>{statsLabel}</Text> : null}
     </View>
   );
 }
@@ -299,6 +294,24 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     gap: 12,
   },
+  followUpMeta: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  assistantHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  assistantBadgeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    flexWrap: 'wrap',
+    justifyContent: 'flex-end',
+  },
   followUpLabel: {
     fontSize: 12,
     fontWeight: '700',
@@ -321,6 +334,17 @@ const styles = StyleSheet.create({
     color: '#d6d6d6',
   },
   assistantRole: {
+  },
+  providerBadge: {
+    borderRadius: 999,
+    borderWidth: 1,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+  },
+  providerBadgeText: {
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 0.2,
   },
   userContent: {
     fontSize: 15,
@@ -501,4 +525,22 @@ function formatRate(value: number): string {
 
   const rounded = Math.round(value * 10) / 10;
   return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1);
+}
+
+function formatProviderLabel(value?: string): string | null {
+  const normalized = value?.trim();
+  return normalized ? `via ${normalized}` : null;
+}
+
+function formatProvenanceLabel(value?: ChatMessage['provenance']): string | null {
+  switch (value) {
+    case 'vault':
+      return 'coffre';
+    case 'web':
+      return 'web';
+    case 'hybrid':
+      return 'web + coffre';
+    default:
+      return null;
+  }
 }

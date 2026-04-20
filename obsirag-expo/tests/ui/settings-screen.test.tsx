@@ -9,15 +9,23 @@ const mockUseServerConfig = jest.fn();
 const mockUseSessionStatus = jest.fn();
 const mockUseSystemStatus = jest.fn();
 const mockSetThemeMode = jest.fn();
+const mockIncreaseFontSize = jest.fn();
+const mockDecreaseFontSize = jest.fn();
 
 jest.mock('../../store/app-store', () => ({
   useAppStore: (selector: (state: {
     themeMode: 'system' | 'light' | 'dark' | 'quiet' | 'abyss';
+    fontSizeMode: 'small' | 'medium' | 'large';
     setThemeMode: typeof mockSetThemeMode;
+    increaseFontSize: typeof mockIncreaseFontSize;
+    decreaseFontSize: typeof mockDecreaseFontSize;
   }) => unknown) =>
     selector({
       themeMode: 'system',
+      fontSizeMode: 'medium',
       setThemeMode: mockSetThemeMode,
+      increaseFontSize: mockIncreaseFontSize,
+      decreaseFontSize: mockDecreaseFontSize,
     }),
 }));
 
@@ -110,6 +118,8 @@ describe('settings screen', () => {
       },
     });
     mockSetThemeMode.mockReset();
+    mockIncreaseFontSize.mockReset();
+    mockDecreaseFontSize.mockReset();
   });
 
   it('shows live runtime mode and active model details', () => {
@@ -139,6 +149,8 @@ describe('settings screen', () => {
       .join('\n');
 
     expect(renderedText).toContain('Affichage');
+    expect(renderedText).toContain('Taille du texte');
+    expect(renderedText).toContain('Taille: Standard');
     expect(renderedText).toContain('Automatique');
     expect(renderedText).toContain('Light+');
     expect(renderedText).toContain('Dark+');
@@ -154,6 +166,21 @@ describe('settings screen', () => {
     });
 
     expect(mockSetThemeMode).toHaveBeenCalledWith('dark');
+  });
+
+  it('allows decreasing and increasing the text size from settings', () => {
+    const tree = renderer.create(<SettingsScreen />);
+
+    act(() => {
+      tree.root.findByProps({ testID: 'settings-font-size-decrease' }).props.onPress();
+    });
+
+    act(() => {
+      tree.root.findByProps({ testID: 'settings-font-size-increase' }).props.onPress();
+    });
+
+    expect(mockDecreaseFontSize).toHaveBeenCalledTimes(1);
+    expect(mockIncreaseFontSize).toHaveBeenCalledTimes(1);
   });
 
   it('allows selecting the new Noctis theme', () => {

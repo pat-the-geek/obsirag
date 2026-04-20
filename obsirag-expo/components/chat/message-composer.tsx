@@ -1,12 +1,15 @@
+import { useEffect, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
-import { useAppTheme } from '../../theme/app-theme';
+import { scaleFontSize, scaleLineHeight, useAppFontScale, useAppTheme } from '../../theme/app-theme';
 
 type MessageComposerProps = {
   value: string;
   onChangeText: (value: string) => void;
-  onSubmit: () => void;
+  onSubmit: (value: string) => void;
   disabled?: boolean;
+  withEuria?: boolean;
+  onToggleWithEuria?: (value: boolean) => void;
   secondaryActionLabel?: string;
   onSecondaryAction?: () => void;
   secondaryActionDisabled?: boolean;
@@ -20,6 +23,8 @@ export function MessageComposer({
   onChangeText,
   onSubmit,
   disabled,
+  withEuria,
+  onToggleWithEuria,
   secondaryActionLabel,
   onSecondaryAction,
   secondaryActionDisabled,
@@ -28,14 +33,102 @@ export function MessageComposer({
   tertiaryActionDisabled,
 }: MessageComposerProps) {
   const theme = useAppTheme();
-  const canSubmit = !disabled && value.trim().length > 0;
+  const { scale } = useAppFontScale();
+  const [localValue, setLocalValue] = useState(value);
+  const latestValueRef = useRef(value);
+  const lastCommittedValueRef = useRef(value);
+  const previousPropValueRef = useRef(value);
+  const syncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const canSubmit = !disabled && localValue.trim().length > 0;
+
+  useEffect(() => {
+    latestValueRef.current = localValue;
+  }, [localValue]);
+
+  useEffect(() => {
+    if (value === previousPropValueRef.current) {
+      return;
+    }
+
+    previousPropValueRef.current = value;
+    lastCommittedValueRef.current = value;
+    latestValueRef.current = value;
+    setLocalValue(value);
+  }, [value]);
+
+  useEffect(() => {
+    if (localValue === lastCommittedValueRef.current) {
+      return undefined;
+    }
+
+    if (syncTimerRef.current) {
+      clearTimeout(syncTimerRef.current);
+    }
+
+    syncTimerRef.current = setTimeout(() => {
+      lastCommittedValueRef.current = latestValueRef.current;
+      onChangeText(latestValueRef.current);
+      syncTimerRef.current = null;
+    }, 180);
+
+    return () => {
+      if (syncTimerRef.current) {
+        clearTimeout(syncTimerRef.current);
+        syncTimerRef.current = null;
+      }
+    };
+  }, [localValue, onChangeText]);
+
+  useEffect(() => () => {
+    if (syncTimerRef.current) {
+      clearTimeout(syncTimerRef.current);
+      syncTimerRef.current = null;
+    }
+
+    if (latestValueRef.current !== lastCommittedValueRef.current) {
+      lastCommittedValueRef.current = latestValueRef.current;
+      onChangeText(latestValueRef.current);
+    }
+  }, [onChangeText]);
+
+  const flushDraft = () => {
+    if (latestValueRef.current === lastCommittedValueRef.current) {
+      return;
+    }
+    if (syncTimerRef.current) {
+      clearTimeout(syncTimerRef.current);
+      syncTimerRef.current = null;
+    }
+    lastCommittedValueRef.current = latestValueRef.current;
+    onChangeText(latestValueRef.current);
+  };
+
+  const submitDraft = () => {
+    const nextValue = latestValueRef.current.trim();
+    if (!nextValue || disabled) {
+      return;
+    }
+
+    if (syncTimerRef.current) {
+      clearTimeout(syncTimerRef.current);
+      syncTimerRef.current = null;
+    }
+
+    latestValueRef.current = '';
+    lastCommittedValueRef.current = '';
+    previousPropValueRef.current = '';
+    setLocalValue('');
+    onChangeText('');
+    onSubmit(nextValue);
+  };
 
   return (
     <View style={[styles.container, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }] }>
       <TextInput
         testID="message-composer-input"
-        value={value}
-        onChangeText={onChangeText}
+        value={localValue}
+        onChangeText={(nextValue) => setLocalValue(nextValue)}
+        onBlur={flushDraft}
         multiline
         returnKeyType="send"
         onKeyPress={(event) => {
@@ -45,11 +138,11 @@ export function MessageComposer({
           }
 
           (event as unknown as { preventDefault?: () => void }).preventDefault?.();
-          onSubmit();
+          submitDraft();
         }}
         placeholder="Posez une question sur votre coffre..."
         placeholderTextColor={theme.colors.textSubtle}
-        style={[styles.input, { color: theme.colors.text }]}
+        style={[styles.input, { color: theme.colors.text, fontSize: scaleFontSize(16, scale), lineHeight: scaleLineHeight(24, scale) }]}
       />
       <View style={styles.bottomRow}>
         <View style={styles.leftActions}>
@@ -75,9 +168,33 @@ export function MessageComposer({
           ) : null}
           {!secondaryActionLabel && !tertiaryActionLabel ? <View style={styles.spacer} /> : null}
         </View>
-        <Pressable testID="message-composer-submit" disabled={!canSubmit} onPress={onSubmit} style={[styles.button, { backgroundColor: theme.colors.primary, borderColor: theme.colors.primary }, !canSubmit && styles.buttonDisabled]}>
-          <Text style={[styles.buttonLabel, { color: theme.colors.primaryText }]}>Envoyer</Text>
-        </Pressable>
+        <View style={styles.rightActions}>
+          {typeof withEuria === 'boolean' && onToggleWithEuria ? (
+            <Pressable
+              testID="message-composer-euria-toggle"
+              accessibilityRole="checkbox"
+              accessibilityState={{ checked: withEuria }}
+              onPress={() => onToggleWithEuria(!withEuria)}
+              style={styles.toggleRow}
+            >
+              <View
+                style={[
+                  styles.checkbox,
+                  {
+                    borderColor: withEuria ? theme.colors.primary : theme.colors.border,
+                    backgroundColor: withEuria ? theme.colors.primary : theme.colors.surface,
+                  },
+                ]}
+              >
+                {withEuria ? <Text style={[styles.checkboxMark, { color: theme.colors.primaryText, fontSize: scaleFontSize(12, scale), lineHeight: scaleLineHeight(12, scale) }]}>✓</Text> : null}
+              </View>
+              <Text style={[styles.toggleLabel, { color: theme.colors.text, fontSize: scaleFontSize(13, scale) }]}>Avec Euria</Text>
+            </Pressable>
+          ) : null}
+          <Pressable testID="message-composer-submit" disabled={!canSubmit} onPress={submitDraft} style={[styles.button, { backgroundColor: theme.colors.primary, borderColor: theme.colors.primary }, !canSubmit && styles.buttonDisabled]}>
+            <Text style={[styles.buttonLabel, { color: theme.colors.primaryText, fontSize: scaleFontSize(13, scale) }]}>Envoyer</Text>
+          </Pressable>
+        </View>
       </View>
     </View>
   );
@@ -109,8 +226,35 @@ const styles = StyleSheet.create({
     gap: 10,
     flexWrap: 'wrap',
   },
+  rightActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
   spacer: {
     flex: 1,
+  },
+  toggleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  checkbox: {
+    width: 18,
+    height: 18,
+    borderRadius: 4,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  checkboxMark: {
+    fontSize: 12,
+    lineHeight: 12,
+    fontWeight: '800',
+  },
+  toggleLabel: {
+    fontSize: 13,
+    fontWeight: '600',
   },
   secondaryButton: {
     alignSelf: 'flex-end',

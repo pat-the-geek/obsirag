@@ -1,5 +1,6 @@
 from pathlib import Path
 from typing import Optional
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _ENV_FILE = Path(__file__).resolve().parent.parent / ".env"
@@ -42,6 +43,8 @@ class Settings(BaseSettings):
     # API Expo / mobile
     api_access_token: Optional[str] = None
     api_public_base_url: str = "http://localhost:8000"
+    euria_url: Optional[str] = Field(default=None, validation_alias=AliasChoices("URL", "url", "EURIA_URL", "euria_url"))
+    euria_bearer: Optional[str] = Field(default=None, validation_alias=AliasChoices("bearer", "BEARER", "EURIA_BEARER", "euria_bearer"))
 
     # Auto-apprentissage
     autolearn_enabled: bool = True

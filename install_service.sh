@@ -89,6 +89,11 @@ AUTOLEARN_INTERVAL_MINUTES="$(_env_val AUTOLEARN_INTERVAL_MINUTES)"
 AUTOLEARN_INTERVAL_MINUTES="${AUTOLEARN_INTERVAL_MINUTES:-60}"
 API_PORT="$(_env_val OBSIRAG_API_PORT)"
 API_PORT="${API_PORT:-8000}"
+EURIA_URL="$(_env_val URL)"
+EURIA_URL="${EURIA_URL:-$(_env_val EURIA_URL)}"
+EURIA_BEARER="$(_env_val bearer)"
+EURIA_BEARER="${EURIA_BEARER:-$(_env_val BEARER)}"
+EURIA_BEARER="${EURIA_BEARER:-$(_env_val EURIA_BEARER)}"
 # APP_DATA_DIR par défaut
 APP_DATA_DIR="${APP_DATA_DIR:-$HOME/Library/Application Support/ObsiRAG}"
 mkdir -p "$APP_DATA_DIR"
@@ -145,6 +150,14 @@ cat > "$API_PLIST_DST" <<PLIST
     <string>${OBSIDIAN_VAULT_NAME}</string>
     <key>OBSIRAG_API_PORT</key>
     <string>${API_PORT}</string>
+    <key>URL</key>
+    <string>${EURIA_URL}</string>
+    <key>EURIA_URL</key>
+    <string>${EURIA_URL}</string>
+    <key>bearer</key>
+    <string>${EURIA_BEARER}</string>
+    <key>EURIA_BEARER</key>
+    <string>${EURIA_BEARER}</string>
     <key>TRANSFORMERS_CACHE</key>
     <string>${HOME}/.cache/huggingface/transformers</string>
     <key>HF_HOME</key>
@@ -221,6 +234,14 @@ cat > "$AUTOLEARN_PLIST_DST" <<PLIST
         <string>true</string>
         <key>AUTOLEARN_INTERVAL_MINUTES</key>
         <string>${AUTOLEARN_INTERVAL_MINUTES}</string>
+        <key>URL</key>
+        <string>${EURIA_URL}</string>
+        <key>EURIA_URL</key>
+        <string>${EURIA_URL}</string>
+        <key>bearer</key>
+        <string>${EURIA_BEARER}</string>
+        <key>EURIA_BEARER</key>
+        <string>${EURIA_BEARER}</string>
         <key>TRANSFORMERS_CACHE</key>
         <string>${HOME}/.cache/huggingface/transformers</string>
         <key>HF_HOME</key>

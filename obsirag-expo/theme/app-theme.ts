@@ -4,6 +4,7 @@ import { useAppStore } from '../store/app-store';
 
 export type ThemeMode = 'system' | 'light' | 'dark' | 'quiet' | 'abyss';
 export type ResolvedThemeMode = 'light' | 'dark';
+export type FontSizeMode = 'small' | 'medium' | 'large';
 
 type ThemePalette = {
   background: string;
@@ -62,6 +63,14 @@ export type AppTheme = {
   label: 'Automatique' | 'Light+' | 'Dark+' | 'Atelier' | 'Noctis';
   colors: ThemePalette;
 };
+
+const FONT_SCALE_BY_MODE: Record<FontSizeMode, number> = {
+  small: 0.92,
+  medium: 1,
+  large: 1.12,
+};
+
+const FONT_SIZE_ORDER: FontSizeMode[] = ['small', 'medium', 'large'];
 
 const LIGHT_PLUS: ThemePalette = {
   background: '#f6f8fc',
@@ -302,6 +311,42 @@ export function useAppTheme(): AppTheme {
   const systemScheme = useColorScheme();
 
   return buildAppTheme(themeMode, systemScheme);
+}
+
+export function getFontScale(mode: FontSizeMode): number {
+  return FONT_SCALE_BY_MODE[mode];
+}
+
+export function formatFontSizeModeLabel(mode: FontSizeMode): 'Petite' | 'Standard' | 'Grande' {
+  return mode === 'small' ? 'Petite' : mode === 'large' ? 'Grande' : 'Standard';
+}
+
+export function getNextFontSizeMode(mode: FontSizeMode, direction: 'decrease' | 'increase'): FontSizeMode {
+  const currentIndex = FONT_SIZE_ORDER.indexOf(mode);
+  const nextIndex = direction === 'increase'
+    ? Math.min(currentIndex + 1, FONT_SIZE_ORDER.length - 1)
+    : Math.max(currentIndex - 1, 0);
+  return FONT_SIZE_ORDER[nextIndex] ?? 'medium';
+}
+
+export function scaleFontSize(size: number, scale: number): number {
+  return Math.round(size * scale * 10) / 10;
+}
+
+export function scaleLineHeight(lineHeight: number, scale: number): number {
+  return Math.round(lineHeight * scale * 10) / 10;
+}
+
+export function useAppFontScale() {
+  const fontSizeMode = useAppStore((state) => state.fontSizeMode);
+  const scale = getFontScale(fontSizeMode);
+  return {
+    mode: fontSizeMode,
+    scale,
+    label: formatFontSizeModeLabel(fontSizeMode),
+    canDecrease: fontSizeMode !== 'small',
+    canIncrease: fontSizeMode !== 'large',
+  };
 }
 
 export function formatThemeModeLabel(mode: ThemeMode): 'Automatique' | 'Light+' | 'Dark+' | 'Atelier' | 'Noctis' {

@@ -9,13 +9,15 @@ const STREAMING_ASSISTANT_ID = 'streaming-assistant';
 const PENDING_WEB_ASSISTANT_ID = 'pending-web-assistant';
 const WEB_SEARCH_PROGRESS_LABEL = 'Recherche sur le web en cours...';
 
-function buildPendingAssistantMessage(id: string, provenance: ChatMessage['provenance'], timeline: string[]): ChatMessage {
+function buildPendingAssistantMessage(id: string, provenance: ChatMessage['provenance'], timeline: string[], llmProvider?: string): ChatMessage {
   return {
     id,
     role: 'assistant',
     content: '',
     createdAt: new Date().toISOString(),
+    transient: true,
     timeline,
+    ...(llmProvider ? { llmProvider } : {}),
     ...(provenance ? { provenance } : {}),
   };
 }
@@ -31,7 +33,89 @@ function appendTimelineStep(current: string[], next: string): string[] {
 }
 
 function isTransientExplicitWebMessage(message: ChatMessage): boolean {
-  return message.id === PENDING_WEB_ASSISTANT_ID || message.id.startsWith('web-user-') || (message.id.startsWith('web-') && message.provenance === 'web');
+  return Boolean(message.transient) || message.id === PENDING_WEB_ASSISTANT_ID || message.id.startsWith('web-user-') || (message.id.startsWith('web-') && message.provenance === 'web');
+}
+
+function isTransientStreamingMessage(message: ChatMessage, messages: ChatMessage[], index: number): boolean {
+  if (message.id === STREAMING_ASSISTANT_ID) {
+    return true;
+  }
+
+  return Boolean(message.transient) || (message.role === 'user' && messages[index + 1]?.id === STREAMING_ASSISTANT_ID);
+}
+
+function normalizeMessageContent(value: string): string {
+  return value.replace(/\s+/g, ' ').trim();
+}
+
+function hasEquivalentRemoteMessage(remote: ConversationDetail, cachedMessage: ChatMessage): boolean {
+  if (!cachedMessage.transient) {
+    return remote.messages.some((message) => message.id === cachedMessage.id);
+  }
+
+  const normalizedContent = normalizeMessageContent(cachedMessage.content);
+  return remote.messages.some((message) => {
+    if (message.id === cachedMessage.id) {
+      return true;
+    }
+    if (message.role !== cachedMessage.role) {
+      return false;
+    }
+    return normalizeMessageContent(message.content) === normalizedContent;
+  });
+}
+
+function findEquivalentMessageIndex(messages: ChatMessage[], candidate: ChatMessage): number {
+  if (!candidate.transient) {
+    return messages.findIndex((message) => message.id === candidate.id);
+  }
+
+  const normalizedContent = normalizeMessageContent(candidate.content);
+  return messages.findIndex((message) => {
+    if (message.id === candidate.id) {
+      return true;
+    }
+    if (message.role !== candidate.role) {
+      return false;
+    }
+    return normalizeMessageContent(message.content) === normalizedContent;
+  });
+}
+
+function insertTransientMessageAtRelativePosition(mergedMessages: ChatMessage[], cachedMessages: ChatMessage[], cachedIndex: number, cachedMessage: ChatMessage): ChatMessage[] {
+  const nextAnchoredIndex = cachedMessages.slice(cachedIndex + 1)
+    .map((message, offset) => ({ message, index: cachedIndex + offset + 1 }))
+    .find(({ message }) => findEquivalentMessageIndex(mergedMessages, message) >= 0);
+
+  if (nextAnchoredIndex) {
+    const insertionIndex = findEquivalentMessageIndex(mergedMessages, nextAnchoredIndex.message);
+    if (insertionIndex >= 0) {
+      return [
+        ...mergedMessages.slice(0, insertionIndex),
+        cachedMessage,
+        ...mergedMessages.slice(insertionIndex),
+      ];
+    }
+  }
+
+  const previousAnchored = [...cachedMessages.slice(0, cachedIndex)].reverse().find((message) => findEquivalentMessageIndex(mergedMessages, message) >= 0);
+  if (previousAnchored) {
+    const previousIndex = findEquivalentMessageIndex(mergedMessages, previousAnchored);
+    if (previousIndex >= 0) {
+      return [
+        ...mergedMessages.slice(0, previousIndex + 1),
+        cachedMessage,
+        ...mergedMessages.slice(previousIndex + 1),
+      ];
+    }
+  }
+
+  return [...mergedMessages, cachedMessage];
+}
+
+function upsertStreamingTurn(messages: ChatMessage[], userMessage: ChatMessage, assistantMessage: ChatMessage): ChatMessage[] {
+  const stableMessages = messages.filter((item) => item.id !== userMessage.id && item.id !== STREAMING_ASSISTANT_ID);
+  return [...stableMessages, userMessage, assistantMessage];
 }
 
 function mergeConversationWithTransientMessages(remote: ConversationDetail, cached?: ConversationDetail): ConversationDetail {
@@ -39,26 +123,15 @@ function mergeConversationWithTransientMessages(remote: ConversationDetail, cach
     return remote;
   }
 
-  const remoteMessagesById = new Map(remote.messages.map((message) => [message.id, message]));
-  const mergedMessages: ChatMessage[] = [];
-  const consumedRemoteIds = new Set<string>();
+  let mergedMessages: ChatMessage[] = [...remote.messages];
 
-  for (const cachedMessage of cached.messages) {
-    const remoteMessage = remoteMessagesById.get(cachedMessage.id);
-    if (remoteMessage) {
-      mergedMessages.push(remoteMessage);
-      consumedRemoteIds.add(remoteMessage.id);
+  for (const [index, cachedMessage] of cached.messages.entries()) {
+    if (hasEquivalentRemoteMessage(remote, cachedMessage)) {
       continue;
     }
 
-    if (isTransientExplicitWebMessage(cachedMessage)) {
-      mergedMessages.push(cachedMessage);
-    }
-  }
-
-  for (const remoteMessage of remote.messages) {
-    if (!consumedRemoteIds.has(remoteMessage.id)) {
-      mergedMessages.push(remoteMessage);
+    if (isTransientExplicitWebMessage(cachedMessage) || isTransientStreamingMessage(cachedMessage, cached.messages, index)) {
+      mergedMessages = insertTransientMessageAtRelativePosition(mergedMessages, cached.messages, index, cachedMessage);
     }
   }
 
@@ -169,20 +242,22 @@ export function useDeleteConversationMessage(conversationId: string) {
 export function useExplicitWebSearch(conversationId: string) {
   const { api } = useServerConfig();
   const queryClient = useQueryClient();
+  const useEuriaForConversation = useAppStore((state) => state.useEuriaForConversation);
 
   return useMutation({
-    mutationFn: async (query: string) => api.webSearch(query),
+    mutationFn: async (query: string) => api.webSearch(query, { useEuria: useEuriaForConversation }),
     onMutate: async (query) => {
       const userMessage: ChatMessage = {
         id: `web-user-${Date.now()}`,
         role: 'user',
         content: `🌐 Recherche sur le web : ${query}`,
         createdAt: new Date().toISOString(),
+        transient: true,
       };
       const pendingAssistant = buildPendingAssistantMessage(PENDING_WEB_ASSISTANT_ID, 'web', [
         'Réponse en préparation',
         WEB_SEARCH_PROGRESS_LABEL,
-      ]);
+      ], useEuriaForConversation ? 'Euria' : 'MLX');
 
       queryClient.setQueryData<ConversationDetail | undefined>(['conversation', conversationId], (current) => {
         if (!current) {
@@ -209,6 +284,7 @@ export function useExplicitWebSearch(conversationId: string) {
           role: 'assistant',
           content: result.content,
           createdAt: new Date().toISOString(),
+          ...(result.llmProvider ? { llmProvider: result.llmProvider } : {}),
           provenance: 'web',
           queryOverview: result.queryOverview,
           entityContexts: result.entityContexts,
@@ -250,6 +326,7 @@ export function useStreamMessage(conversationId: string) {
   const { api } = useServerConfig();
   const queryClient = useQueryClient();
   const setDraft = useAppStore((state) => state.setDraft);
+  const useEuriaForConversation = useAppStore((state) => state.useEuriaForConversation);
 
   return useMutation({
     mutationFn: async (prompt: string) => {
@@ -259,6 +336,7 @@ export function useStreamMessage(conversationId: string) {
         role: 'user',
         content: prompt,
         createdAt: new Date().toISOString(),
+        transient: true,
       };
 
       queryClient.setQueryData<ConversationDetail | undefined>(['conversation', conversationId], (current) => {
@@ -266,13 +344,10 @@ export function useStreamMessage(conversationId: string) {
         if (!safeCurrent) {
           return undefined;
         }
+        const pendingAssistant = buildPendingAssistantMessage(STREAMING_ASSISTANT_ID, 'vault', ['Réponse en préparation'], useEuriaForConversation ? 'Euria' : 'MLX');
         return {
           ...safeCurrent,
-          messages: [
-            ...safeCurrent.messages.filter((item) => item.id !== STREAMING_ASSISTANT_ID),
-            userMessage,
-            buildPendingAssistantMessage(STREAMING_ASSISTANT_ID, 'vault', ['Réponse en préparation']),
-          ],
+          messages: upsertStreamingTurn(safeCurrent.messages, userMessage, pendingAssistant),
           draft: '',
           updatedAt: new Date().toISOString(),
         };
@@ -294,15 +369,15 @@ export function useStreamMessage(conversationId: string) {
               role: 'assistant',
               content: streamedContent.trim(),
               createdAt: new Date().toISOString(),
+              transient: true,
               provenance: 'vault',
               timeline: streamedTimeline,
               sources: streamedSources,
               primarySource: streamedPrimarySource,
             };
-            const withoutDraft = current.messages.filter((item) => item.id !== STREAMING_ASSISTANT_ID);
             return {
               ...current,
-              messages: [...withoutDraft, draftAssistant],
+              messages: upsertStreamingTurn(current.messages, userMessage, draftAssistant),
             };
           });
         },
@@ -317,15 +392,15 @@ export function useStreamMessage(conversationId: string) {
               role: 'assistant',
               content: streamedContent.trim(),
               createdAt: new Date().toISOString(),
+              transient: true,
               provenance: 'vault',
               timeline: streamedTimeline,
               sources: streamedSources,
               primarySource: streamedPrimarySource,
             };
-            const withoutDraft = current.messages.filter((item) => item.id !== STREAMING_ASSISTANT_ID);
             return {
               ...current,
-              messages: [...withoutDraft, draftAssistant],
+              messages: upsertStreamingTurn(current.messages, userMessage, draftAssistant),
             };
           });
         },
@@ -340,23 +415,24 @@ export function useStreamMessage(conversationId: string) {
             }
             const finalizedMessage: ChatMessage = {
               ...assistantMessage,
+              transient: true,
               content: assistantMessage.content?.trim() ? assistantMessage.content : streamedContent.trim(),
               timeline: assistantMessage.timeline?.length ? assistantMessage.timeline : streamedTimeline,
               sources: assistantMessage.sources?.length ? assistantMessage.sources : streamedSources,
               primarySource: assistantMessage.primarySource ?? streamedPrimarySource,
             };
-            const withoutDraft = current.messages.filter((item) => item.id !== STREAMING_ASSISTANT_ID);
             return {
               ...current,
-              messages: [...withoutDraft, finalizedMessage],
+              messages: upsertStreamingTurn(current.messages, userMessage, finalizedMessage),
               ...(finalizedMessage.stats ? { lastGenerationStats: finalizedMessage.stats } : {}),
               updatedAt: new Date().toISOString(),
             };
           });
         },
-      });
+      }, { useEuria: useEuriaForConversation });
 
       setDraft(conversationId, '');
+      await queryClient.invalidateQueries({ queryKey: ['conversation', conversationId] });
       await queryClient.invalidateQueries({ queryKey: ['conversations'] });
       return message;
     },

@@ -29,6 +29,20 @@ describe('normalizeMermaidCode', () => {
     expect(normalized).not.toContain('✅');
   });
 
+  it('repairs common gantt directive spacing mistakes before rendering', () => {
+    const normalized = normalizeMermaidCode([
+      'gantt',
+      ' title Chronologie des films Dune',
+      ' date Format YYYY-MM-DD',
+      ' axis Format %Y',
+    ].join('\n'));
+
+    expect(normalized).toContain('dateFormat YYYY-MM-DD');
+    expect(normalized).toContain('axisFormat %Y');
+    expect(normalized).not.toContain('date Format');
+    expect(normalized).not.toContain('axis Format');
+  });
+
   it('keeps the mermaid code hidden by default and reveals it in a panel', () => {
     let tree!: renderer.ReactTestRenderer;
 

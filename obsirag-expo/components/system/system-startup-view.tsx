@@ -1,5 +1,6 @@
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
+import { scaleFontSize, scaleLineHeight, useAppFontScale } from '../../theme/app-theme';
 import { SystemStatus } from '../../types/domain';
 import { SectionCard } from '../ui/section-card';
 import { StatusPill } from '../ui/status-pill';
@@ -33,6 +34,7 @@ export function SystemStartupView({
   continueLabel = 'Ouvrir l’application',
   compact = false,
 }: SystemStartupViewProps) {
+  const { scale } = useAppFontScale();
   const steps = startup?.steps?.length ? startup.steps : DEFAULT_BOOTSTRAP_STEPS;
   const currentStep = startup?.currentStep?.trim() || steps[steps.length - 1] || 'Initialisation en cours';
   const isReady = Boolean(startup?.ready);
@@ -51,18 +53,18 @@ export function SystemStartupView({
       </View>
 
       <View style={styles.currentStepCard}>
-        <Text style={styles.currentStepLabel}>Etape active</Text>
-        <Text style={styles.currentStepValue}>{hasError ? startup?.error : currentStep}</Text>
+        <Text style={[styles.currentStepLabel, { fontSize: scaleFontSize(12, scale) }]}>Etape active</Text>
+        <Text style={[styles.currentStepValue, { fontSize: scaleFontSize(16, scale), lineHeight: scaleLineHeight(22, scale) }]}>{hasError ? startup?.error : currentStep}</Text>
       </View>
 
       <View style={styles.metricsRow}>
         <View style={styles.metricChip}>
-          <Text style={styles.metricValue}>{typeof notesIndexed === 'number' ? notesIndexed : '...'}</Text>
-          <Text style={styles.metricLabel}>Notes indexées</Text>
+          <Text style={[styles.metricValue, { fontSize: scaleFontSize(18, scale) }]}>{typeof notesIndexed === 'number' ? notesIndexed : '...'}</Text>
+          <Text style={[styles.metricLabel, { fontSize: scaleFontSize(12, scale) }]}>Notes indexées</Text>
         </View>
         <View style={styles.metricChip}>
-          <Text style={styles.metricValue}>{typeof chunksIndexed === 'number' ? chunksIndexed : '...'}</Text>
-          <Text style={styles.metricLabel}>Chunks prêts</Text>
+          <Text style={[styles.metricValue, { fontSize: scaleFontSize(18, scale) }]}>{typeof chunksIndexed === 'number' ? chunksIndexed : '...'}</Text>
+          <Text style={[styles.metricLabel, { fontSize: scaleFontSize(12, scale) }]}>Chunks prêts</Text>
         </View>
       </View>
 
@@ -82,7 +84,7 @@ export function SystemStartupView({
                   isCompleted ? styles.stepDotDone : null,
                 ]}
               />
-              <Text style={[styles.stepText, isActive ? styles.stepTextActive : null]}>{step}</Text>
+              <Text style={[styles.stepText, { fontSize: scaleFontSize(14, scale), lineHeight: scaleLineHeight(20, scale) }, isActive ? styles.stepTextActive : null]}>{step}</Text>
             </View>
           );
         })}
@@ -90,7 +92,7 @@ export function SystemStartupView({
 
       {(isReady || hasError) && onContinue ? (
         <Pressable style={styles.continueButton} onPress={onContinue}>
-          <Text style={styles.continueLabel}>{continueLabel}</Text>
+          <Text style={[styles.continueLabel, { fontSize: scaleFontSize(13, scale) }]}>{continueLabel}</Text>
         </Pressable>
       ) : null}
     </View>
@@ -103,9 +105,9 @@ export function SystemStartupView({
   return (
     <View style={styles.shell}>
       <View style={styles.hero}>
-        <Text style={styles.eyebrow}>ObsiRAG</Text>
-        <Text style={styles.title}>Préparation du système</Text>
-        <Text style={styles.subtitle}>Chargement du backend, des composants d’indexation, du graphe, de l’auto-learner et du runtime LLM avant l’ouverture de l’application.</Text>
+        <Text style={[styles.eyebrow, { fontSize: scaleFontSize(12, scale) }]}>ObsiRAG</Text>
+        <Text style={[styles.title, { fontSize: scaleFontSize(30, scale) }]}>Préparation du système</Text>
+        <Text style={[styles.subtitle, { fontSize: scaleFontSize(15, scale), lineHeight: scaleLineHeight(22, scale) }]}>Chargement du backend, des composants d’indexation, du graphe, de l’auto-learner et du runtime LLM avant l’ouverture de l’application.</Text>
       </View>
 
       <SectionCard title="Etat de préparation" subtitle="Cette séquence reprend les étapes techniques nécessaires au démarrage du runtime.">

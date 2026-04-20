@@ -74,7 +74,7 @@ export default function TabsLayout() {
             router.replace('/(tabs)/chat');
           },
         }}
-        options={{ title: 'Chat', popToTopOnBlur: true, tabBarIcon: ({ color, size }: TabBarIconProps) => <Feather name="message-circle" size={size} color={color} /> }}
+        options={{ title: 'Chat', tabBarIcon: ({ color, size }: TabBarIconProps) => <Feather name="message-circle" size={size} color={color} /> }}
       />
       <Tabs.Screen name="insights" options={{ title: 'Insights', tabBarIcon: ({ color, size }: TabBarIconProps) => <Feather name="layers" size={size} color={color} /> }} />
       <Tabs.Screen name="graph" options={{ title: 'Graphe', tabBarIcon: ({ color, size }: TabBarIconProps) => <Feather name="share-2" size={size} color={color} /> }} />

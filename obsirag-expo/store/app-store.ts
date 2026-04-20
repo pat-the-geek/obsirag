@@ -4,7 +4,7 @@ import { persist } from 'zustand/middleware';
 import type { PersistStorage, StorageValue } from 'zustand/middleware';
 
 import { normalizeBackendUrlInput } from '../features/auth/backend-url';
-import type { ThemeMode } from '../theme/app-theme';
+import type { FontSizeMode, ThemeMode } from '../theme/app-theme';
 
 const DEFAULT_BACKEND_URL = normalizeBackendUrlInput(process.env.EXPO_PUBLIC_DEFAULT_BACKEND_URL ?? process.env.API_PUBLIC_BASE_URL ?? '') || 'http://localhost:8000';
 
@@ -35,6 +35,12 @@ function coerceThemeMode(value: unknown): ThemeMode {
     : 'system';
 }
 
+function coerceFontSizeMode(value: unknown): FontSizeMode {
+  return value === 'small' || value === 'medium' || value === 'large'
+    ? value
+    : 'medium';
+}
+
 function coerceStringRecord(value: unknown): Record<string, string> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     return {};
@@ -56,8 +62,10 @@ type AppStoreState = {
   backendUrl: string;
   accessToken: string;
   useMockServer: boolean;
+  useEuriaForConversation: boolean;
   activeConversationId: string | undefined;
   themeMode: 'system' | 'light' | 'dark' | 'quiet' | 'abyss';
+  fontSizeMode: 'small' | 'medium' | 'large';
   drafts: Record<string, string>;
   sourcePanels: Record<string, boolean>;
   mermaidViewer: {
@@ -67,8 +75,12 @@ type AppStoreState = {
   setBackendUrl: (value: string) => void;
   setAccessToken: (value: string) => void;
   setUseMockServer: (value: boolean) => void;
+  setUseEuriaForConversation: (value: boolean) => void;
   setActiveConversationId: (value?: string) => void;
   setThemeMode: (value: 'system' | 'light' | 'dark' | 'quiet' | 'abyss') => void;
+  setFontSizeMode: (value: 'small' | 'medium' | 'large') => void;
+  increaseFontSize: () => void;
+  decreaseFontSize: () => void;
   setDraft: (conversationId: string, value: string) => void;
   clearDraft: (conversationId: string) => void;
   setSourcePanelOpen: (conversationId: string, value: boolean) => void;
@@ -88,8 +100,10 @@ function sanitizePersistedState(state: unknown): Partial<AppStoreState> {
     backendUrl: migrateBackendUrl(candidate.backendUrl),
     accessToken: typeof candidate.accessToken === 'string' ? candidate.accessToken : '',
     useMockServer: typeof candidate.useMockServer === 'boolean' ? candidate.useMockServer : false,
+    useEuriaForConversation: typeof candidate.useEuriaForConversation === 'boolean' ? candidate.useEuriaForConversation : false,
     activeConversationId: typeof candidate.activeConversationId === 'string' ? candidate.activeConversationId : undefined,
     themeMode: coerceThemeMode(candidate.themeMode),
+    fontSizeMode: coerceFontSizeMode(candidate.fontSizeMode),
     drafts: coerceStringRecord(candidate.drafts),
     sourcePanels: coerceBooleanRecord(candidate.sourcePanels),
   };
@@ -151,16 +165,22 @@ export const useAppStore = create<AppStoreState>()(
       backendUrl: DEFAULT_BACKEND_URL,
       accessToken: '',
       useMockServer: false,
+      useEuriaForConversation: false,
       activeConversationId: undefined,
       themeMode: 'system',
+      fontSizeMode: 'medium',
       drafts: {},
       sourcePanels: {},
       mermaidViewer: null,
       setBackendUrl: (value) => set({ backendUrl: normalizeBackendUrlInput(value) }),
       setAccessToken: (value) => set({ accessToken: value }),
       setUseMockServer: (value) => set({ useMockServer: value }),
+      setUseEuriaForConversation: (value) => set({ useEuriaForConversation: value }),
       setActiveConversationId: (value) => set({ activeConversationId: value }),
       setThemeMode: (value) => set({ themeMode: value }),
+      setFontSizeMode: (value) => set({ fontSizeMode: value }),
+      increaseFontSize: () => set((state) => ({ fontSizeMode: state.fontSizeMode === 'small' ? 'medium' : state.fontSizeMode === 'medium' ? 'large' : 'large' })),
+      decreaseFontSize: () => set((state) => ({ fontSizeMode: state.fontSizeMode === 'large' ? 'medium' : state.fontSizeMode === 'medium' ? 'small' : 'small' })),
       setHasHydrated: (value) => set({ hasHydrated: value }),
       setDraft: (conversationId, value) =>
         set((state) => ({
@@ -187,7 +207,7 @@ export const useAppStore = create<AppStoreState>()(
     }),
     {
       name: 'obsirag-expo-store',
-      version: 4,
+      version: 5,
       storage: safeAppStoreStorage,
       migrate: (persistedState) => {
         return sanitizePersistedState(persistedState);
@@ -199,8 +219,10 @@ export const useAppStore = create<AppStoreState>()(
         backendUrl: state.backendUrl,
         accessToken: state.accessToken,
         useMockServer: state.useMockServer,
+        useEuriaForConversation: state.useEuriaForConversation,
         ...(state.activeConversationId ? { activeConversationId: state.activeConversationId } : {}),
         themeMode: state.themeMode,
+        fontSizeMode: state.fontSizeMode,
         drafts: state.drafts,
         sourcePanels: state.sourcePanels,
       }),

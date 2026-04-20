@@ -5,9 +5,10 @@ import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
+import { resolveLocalWebBackendUrl } from '../features/auth/backend-url';
 import { loadAccessToken } from '../services/storage/secure-session';
 import { useAppStore } from '../store/app-store';
-import { useAppTheme } from '../theme/app-theme';
+import { scaleFontSize, scaleLineHeight, useAppFontScale, useAppTheme } from '../theme/app-theme';
 
 type RootErrorBoundaryProps = {
   children: ReactNode;
@@ -40,12 +41,13 @@ class RootErrorBoundary extends Component<RootErrorBoundaryProps, RootErrorBound
 }
 
 function RootFallbackShell({ mode }: { mode: 'loading' | 'error' }) {
+  const { scale } = useAppFontScale();
   return (
     <View style={styles.rootShell}>
       <View style={styles.rootCard}>
-        <Text style={styles.eyebrow}>ObsiRAG</Text>
-        <Text style={styles.title}>{mode === 'error' ? 'Demarrage interrompu' : 'Demarrage en cours'}</Text>
-        <Text style={styles.copy}>
+        <Text style={[styles.eyebrow, { fontSize: scaleFontSize(12, scale) }]}>ObsiRAG</Text>
+        <Text style={[styles.title, { fontSize: scaleFontSize(28, scale) }]}>{mode === 'error' ? 'Demarrage interrompu' : 'Demarrage en cours'}</Text>
+        <Text style={[styles.copy, { fontSize: scaleFontSize(15, scale), lineHeight: scaleLineHeight(22, scale) }]}>
           {mode === 'error'
             ? 'Une erreur est survenue pendant l\'initialisation de l\'application web. Rechargez la page pour reprendre le bootstrap.'
             : 'Initialisation du client web, du store local et de la session avant ouverture de l\'application.'}
@@ -59,7 +61,9 @@ function RootFallbackShell({ mode }: { mode: 'loading' | 'error' }) {
 function RootLayoutContent() {
   const [queryClient] = useState(() => new QueryClient());
   const [tokenBootstrapComplete, setTokenBootstrapComplete] = useState(false);
+  const backendUrl = useAppStore((state) => state.backendUrl);
   const setAccessToken = useAppStore((state) => state.setAccessToken);
+  const setBackendUrl = useAppStore((state) => state.setBackendUrl);
   const theme = useAppTheme();
 
   useEffect(() => {
@@ -67,6 +71,17 @@ function RootLayoutContent() {
       document.body?.setAttribute('data-obsirag-booted', 'true');
     }
   }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.location?.origin) {
+      return;
+    }
+
+    const recoveredBackendUrl = resolveLocalWebBackendUrl(backendUrl, window.location.origin);
+    if (recoveredBackendUrl) {
+      setBackendUrl(recoveredBackendUrl);
+    }
+  }, [backendUrl, setBackendUrl]);
 
   useEffect(() => {
     let active = true;

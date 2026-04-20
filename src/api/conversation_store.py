@@ -1,13 +1,12 @@
 from __future__ import annotations
 
-import re
-import unicodedata
 from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
 
 from src.config import settings
 from src.storage.json_state import JsonStateStore
+from src.storage.slugify import build_ascii_stem
 
 from .schemas import (
     ChatMessageModel,
@@ -191,10 +190,7 @@ class ApiConversationStore:
 
     @staticmethod
     def _slugify_title(title: str, *, fallback: str) -> str:
-        normalized = unicodedata.normalize("NFD", title)
-        normalized = "".join(character for character in normalized if unicodedata.category(character) != "Mn")
-        normalized = re.sub(r"[^\w\s-]", "", normalized).strip().replace(" ", "-")[:60]
-        return normalized or fallback
+        return build_ascii_stem(title, fallback=fallback, max_length=60, separator="-")
 
     @staticmethod
     def _latest_generation_stats(messages: list[ChatMessageModel]):

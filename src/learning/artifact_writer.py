@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 from loguru import logger
 
 from src.storage.safe_read import read_text_file
+from src.storage.slugify import build_ascii_stem
 
 if TYPE_CHECKING:
     from src.learning.autolearn import AutoLearner
@@ -173,7 +174,7 @@ class AutoLearnArtifactWriter:
         if not insights_root.exists():
             return None
 
-        safe_name = re.sub(r"[^\w\s-]", "", note_title).strip().replace(" ", "_")[:60].lower()
+        safe_name = build_ascii_stem(note_title, fallback="insight", max_length=60, separator="_").lower()
         new_ner_set = {tag for tag in ner_tags if "/" in tag}
         new_source_tag_set = {tag for tag in (source_tags or []) if tag and "/" not in tag and tag != "insight"}
         source_note_ref = source_note_path.removesuffix(".md") if source_note_path else ""
@@ -395,7 +396,7 @@ class AutoLearnArtifactWriter:
         artifact_dir = self._owner._get_settings().insights_dir / date_str
         artifact_dir.mkdir(parents=True, exist_ok=True)
 
-        safe_name = re.sub(r"[^\w\s-]", "", note_title).strip().replace(" ", "_")[:60]
+        safe_name = build_ascii_stem(note_title, fallback="insight", max_length=60, separator="_")
         artifact_path = artifact_dir / f"{safe_name}_{datetime.now().strftime('%Y%m%d')}.md"
         artifact_path.write_text(
             self.build_new_insight_document(

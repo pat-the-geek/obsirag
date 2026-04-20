@@ -32,6 +32,10 @@ type StreamHandlers = {
   onComplete?: (message: ChatMessage) => void;
 };
 
+type ConversationRequestOptions = {
+  useEuria?: boolean;
+};
+
 type GraphQueryFilters = {
   folders?: string[];
   tags?: string[];
@@ -278,7 +282,7 @@ export class ObsiRagApi {
     return this.requestJson<GraphData>(`/api/v1/graph/subgraph?${params.toString()}`);
   }
 
-  async webSearch(query: string): Promise<WebSearchResponse> {
+  async webSearch(query: string, options?: ConversationRequestOptions): Promise<WebSearchResponse> {
     if (this.config.useMockServer) {
       return {
         provenance: 'web',
@@ -317,7 +321,7 @@ export class ObsiRagApi {
     return this.requestJson<WebSearchResponse>('/api/v1/web-search', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ query }),
+      body: JSON.stringify({ query, useEuria: options?.useEuria ?? false }),
     });
   }
 
@@ -325,6 +329,7 @@ export class ObsiRagApi {
     conversationId: string,
     prompt: string,
     handlers: StreamHandlers,
+    options?: ConversationRequestOptions,
   ): Promise<ChatMessage> {
     if (this.config.useMockServer) {
       handlers.onStatus?.('Analyse de la requete');
@@ -391,7 +396,7 @@ export class ObsiRagApi {
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ prompt }),
+          body: JSON.stringify({ prompt, useEuria: options?.useEuria ?? false }),
         },
       );
       handlers.onComplete?.(fallbackMessage);
@@ -408,7 +413,7 @@ export class ObsiRagApi {
           'Content-Type': 'application/json',
           Accept: 'text/event-stream',
         },
-        body: JSON.stringify({ prompt }),
+        body: JSON.stringify({ prompt, useEuria: options?.useEuria ?? false }),
       });
     } catch (error) {
       return fallbackToStandardMessage();

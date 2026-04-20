@@ -4,6 +4,7 @@ import { Text, View } from 'react-native';
 
 import { MessageBubble } from '../../components/chat/message-bubble';
 import { MarkdownNote } from '../../components/notes/markdown-note';
+import { useAppStore } from '../../store/app-store';
 import { ChatMessage } from '../../types/domain';
 
 function flattenStyle(value: unknown): Array<Record<string, unknown>> {
@@ -112,6 +113,58 @@ describe('MessageBubble', () => {
     expect(joined).not.toMatch(/Cette information n'est pas dans ton coffre/);
   });
 
+  it('renders the generating provider badge on standard assistant responses', () => {
+    const message: ChatMessage = {
+      id: 'assistant-provider-main',
+      role: 'assistant',
+      content: 'Reponse generee par Euria.',
+      createdAt: '2026-04-20T12:00:00Z',
+      provenance: 'vault',
+      llmProvider: 'Euria',
+    };
+
+    const tree = renderer.create(<MessageBubble message={message} />);
+    const texts = tree.root.findAllByType(Text).flatMap((node) => collectText(node.props.children));
+    const joined = texts.join(' ');
+
+    expect(joined).toMatch(/ObsiRAG/);
+    expect(joined).toMatch(/coffre/);
+    expect(joined).toMatch(/via Euria/);
+  });
+
+  it('renders a lowercase web provenance badge for web answers', () => {
+    const message: ChatMessage = {
+      id: 'assistant-web-badge',
+      role: 'assistant',
+      content: 'Réponse issue du web.',
+      createdAt: '2026-04-20T12:00:00Z',
+      provenance: 'web',
+      llmProvider: 'Euria',
+    };
+
+    const tree = renderer.create(<MessageBubble message={message} />);
+    const joined = tree.root.findAllByType(Text).flatMap((node) => collectText(node.props.children)).join(' ');
+
+    expect(joined).toMatch(/web/);
+    expect(joined).toMatch(/via Euria/);
+  });
+
+  it('passes the full assistant markdown to the renderer without incremental truncation', () => {
+    const message: ChatMessage = {
+      id: 'assistant-full-markdown',
+      role: 'assistant',
+      content: '🌟 Clés pour comprendre les rôles :\n\n- Maison Atreides : Noble, honorable, mais détruite au début.\n- Béné Gesserit : Ordre secret influent.',
+      createdAt: '2026-04-20T12:00:00Z',
+      provenance: 'vault',
+      llmProvider: 'Euria',
+    };
+
+    const tree = renderer.create(<MessageBubble message={message} />);
+    const markdownNode = tree.root.findByType(MarkdownNote);
+
+    expect(markdownNode.props.markdown).toBe(message.content);
+  });
+
   it('renders the DDG follow-up as formatted markdown content', () => {
     const message: ChatMessage = {
       id: 'assistant-2',
@@ -119,6 +172,7 @@ describe('MessageBubble', () => {
       content: '# Vue d\'ensemble DDG\n\n- **Un court paragraphe d\'ensemble :**\nThe Boring Company est une entreprise fondee par Elon Musk.',
       createdAt: '2026-04-16T12:00:00Z',
       provenance: 'web',
+      llmProvider: 'MLX',
       queryOverview: {
         query: 'The Boring Company',
         searchQuery: 'The Boring Company overview',
@@ -134,6 +188,7 @@ describe('MessageBubble', () => {
     expect(markdownNodes[0]?.props.markdown).toContain('The Boring Company est une entreprise fondee par Elon Musk.');
     expect(markdownNodes[0]?.props.markdown).toContain('## Un court paragraphe d\'ensemble');
     expect(markdownNodes[0]?.props.markdown).not.toContain('- **Un court paragraphe d\'ensemble :**');
+    expect(tree.root.findAllByType(Text).flatMap((node) => collectText(node.props.children)).join(' ')).toMatch(/via MLX/);
   });
 
   it('renders compact generation stats for completed assistant responses', () => {
@@ -323,10 +378,12 @@ describe('MessageBubble', () => {
 
     const tree = renderer.create(<MessageBubble message={message} />);
     const markdownNodes = tree.root.findAllByType(MarkdownNote);
+    const joined = tree.root.findAllByType(Text).flatMap((node) => collectText(node.props.children)).join(' ');
 
     expect(markdownNodes).toHaveLength(1);
     expect(markdownNodes[0]?.props.markdown).toContain('Contenu du coffre affiche dans la bulle principale.');
     expect(tree.root.findAllByProps({ testID: 'message-query-overview-response' })).toHaveLength(0);
+    expect(joined).toMatch(/web \+ coffre/);
   });
 
   it('keeps the main assistant response visible when Mermaid content is present alongside a DDG overview', () => {
@@ -610,6 +667,45 @@ describe('MessageBubble', () => {
     expect(joined).toContain('Napoleon Bonaparte');
     expect(joined).toContain('1');
     expect(joined).toContain('comme sujet central de ce passage');
+  });
+
+  it('renders the detected entities panel with the active custom theme instead of Light+', () => {
+    const previousThemeMode = useAppStore.getState().themeMode;
+    useAppStore.setState({ themeMode: 'quiet' });
+
+    try {
+      const message: ChatMessage = {
+        id: 'assistant-entities-theme',
+        role: 'assistant',
+        content: 'Napoleon est mentionne dans la reponse.',
+        createdAt: '2026-04-16T12:00:00Z',
+        provenance: 'vault',
+        entityContexts: [
+          {
+            type: 'person',
+            typeLabel: 'Personne',
+            value: 'Napoleon Bonaparte',
+            relationExplanation: 'Napoleon Bonaparte est relie a la reponse.',
+            notes: [],
+          },
+        ],
+      };
+
+      const tree = renderer.create(<MessageBubble message={message} />);
+
+      act(() => {
+        tree.root.findByProps({ testID: 'entity-contexts-panel-toggle' }).props.onPress();
+      });
+
+      const tableSurface = tree.root.findByProps({ testID: 'markdown-table-surface' });
+      const tableStyle = flattenStyle(tableSurface.props.style);
+
+      expect(tableStyle).toEqual(
+        expect.arrayContaining([expect.objectContaining({ backgroundColor: '#f8fafc', borderColor: '#d4dbe3' })]),
+      );
+    } finally {
+      useAppStore.setState({ themeMode: previousThemeMode });
+    }
   });
 
   it('opens internal wikilinks from assistant markdown', () => {

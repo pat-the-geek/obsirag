@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
-import { useAppTheme } from '../../theme/app-theme';
+import { scaleFontSize, useAppFontScale, useAppTheme } from '../../theme/app-theme';
 import { SourceRef } from '../../types/domain';
 
 type SourceListProps = {
@@ -13,6 +13,7 @@ type SourceListProps = {
 
 export function SourceList({ sources, onSelectSource, isOpen = false, onToggleOpen }: SourceListProps) {
   const theme = useAppTheme();
+  const { scale } = useAppFontScale();
   const uniqueSources = useMemo(() => dedupeSources(sources), [sources]);
 
   if (!uniqueSources.length) {
@@ -23,10 +24,10 @@ export function SourceList({ sources, onSelectSource, isOpen = false, onToggleOp
     <View style={[styles.container, { backgroundColor: theme.colors.surfaceMuted, borderColor: theme.colors.border }]}>
       <Pressable testID="sources-panel-toggle" style={styles.header} onPress={onToggleOpen}>
         <View style={styles.headerCopy}>
-          <Text style={[styles.title, { color: theme.colors.text }]}>Sources</Text>
-          <Text style={[styles.caption, { color: theme.colors.textMuted }]}>{uniqueSources.length} source{uniqueSources.length > 1 ? 's' : ''}</Text>
+          <Text style={[styles.title, { color: theme.colors.text, fontSize: scaleFontSize(13, scale) }]}>Sources</Text>
+          <Text style={[styles.caption, { color: theme.colors.textMuted, fontSize: scaleFontSize(12, scale) }]}>{uniqueSources.length} source{uniqueSources.length > 1 ? 's' : ''}</Text>
         </View>
-        <Text style={[styles.chevron, { color: theme.colors.primary }]}>{isOpen ? 'Masquer' : 'Afficher'}</Text>
+        <Text style={[styles.chevron, { color: theme.colors.primary, fontSize: scaleFontSize(12, scale) }]}>{isOpen ? 'Masquer' : 'Afficher'}</Text>
       </Pressable>
       {isOpen ? (
         <View testID="sources-panel-content" style={styles.content}>
@@ -36,8 +37,8 @@ export function SourceList({ sources, onSelectSource, isOpen = false, onToggleOp
               style={[styles.item, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}
               onPress={onSelectSource ? () => onSelectSource(source) : undefined}
             >
-              <Text style={[styles.itemTitle, { color: theme.colors.text }]}>{source.noteTitle}</Text>
-              <Text style={[styles.itemMeta, { color: theme.colors.textMuted }]}>{source.filePath}</Text>
+              <Text style={[styles.itemTitle, { color: theme.colors.text, fontSize: scaleFontSize(14, scale) }]}>{source.noteTitle}</Text>
+              <Text style={[styles.itemMeta, { color: theme.colors.textMuted, fontSize: scaleFontSize(12, scale) }]}>{source.filePath}</Text>
             </Pressable>
           ))}
         </View>
