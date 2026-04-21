@@ -48,6 +48,7 @@ export function ConversationEntitySidebar({ entities, onOpenNote, onOpenTag, com
 
   const effectiveSelectedTypeValue = selectedTypeValue === undefined ? preferredTypeValue : selectedTypeValue ?? undefined;
   const selectedTypeOption = typeOptions.find((option) => option.value === effectiveSelectedTypeValue);
+  const filterLabel = selectedTypeOption?.label ?? 'Tous les types d\'entites';
   const visibleEntities = effectiveSelectedTypeValue
     ? entities.filter((entity) => entityTypeKey(entity.type, entity.typeLabel) === effectiveSelectedTypeValue)
     : entities;
@@ -72,7 +73,7 @@ export function ConversationEntitySidebar({ entities, onOpenNote, onOpenTag, com
           </Text>
         </View>
         <EntityTypeFilterDropdown
-          label={selectedTypeOption?.label ?? 'Tous les types d\'entites'}
+          label={filterLabel}
           isOpen={isTypeMenuOpen}
           onToggle={() => setIsTypeMenuOpen((value) => !value)}
           onClose={() => setIsTypeMenuOpen(false)}
@@ -195,7 +196,6 @@ function EntityTypeFilterDropdown({ label, isOpen, onToggle, onClose, options, c
             compact ? styles.dropdownTriggerTextCompact : styles.dropdownTriggerTextWide,
             { color: isOpen ? theme.colors.background : theme.colors.text, fontSize: scaleFontSize(13, scale) },
           ]}
-          numberOfLines={1}
         >
           {label}
         </Text>
@@ -388,9 +388,8 @@ const styles = StyleSheet.create({
     flexGrow: 0,
   },
   header: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    justifyContent: 'space-between',
+    flexDirection: 'column',
+    alignItems: 'stretch',
     gap: 10,
   },
   headerCopy: {
@@ -409,19 +408,18 @@ const styles = StyleSheet.create({
     zIndex: 30,
   },
   dropdownWrapperWide: {
-    minWidth: 208,
-    maxWidth: 224,
+    width: '100%',
   },
   dropdownWrapperCompact: {
-    minWidth: 176,
-    maxWidth: 200,
+    width: '100%',
   },
   dropdownWrapperOpen: {
     zIndex: 60,
   },
   dropdownTrigger: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
     gap: 8,
     borderRadius: 999,
     borderWidth: 1,
@@ -429,21 +427,20 @@ const styles = StyleSheet.create({
     paddingVertical: 9,
   },
   dropdownTriggerText: {
+    flex: 1,
     fontWeight: '600',
   },
   dropdownTriggerTextWide: {
-    maxWidth: 172,
+    maxWidth: '100%',
   },
   dropdownTriggerTextCompact: {
-    maxWidth: 148,
+    maxWidth: '100%',
   },
   dropdownChevron: {
     fontWeight: '700',
   },
   dropdownMenu: {
-    position: 'absolute',
-    top: 44,
-    right: 0,
+    marginTop: 8,
     zIndex: 120,
     borderRadius: 14,
     borderWidth: 1,
@@ -454,10 +451,10 @@ const styles = StyleSheet.create({
     elevation: 12,
   },
   dropdownMenuWide: {
-    minWidth: 240,
+    minWidth: 0,
   },
   dropdownMenuCompact: {
-    minWidth: 208,
+    minWidth: 0,
   },
   dropdownOption: {
     paddingHorizontal: 12,

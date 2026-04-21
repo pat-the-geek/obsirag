@@ -202,6 +202,12 @@ describe('ConversationEntitySidebar', () => {
       tree.root.findByProps({ testID: 'entity-type-filter-trigger' }).props.onPress();
     });
 
+    const menuTextBeforeSelection = collectRenderedText(tree);
+
+    expect(menuTextBeforeSelection).toContain('Tous les types d\'entites');
+    expect(menuTextBeforeSelection).toContain('Personne');
+    expect(menuTextBeforeSelection).toContain('Lieu');
+
     act(() => {
       tree.root.findByProps({ testID: 'entity-type-filter-option-all' }).props.onPress();
     });
@@ -211,6 +217,7 @@ describe('ConversationEntitySidebar', () => {
     expect(renderedText).toContain('Amy Adams');
     expect(renderedText).toContain('Arrakis');
     expect(renderedText).toContain('2 entrees');
+    expect(renderedText).toContain('Tous les types d\'entites');
   });
 
   it('uses the active custom dark theme for the sidebar and cards', () => {

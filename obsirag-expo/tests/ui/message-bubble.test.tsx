@@ -855,12 +855,21 @@ describe('MessageBubble', () => {
       tree.root.findByProps({ testID: 'entity-contexts-filter-trigger' }).props.onPress();
     });
 
+    const menuTextBeforeSelection = normalizeInlineText(
+      tree.root.findByProps({ testID: 'entity-contexts-filter-menu' }).findAllByType(Text).flatMap((node) => collectText(node.props.children)).join(' '),
+    );
+
+    expect(menuTextBeforeSelection).toContain("Tous les types d'entités");
+    expect(menuTextBeforeSelection).toContain('Personne');
+    expect(menuTextBeforeSelection).toContain('Lieu');
+
     act(() => {
       tree.root.findByProps({ testID: 'entity-contexts-filter-option-all' }).props.onPress();
     });
 
     const panelText = normalizeInlineText(tree.root.findAllByType(Text).flatMap((node) => collectText(node.props.children)).join(' '));
     expect(panelText).toMatch(/2 entité ?s/);
+    expect(panelText).toContain("Tous les types d'entités");
 
     const markdownTable = tree.root.findByProps({ testID: 'markdown-table' });
     const joined = normalizeInlineText(markdownTable.findAllByType(Text).flatMap((node) => collectText(node.props.children)).join(' '));

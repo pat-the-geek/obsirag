@@ -43,6 +43,7 @@ export function EntityContextList({ entities, isOpen = false, onToggleOpen }: En
 
   const effectiveSelectedTypeValue = selectedTypeValue === undefined ? preferredTypeValue : selectedTypeValue ?? undefined;
   const selectedTypeOption = typeOptions.find((option) => option.value === effectiveSelectedTypeValue);
+  const filterLabel = selectedTypeOption?.label ?? 'Tous les types d\'entités';
   const visibleEntities = effectiveSelectedTypeValue
     ? entities.filter((entity) => entityTypeKey(entity.type, entity.typeLabel) === effectiveSelectedTypeValue)
     : entities;
@@ -65,7 +66,7 @@ export function EntityContextList({ entities, isOpen = false, onToggleOpen }: En
       {isOpen ? (
         <View testID="entity-contexts-panel-content" style={styles.content}>
           <EntityTypeFilterDropdown
-            label={selectedTypeOption?.label ?? 'Tous les types d\'entités'}
+            label={filterLabel}
             isOpen={isTypeMenuOpen}
             onToggle={() => setIsTypeMenuOpen((value) => !value)}
             onClose={() => setIsTypeMenuOpen(false)}
@@ -114,7 +115,7 @@ function EntityTypeFilterDropdown({ label, isOpen, onToggle, onClose, options }:
         ]}
         onPress={onToggle}
       >
-        <Text style={[styles.dropdownTriggerText, { color: isOpen ? theme.colors.background : theme.colors.text, fontSize: scaleFontSize(12, scale) }]} numberOfLines={1}>{label}</Text>
+        <Text style={[styles.dropdownTriggerText, { color: isOpen ? theme.colors.background : theme.colors.text, fontSize: scaleFontSize(12, scale) }]}>{label}</Text>
         <Text style={[styles.dropdownChevron, { color: isOpen ? theme.colors.background : theme.colors.textMuted, fontSize: scaleFontSize(11, scale) }]}>▾</Text>
       </Pressable>
       {isOpen ? (
@@ -259,7 +260,7 @@ const styles = StyleSheet.create({
   },
   dropdownWrapper: {
     position: 'relative',
-    alignSelf: 'flex-start',
+    alignSelf: 'stretch',
     zIndex: 20,
   },
   dropdownWrapperOpen: {
@@ -267,7 +268,8 @@ const styles = StyleSheet.create({
   },
   dropdownTrigger: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
     gap: 8,
     borderRadius: 999,
     borderWidth: 1,
@@ -275,17 +277,14 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
   },
   dropdownTriggerText: {
-    maxWidth: 190,
+    flex: 1,
     fontWeight: '600',
   },
   dropdownChevron: {
     fontWeight: '700',
   },
   dropdownMenu: {
-    position: 'absolute',
-    top: 40,
-    left: 0,
-    minWidth: 220,
+    marginTop: 8,
     borderRadius: 14,
     borderWidth: 1,
     paddingVertical: 6,
