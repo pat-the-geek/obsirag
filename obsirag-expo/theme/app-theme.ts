@@ -4,7 +4,7 @@ import { useAppStore } from '../store/app-store';
 
 export type ThemeMode = 'system' | 'light' | 'dark' | 'quiet' | 'abyss';
 export type ResolvedThemeMode = 'light' | 'dark';
-export type FontSizeMode = 'small' | 'medium' | 'large';
+export type FontSizeMode = 'small' | 'medium' | 'large' | 'xlarge';
 
 type ThemePalette = {
   background: string;
@@ -67,10 +67,11 @@ export type AppTheme = {
 const FONT_SCALE_BY_MODE: Record<FontSizeMode, number> = {
   small: 0.92,
   medium: 1,
-  large: 1.12,
+  large: 1.16,
+  xlarge: 1.28,
 };
 
-const FONT_SIZE_ORDER: FontSizeMode[] = ['small', 'medium', 'large'];
+const FONT_SIZE_ORDER: FontSizeMode[] = ['small', 'medium', 'large', 'xlarge'];
 
 const LIGHT_PLUS: ThemePalette = {
   background: '#f6f8fc',
@@ -317,8 +318,8 @@ export function getFontScale(mode: FontSizeMode): number {
   return FONT_SCALE_BY_MODE[mode];
 }
 
-export function formatFontSizeModeLabel(mode: FontSizeMode): 'Petite' | 'Standard' | 'Grande' {
-  return mode === 'small' ? 'Petite' : mode === 'large' ? 'Grande' : 'Standard';
+export function formatFontSizeModeLabel(mode: FontSizeMode): 'Petite' | 'Standard' | 'Grande' | 'Très grande' {
+  return mode === 'small' ? 'Petite' : mode === 'large' ? 'Grande' : mode === 'xlarge' ? 'Très grande' : 'Standard';
 }
 
 export function getNextFontSizeMode(mode: FontSizeMode, direction: 'decrease' | 'increase'): FontSizeMode {
@@ -345,7 +346,7 @@ export function useAppFontScale() {
     scale,
     label: formatFontSizeModeLabel(fontSizeMode),
     canDecrease: fontSizeMode !== 'small',
-    canIncrease: fontSizeMode !== 'large',
+    canIncrease: fontSizeMode !== 'xlarge',
   };
 }
 

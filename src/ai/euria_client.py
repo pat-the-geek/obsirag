@@ -10,6 +10,8 @@ from src.config import settings
 
 
 class EuriaClient:
+    DEFAULT_MODEL = "qwen3"
+
     def __init__(self, *, url: str | None = None, bearer: str | None = None, model: str = "qwen3") -> None:
         self._url = (url or settings.euria_url or "").strip()
         self._bearer = (bearer or settings.euria_bearer or "").strip()

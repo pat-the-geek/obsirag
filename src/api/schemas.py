@@ -55,6 +55,9 @@ class RuntimeInfoModel(BaseModel):
     vectorStore: str
     nerModel: str
     autolearnMode: str
+    euriaProvider: str | None = None
+    euriaModel: str | None = None
+    euriaEnabled: bool = False
 
 
 class SystemStatusResponse(BaseModel):

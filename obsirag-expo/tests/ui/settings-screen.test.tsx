@@ -15,7 +15,7 @@ const mockDecreaseFontSize = jest.fn();
 jest.mock('../../store/app-store', () => ({
   useAppStore: (selector: (state: {
     themeMode: 'system' | 'light' | 'dark' | 'quiet' | 'abyss';
-    fontSizeMode: 'small' | 'medium' | 'large';
+    fontSizeMode: 'small' | 'medium' | 'large' | 'xlarge';
     setThemeMode: typeof mockSetThemeMode;
     increaseFontSize: typeof mockIncreaseFontSize;
     decreaseFontSize: typeof mockDecreaseFontSize;

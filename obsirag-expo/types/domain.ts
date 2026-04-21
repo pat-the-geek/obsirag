@@ -215,6 +215,9 @@ export type SystemStatus = {
     vectorStore: string;
     nerModel: string;
     autolearnMode: string;
+    euriaProvider?: string;
+    euriaModel?: string;
+    euriaEnabled?: boolean;
   };
   startup?: {
     ready: boolean;

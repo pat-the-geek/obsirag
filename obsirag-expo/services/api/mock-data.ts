@@ -94,6 +94,9 @@ export const mockSystemStatus: SystemStatus = {
     vectorStore: 'ChromaDB',
     nerModel: 'xx_ent_wiki_sm',
     autolearnMode: 'worker',
+    euriaProvider: 'Infomaniak',
+    euriaModel: 'qwen3',
+    euriaEnabled: true,
   },
   startup: {
     ready: true,

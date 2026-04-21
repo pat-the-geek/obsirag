@@ -6,11 +6,13 @@ import { NoteCard } from '../../../components/notes/note-card';
 import { Screen } from '../../../components/ui/screen';
 import { SectionCard } from '../../../components/ui/section-card';
 import { useNoteDetail } from '../../../features/notes/use-notes';
+import { useAppTheme } from '../../../theme/app-theme';
 import { formatMetadataDate, formatSizeBytes, joinMetadataParts } from '../../../utils/format-display';
 import { buildNoteRoute, getCanonicalNotePath } from '../../../utils/note-route';
 
 export default function NoteScreen() {
   const router = useRouter();
+  const theme = useAppTheme();
   const params = useLocalSearchParams<{ noteId: string; returnTo?: string }>();
   const noteId = useMemo(() => (Array.isArray(params.noteId) ? params.noteId[0] : params.noteId), [params.noteId]);
   const returnTo = useMemo(
@@ -41,8 +43,12 @@ export default function NoteScreen() {
   return (
     <Screen refreshing={isRefetching} onRefresh={refetch}>
       {returnTo ? (
-        <Pressable testID="note-return-button" style={styles.returnButton} onPress={() => router.replace(returnTo)}>
-          <Text style={styles.returnButtonLabel}>Retour à la conversation</Text>
+        <Pressable
+          testID="note-return-button"
+          style={[styles.returnButton, { borderColor: theme.colors.border, backgroundColor: theme.colors.surfaceMuted }]}
+          onPress={() => router.replace(returnTo)}
+        >
+          <Text style={[styles.returnButtonLabel, { color: theme.colors.text }]}>Retour à la conversation</Text>
         </Pressable>
       ) : null}
       <NoteCard
@@ -52,14 +58,14 @@ export default function NoteScreen() {
       />
       <SectionCard title="Retrolinks">
         {data.backlinks.map((item) => (
-          <Pressable key={item.filePath} style={styles.linkCard} onPress={() => openNoteFromCurrentContext(item.filePath)}>
-            <Text style={styles.linkTitle}>{item.title}</Text>
-            <Text style={styles.linkMeta}>{item.filePath}</Text>
+          <Pressable key={item.filePath} style={[styles.linkCard, { borderColor: theme.colors.border, backgroundColor: theme.colors.surfaceMuted }]} onPress={() => openNoteFromCurrentContext(item.filePath)}>
+            <Text style={[styles.linkTitle, { color: theme.colors.text }]}>{item.title}</Text>
+            <Text style={[styles.linkMeta, { color: theme.colors.textMuted }]}>{item.filePath}</Text>
             {joinMetadataParts([
               item.dateModified ? `Modifie le ${formatMetadataDate(item.dateModified)}` : null,
               formatSizeBytes(item.sizeBytes),
             ]) ? (
-              <Text style={styles.linkMeta}>
+              <Text style={[styles.linkMeta, { color: theme.colors.textMuted }] }>
                 {joinMetadataParts([
                   item.dateModified ? `Modifie le ${formatMetadataDate(item.dateModified)}` : null,
                   formatSizeBytes(item.sizeBytes),
@@ -71,14 +77,14 @@ export default function NoteScreen() {
       </SectionCard>
       <SectionCard title="Liens sortants">
         {data.links.map((item) => (
-          <Pressable key={item.filePath} style={styles.linkCard} onPress={() => openNoteFromCurrentContext(item.filePath)}>
-            <Text style={styles.linkTitle}>{item.title}</Text>
-            <Text style={styles.linkMeta}>{item.filePath}</Text>
+          <Pressable key={item.filePath} style={[styles.linkCard, { borderColor: theme.colors.border, backgroundColor: theme.colors.surfaceMuted }]} onPress={() => openNoteFromCurrentContext(item.filePath)}>
+            <Text style={[styles.linkTitle, { color: theme.colors.text }]}>{item.title}</Text>
+            <Text style={[styles.linkMeta, { color: theme.colors.textMuted }]}>{item.filePath}</Text>
             {joinMetadataParts([
               item.dateModified ? `Modifie le ${formatMetadataDate(item.dateModified)}` : null,
               formatSizeBytes(item.sizeBytes),
             ]) ? (
-              <Text style={styles.linkMeta}>
+              <Text style={[styles.linkMeta, { color: theme.colors.textMuted }] }>
                 {joinMetadataParts([
                   item.dateModified ? `Modifie le ${formatMetadataDate(item.dateModified)}` : null,
                   formatSizeBytes(item.sizeBytes),
@@ -97,29 +103,22 @@ const styles = StyleSheet.create({
     alignSelf: 'flex-start',
     borderRadius: 999,
     borderWidth: 1,
-    borderColor: '#d8cfc0',
-    backgroundColor: '#f8f3eb',
     paddingHorizontal: 14,
     paddingVertical: 10,
   },
   returnButtonLabel: {
-    color: '#1f160c',
     fontWeight: '700',
   },
   linkCard: {
     borderRadius: 14,
     borderWidth: 1,
-    borderColor: '#d8cfc0',
-    backgroundColor: '#f8f3eb',
     padding: 12,
     gap: 4,
   },
   linkTitle: {
-    color: '#1f160c',
     fontWeight: '700',
   },
   linkMeta: {
-    color: '#6f5d49',
     fontSize: 12,
   },
 });

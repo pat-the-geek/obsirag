@@ -1,7 +1,7 @@
 import { Fragment } from 'react';
 import { Linking, ScrollView, StyleSheet, Text, View } from 'react-native';
 
-import { AppTheme, buildAppTheme, useAppTheme } from '../../theme/app-theme';
+import { AppTheme, buildAppTheme, scaleFontSize, scaleLineHeight, useAppFontScale, useAppTheme } from '../../theme/app-theme';
 import { EntityContext } from '../../types/domain';
 import { HttpMarkdownImage } from '../markdown/http-markdown-image';
 import { MermaidDiagram } from '../markdown/mermaid-diagram';
@@ -42,6 +42,7 @@ type InlineChunk =
 
 export function MarkdownNote({ markdown, onOpenNote, onOpenTag, variant = 'default', tone = 'light', theme: preferredTheme, entityHighlights }: MarkdownNoteProps) {
   const activeTheme = useAppTheme();
+  const { scale } = useAppFontScale();
   const theme = preferredTheme ?? (activeTheme.resolvedMode === tone ? activeTheme : buildAppTheme(tone === 'dark' ? 'dark' : 'light'));
   const blocks = parseMarkdownBlocks(markdown);
 
@@ -66,6 +67,7 @@ export function MarkdownNote({ markdown, onOpenNote, onOpenTag, variant = 'defau
                 variant === 'article' && block.level === 1 ? styles.articleH1 : null,
                 variant === 'article' && block.level === 2 ? styles.articleH2 : null,
                 variant === 'article' && block.level > 2 ? styles.articleH3 : null,
+                resolveHeadingScale(block.level, variant, scale),
               ]}
             >
               {renderInlineChunks(block.content, onOpenNote, onOpenTag, theme, tone, entityHighlights)}
@@ -80,12 +82,13 @@ export function MarkdownNote({ markdown, onOpenNote, onOpenTag, variant = 'defau
                 style={[
                   styles.bulletMarker,
                   { color: theme.colors.textMuted },
+                  { fontSize: scaleFontSize(16, scale) },
                   block.ordered ? styles.orderedMarker : null,
                 ]}
               >
                 {block.marker}
               </Text>
-              <Text style={[styles.paragraph, { color: theme.colors.text }, variant === 'article' ? styles.articleParagraph : null]}>
+              <Text style={[styles.paragraph, { color: theme.colors.text }, variant === 'article' ? styles.articleParagraph : null, resolveParagraphScale(variant, scale)]}>
                 {renderInlineChunks(block.content, onOpenNote, onOpenTag, theme, tone, entityHighlights)}
               </Text>
             </View>
@@ -95,7 +98,7 @@ export function MarkdownNote({ markdown, onOpenNote, onOpenTag, variant = 'defau
         if (block.type === 'quote') {
           return (
             <View key={`md-${index}`} style={[styles.quoteBox, { borderLeftColor: theme.colors.quoteBorder, backgroundColor: theme.colors.quoteSurface }]}>
-              <Text style={[styles.quoteText, { color: theme.colors.textMuted }]}>{renderInlineChunks(block.content, onOpenNote, onOpenTag, theme, tone, entityHighlights)}</Text>
+              <Text style={[styles.quoteText, { color: theme.colors.textMuted }, { fontSize: scaleFontSize(14, scale), lineHeight: scaleLineHeight(21, scale) }]}>{renderInlineChunks(block.content, onOpenNote, onOpenTag, theme, tone, entityHighlights)}</Text>
             </View>
           );
         }
@@ -127,6 +130,7 @@ export function MarkdownNote({ markdown, onOpenNote, onOpenTag, variant = 'defau
                         textStyle: [
                           styles.tableHeaderText,
                           { color: theme.colors.text },
+                          { fontSize: scaleFontSize(13, scale), lineHeight: scaleLineHeight(18, scale) },
                           block.aligns[cellIndex] === 'center'
                             ? styles.tableTextCenter
                             : block.aligns[cellIndex] === 'right'
@@ -141,7 +145,13 @@ export function MarkdownNote({ markdown, onOpenNote, onOpenTag, variant = 'defau
                   ))}
                 </View>
                 {block.rows.map((row, rowIndex) => (
-                  <View key={`row-${rowIndex}`} style={[styles.tableRow, rowIndex % 2 === 0 ? styles.tableRowOdd : styles.tableRowEven]}>
+                  <View
+                    key={`row-${rowIndex}`}
+                    style={[
+                      styles.tableRow,
+                      rowIndex % 2 === 0 ? styles.tableRowOdd : { backgroundColor: theme.colors.surfaceMuted },
+                    ]}
+                  >
                     {row.map((cell, cellIndex) => (
                       <View key={`row-${rowIndex}-cell-${cellIndex}`} style={[styles.tableCell, { width: block.widths[cellIndex] ?? 150, borderRightColor: theme.colors.tableBorder }]}> 
                         {renderTableCellLines(cell, {
@@ -150,6 +160,7 @@ export function MarkdownNote({ markdown, onOpenNote, onOpenTag, variant = 'defau
                           textStyle: [
                             styles.tableCellText,
                             { color: theme.colors.text },
+                            { fontSize: scaleFontSize(14, scale), lineHeight: scaleLineHeight(20, scale) },
                             block.aligns[cellIndex] === 'center'
                               ? styles.tableTextCenter
                               : block.aligns[cellIndex] === 'right'
@@ -172,7 +183,7 @@ export function MarkdownNote({ markdown, onOpenNote, onOpenTag, variant = 'defau
         if (block.type === 'code') {
           return (
             <View key={`md-${index}`} style={[styles.codeBox, { backgroundColor: theme.colors.codeSurface, borderColor: theme.colors.border }, tone === 'dark' ? styles.codeBoxDark : null]}>
-              <Text style={[styles.codeText, { color: theme.colors.codeText }]}>{block.content}</Text>
+              <Text style={[styles.codeText, { color: theme.colors.codeText }, { fontSize: scaleFontSize(12, scale), lineHeight: scaleLineHeight(18, scale) }]}>{block.content}</Text>
             </View>
           );
         }
@@ -185,6 +196,7 @@ export function MarkdownNote({ markdown, onOpenNote, onOpenTag, variant = 'defau
                 { color: theme.colors.text },
                 variant === 'article' ? styles.articleParagraph : null,
                 variant === 'article' && isFirstParagraph ? styles.articleLead : null,
+                resolveParagraphScale(variant, scale),
               ]}
             >
               {renderInlineChunks(block.content, onOpenNote, onOpenTag, theme, tone, entityHighlights)}
@@ -465,6 +477,33 @@ function renderTableCellLines(
       ))}
     </View>
   );
+}
+
+function resolveHeadingScale(level: number, variant: MarkdownNoteProps['variant'], scale: number) {
+  if (variant === 'article') {
+    if (level === 1) {
+      return { fontSize: scaleFontSize(34, scale), lineHeight: scaleLineHeight(42, scale) };
+    }
+    if (level === 2) {
+      return { fontSize: scaleFontSize(24, scale), lineHeight: scaleLineHeight(32, scale) };
+    }
+    return { fontSize: scaleFontSize(19, scale), lineHeight: scaleLineHeight(28, scale) };
+  }
+
+  if (level === 1) {
+    return { fontSize: scaleFontSize(24, scale) };
+  }
+  if (level === 2) {
+    return { fontSize: scaleFontSize(20, scale) };
+  }
+  return { fontSize: scaleFontSize(17, scale) };
+}
+
+function resolveParagraphScale(variant: MarkdownNoteProps['variant'], scale: number) {
+  if (variant === 'article') {
+    return { fontSize: scaleFontSize(15, scale), lineHeight: scaleLineHeight(22, scale) };
+  }
+  return { fontSize: scaleFontSize(14, scale), lineHeight: scaleLineHeight(22, scale) };
 }
 
 export function renderEntityHighlightedText(
@@ -938,14 +977,6 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     borderWidth: 1,
   },
-  tableLight: {
-    borderColor: '#d7c5af',
-    backgroundColor: '#fbf7f1',
-  },
-  tableDark: {
-    borderColor: '#343434',
-    backgroundColor: '#161616',
-  },
   tableRow: {
     flexDirection: 'row',
     alignItems: 'stretch',
@@ -953,26 +984,14 @@ const styles = StyleSheet.create({
   tableHeaderRow: {
     borderBottomWidth: 1,
   },
-  tableHeaderRowLight: {
-    borderBottomColor: '#d7c5af',
-    backgroundColor: '#f1e7db',
-  },
-  tableHeaderRowDark: {
-    borderBottomColor: '#343434',
-    backgroundColor: '#222222',
-  },
   tableRowOdd: {
     backgroundColor: 'transparent',
-  },
-  tableRowEven: {
-    backgroundColor: 'rgba(255,255,255,0.03)',
   },
   tableCell: {
     minWidth: 132,
     paddingHorizontal: 12,
     paddingVertical: 10,
     borderRightWidth: 1,
-    borderRightColor: 'rgba(128,128,128,0.18)',
   },
   tableHeaderCell: {
     justifyContent: 'center',

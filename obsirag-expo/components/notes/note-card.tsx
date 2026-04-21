@@ -34,7 +34,13 @@ export function NoteCard({ note, onOpenNote, onOpenTag }: NoteCardProps) {
           <Text style={[styles.metaText, { color: theme.colors.textMuted }]}>{metadata}</Text>
         </View>
       ) : null}
-      <MarkdownNote markdown={note.bodyMarkdown} {...(onOpenNote ? { onOpenNote } : {})} {...(onOpenTag ? { onOpenTag } : {})} />
+      <MarkdownNote
+        markdown={note.bodyMarkdown}
+        tone={theme.isDark ? 'dark' : 'light'}
+        theme={theme}
+        {...(onOpenNote ? { onOpenNote } : {})}
+        {...(onOpenTag ? { onOpenTag } : {})}
+      />
     </View>
   );
 }

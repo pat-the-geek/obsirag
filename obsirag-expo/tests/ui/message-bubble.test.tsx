@@ -46,6 +46,10 @@ function findHighlightByText(tree: renderer.ReactTestRenderer, expected: string)
   return tree.root.findAllByProps({ testID: 'markdown-inline-entity-highlight' }).find((node) => collectText(node.props.children).join('') === expected);
 }
 
+function normalizeInlineText(value: string) {
+  return value.replace(/\s+/g, ' ').trim();
+}
+
 describe('MessageBubble', () => {
   it('renders a user question without role or unknown provenance labels', () => {
     const message: ChatMessage = {
@@ -300,7 +304,7 @@ describe('MessageBubble', () => {
     expect(texts).toContain('Notes/Charles.md');
   });
 
-  it('uses a light assistant bubble palette', () => {
+  it('uses the active light theme palette for the assistant bubble', () => {
     const message: ChatMessage = {
       id: 'assistant-light',
       role: 'assistant',
@@ -313,7 +317,9 @@ describe('MessageBubble', () => {
     const bubble = tree.root.findByProps({ testID: 'assistant-message-bubble' });
     const bubbleStyle = flattenStyle(bubble.props.style);
 
-    expect(bubbleStyle).toEqual(expect.arrayContaining([expect.objectContaining({ backgroundColor: '#f4f1ea' })]));
+    expect(bubbleStyle).toEqual(
+      expect.arrayContaining([expect.objectContaining({ backgroundColor: '#ffffff', borderColor: '#d7deea' })]),
+    );
     expect(tree.root.findByType(MarkdownNote).props.tone).toBe('light');
   });
 
@@ -671,7 +677,11 @@ describe('MessageBubble', () => {
 
   it('renders the detected entities panel with the active custom theme instead of Light+', () => {
     const previousThemeMode = useAppStore.getState().themeMode;
-    useAppStore.setState({ themeMode: 'quiet' });
+    act(() => {
+      useAppStore.setState({ themeMode: 'quiet' });
+    });
+
+    let tree: renderer.ReactTestRenderer | undefined;
 
     try {
       const message: ChatMessage = {
@@ -691,21 +701,172 @@ describe('MessageBubble', () => {
         ],
       };
 
-      const tree = renderer.create(<MessageBubble message={message} />);
+      tree = renderer.create(<MessageBubble message={message} />);
 
       act(() => {
         tree.root.findByProps({ testID: 'entity-contexts-panel-toggle' }).props.onPress();
       });
 
+      const panel = tree.root.findByProps({ testID: 'entity-contexts-panel' });
+      const panelStyle = flattenStyle(panel.props.style);
       const tableSurface = tree.root.findByProps({ testID: 'markdown-table-surface' });
       const tableStyle = flattenStyle(tableSurface.props.style);
 
+      expect(panelStyle).toEqual(
+        expect.arrayContaining([expect.objectContaining({ backgroundColor: '#f0f3f6', borderColor: '#d4dbe3' })]),
+      );
       expect(tableStyle).toEqual(
         expect.arrayContaining([expect.objectContaining({ backgroundColor: '#f8fafc', borderColor: '#d4dbe3' })]),
       );
     } finally {
-      useAppStore.setState({ themeMode: previousThemeMode });
+      tree?.unmount();
+      act(() => {
+        useAppStore.setState({ themeMode: previousThemeMode });
+      });
     }
+  });
+
+  it('renders the detected entities panel with the active custom dark theme instead of Dark+', () => {
+    const previousThemeMode = useAppStore.getState().themeMode;
+    act(() => {
+      useAppStore.setState({ themeMode: 'abyss' });
+    });
+
+    let tree: renderer.ReactTestRenderer | undefined;
+
+    try {
+      const message: ChatMessage = {
+        id: 'assistant-entities-theme-abyss',
+        role: 'assistant',
+        content: 'Arrakis est mentionne dans la reponse.',
+        createdAt: '2026-04-16T12:00:00Z',
+        provenance: 'vault',
+        entityContexts: [
+          {
+            type: 'location',
+            typeLabel: 'Lieu',
+            value: 'Arrakis',
+            relationExplanation: 'Arrakis est relie a la reponse.',
+            notes: [],
+          },
+        ],
+      };
+
+      tree = renderer.create(<MessageBubble message={message} />);
+
+      act(() => {
+        tree.root.findByProps({ testID: 'entity-contexts-panel-toggle' }).props.onPress();
+      });
+
+      const panel = tree.root.findByProps({ testID: 'entity-contexts-panel' });
+      const panelStyle = flattenStyle(panel.props.style);
+      const tableSurface = tree.root.findByProps({ testID: 'markdown-table-surface' });
+      const tableStyle = flattenStyle(tableSurface.props.style);
+
+      expect(panelStyle).toEqual(
+        expect.arrayContaining([expect.objectContaining({ backgroundColor: '#0b2235', borderColor: '#163956' })]),
+      );
+      expect(tableStyle).toEqual(
+        expect.arrayContaining([expect.objectContaining({ backgroundColor: '#061a2b', borderColor: '#163956' })]),
+      );
+    } finally {
+      tree?.unmount();
+      act(() => {
+        useAppStore.setState({ themeMode: previousThemeMode });
+      });
+    }
+  });
+
+  it('defaults the inline detected entities filter to Personne when available', () => {
+    const message: ChatMessage = {
+      id: 'assistant-entities-filter-default',
+      role: 'assistant',
+      content: 'Napoleon et Arrakis sont mentionnes dans la reponse.',
+      createdAt: '2026-04-16T12:00:00Z',
+      provenance: 'vault',
+      entityContexts: [
+        {
+          type: 'person',
+          typeLabel: 'Personne',
+          value: 'Napoleon Bonaparte',
+          relationExplanation: 'Napoleon Bonaparte est relie a la reponse.',
+          notes: [],
+        },
+        {
+          type: 'location',
+          typeLabel: 'Lieu',
+          value: 'Arrakis',
+          relationExplanation: 'Arrakis est reliee a la reponse.',
+          notes: [],
+        },
+      ],
+    };
+
+    const tree = renderer.create(<MessageBubble message={message} />);
+
+    act(() => {
+      tree.root.findByProps({ testID: 'entity-contexts-panel-toggle' }).props.onPress();
+    });
+
+    const panelText = normalizeInlineText(tree.root.findAllByType(Text).flatMap((node) => collectText(node.props.children)).join(' '));
+
+    expect(panelText).toContain('1 entité sur 2');
+    expect(panelText).toContain('Personne');
+
+    const markdownTable = tree.root.findByProps({ testID: 'markdown-table' });
+    const joined = normalizeInlineText(markdownTable.findAllByType(Text).flatMap((node) => collectText(node.props.children)).join(' '));
+
+    expect(joined).toContain('Napoleon Bonaparte');
+    expect(joined).not.toContain('Arrakis');
+  });
+
+  it('can switch the inline detected entities filter back to all types', () => {
+    const message: ChatMessage = {
+      id: 'assistant-entities-filter-all',
+      role: 'assistant',
+      content: 'Napoleon et Arrakis sont mentionnes dans la reponse.',
+      createdAt: '2026-04-16T12:00:00Z',
+      provenance: 'vault',
+      entityContexts: [
+        {
+          type: 'person',
+          typeLabel: 'Personne',
+          value: 'Napoleon Bonaparte',
+          relationExplanation: 'Napoleon Bonaparte est relie a la reponse.',
+          notes: [],
+        },
+        {
+          type: 'location',
+          typeLabel: 'Lieu',
+          value: 'Arrakis',
+          relationExplanation: 'Arrakis est reliee a la reponse.',
+          notes: [],
+        },
+      ],
+    };
+
+    const tree = renderer.create(<MessageBubble message={message} />);
+
+    act(() => {
+      tree.root.findByProps({ testID: 'entity-contexts-panel-toggle' }).props.onPress();
+    });
+
+    act(() => {
+      tree.root.findByProps({ testID: 'entity-contexts-filter-trigger' }).props.onPress();
+    });
+
+    act(() => {
+      tree.root.findByProps({ testID: 'entity-contexts-filter-option-all' }).props.onPress();
+    });
+
+    const panelText = normalizeInlineText(tree.root.findAllByType(Text).flatMap((node) => collectText(node.props.children)).join(' '));
+    expect(panelText).toMatch(/2 entité ?s/);
+
+    const markdownTable = tree.root.findByProps({ testID: 'markdown-table' });
+    const joined = normalizeInlineText(markdownTable.findAllByType(Text).flatMap((node) => collectText(node.props.children)).join(' '));
+
+    expect(joined).toContain('Napoleon Bonaparte');
+    expect(joined).toContain('Arrakis');
   });
 
   it('opens internal wikilinks from assistant markdown', () => {

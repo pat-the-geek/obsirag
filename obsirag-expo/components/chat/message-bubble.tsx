@@ -63,10 +63,10 @@ export function MessageBubble({
   const userBubbleBackground = theme.isDark ? theme.colors.primaryMuted : '#191919';
   const userBubbleBorder = theme.isDark ? theme.colors.primary : '#2d2d2d';
   const userTextColor = theme.isDark ? theme.colors.primaryText : '#f1f1f1';
-  const assistantBubbleBackground = theme.isDark ? theme.colors.surface : '#f4f1ea';
-  const assistantBubbleBorder = theme.isDark ? theme.colors.border : '#ddd4c8';
-  const queryOverviewBackground = theme.isDark ? theme.colors.surfaceMuted : '#fbf8f3';
-  const queryOverviewBorder = theme.isDark ? theme.colors.border : '#ded5c9';
+  const assistantBubbleBackground = theme.colors.surface;
+  const assistantBubbleBorder = theme.colors.border;
+  const queryOverviewBackground = theme.colors.surfaceMuted;
+  const queryOverviewBorder = theme.colors.border;
 
   useEffect(() => {
     if (isUser || process.env.NODE_ENV === 'test') {

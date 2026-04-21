@@ -81,6 +81,9 @@ export default function DashboardScreen() {
   const autolearnStatus = formatStatusValue(data.autolearn?.step, 'Inactif');
   const stackBadges = buildDashboardBadges(data);
   const activeLlmModel = formatActiveModelValue(data.runtime?.llmModel);
+  const euriaProvider = formatEuriaProviderValue(data.runtime?.euriaProvider);
+  const euriaModel = formatEuriaModelValue(data.runtime?.euriaModel);
+  const euriaStatus = data.runtime?.euriaEnabled ? 'Disponible' : 'Non configure';
   const runtimeSourceLabel = useMockServer ? 'Donnees mock locales' : 'API FastAPI live';
   const connectionModeLabel = useMockServer ? 'Mode mock' : 'Mode live';
 
@@ -92,11 +95,19 @@ export default function DashboardScreen() {
           <Text style={[styles.heroEyebrow, { color: theme.colors.primary }]}>ObsiRAG</Text>
           <Text style={[styles.heroTitle, { color: theme.colors.text }]}>Dashboard</Text>
           <Text style={[styles.heroSubtitle, { color: theme.colors.textMuted }]}>Vue d’ensemble du runtime, des recherches rapides et de l’activité de l’auto-learner.</Text>
-          <View style={[styles.activeModelCard, { borderColor: theme.colors.border, backgroundColor: theme.colors.surfaceMuted }] }>
-            <Text style={[styles.activeModelLabel, { color: theme.colors.primary }]}>LLM actif ObsiRAG</Text>
-            <Text selectable style={[styles.activeModelValue, { color: theme.colors.text }]}>{activeLlmModel}</Text>
-            <Text style={[styles.activeModelMeta, { color: theme.colors.textMuted }]}>Source runtime: {runtimeSourceLabel}</Text>
-            <Text selectable style={[styles.activeModelMeta, { color: theme.colors.textMuted }]}>Backend: {backendUrl}</Text>
+          <View style={styles.modelCardsRow}>
+            <View style={[styles.activeModelCard, styles.heroInfoCard, { borderColor: theme.colors.border, backgroundColor: theme.colors.surfaceMuted }] }>
+              <Text style={[styles.activeModelLabel, { color: theme.colors.primary }]}>LLM actif ObsiRAG</Text>
+              <Text selectable style={[styles.activeModelValue, { color: theme.colors.text }]}>{activeLlmModel}</Text>
+              <Text style={[styles.activeModelMeta, { color: theme.colors.textMuted }]}>Source runtime: {runtimeSourceLabel}</Text>
+              <Text selectable style={[styles.activeModelMeta, { color: theme.colors.textMuted }]}>Backend: {backendUrl}</Text>
+            </View>
+            <View style={[styles.activeModelCard, styles.heroInfoCard, { borderColor: theme.colors.border, backgroundColor: theme.colors.surfaceMuted }] }>
+              <Text style={[styles.activeModelLabel, { color: theme.colors.primary }]}>Euria Infomaniak</Text>
+              <Text selectable style={[styles.activeModelValue, { color: theme.colors.text }]}>{euriaModel}</Text>
+              <Text style={[styles.activeModelMeta, { color: theme.colors.textMuted }]}>Provider: {euriaProvider}</Text>
+              <Text style={[styles.activeModelMeta, { color: theme.colors.textMuted }]}>Statut: {euriaStatus}</Text>
+            </View>
           </View>
           <View style={styles.badgeRow}>
             {stackBadges.map((badge) => (
@@ -241,6 +252,16 @@ function formatActiveModelValue(model: string | undefined) {
   return trimmed;
 }
 
+function formatEuriaProviderValue(provider: string | undefined) {
+  const trimmed = provider?.trim();
+  return trimmed || 'Infomaniak';
+}
+
+function formatEuriaModelValue(model: string | undefined) {
+  const trimmed = model?.trim();
+  return trimmed || 'Modele non expose';
+}
+
 const styles = StyleSheet.create({
   heroCard: {
     borderRadius: 28,
@@ -280,6 +301,16 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 10,
     gap: 4,
+  },
+  modelCardsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+  },
+  heroInfoCard: {
+    flexGrow: 1,
+    flexShrink: 1,
+    minWidth: 240,
   },
   activeModelLabel: {
     fontSize: 11,

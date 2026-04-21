@@ -36,7 +36,7 @@ function coerceThemeMode(value: unknown): ThemeMode {
 }
 
 function coerceFontSizeMode(value: unknown): FontSizeMode {
-  return value === 'small' || value === 'medium' || value === 'large'
+  return value === 'small' || value === 'medium' || value === 'large' || value === 'xlarge'
     ? value
     : 'medium';
 }
@@ -65,7 +65,7 @@ type AppStoreState = {
   useEuriaForConversation: boolean;
   activeConversationId: string | undefined;
   themeMode: 'system' | 'light' | 'dark' | 'quiet' | 'abyss';
-  fontSizeMode: 'small' | 'medium' | 'large';
+  fontSizeMode: 'small' | 'medium' | 'large' | 'xlarge';
   drafts: Record<string, string>;
   sourcePanels: Record<string, boolean>;
   mermaidViewer: {
@@ -78,7 +78,7 @@ type AppStoreState = {
   setUseEuriaForConversation: (value: boolean) => void;
   setActiveConversationId: (value?: string) => void;
   setThemeMode: (value: 'system' | 'light' | 'dark' | 'quiet' | 'abyss') => void;
-  setFontSizeMode: (value: 'small' | 'medium' | 'large') => void;
+  setFontSizeMode: (value: 'small' | 'medium' | 'large' | 'xlarge') => void;
   increaseFontSize: () => void;
   decreaseFontSize: () => void;
   setDraft: (conversationId: string, value: string) => void;
@@ -179,8 +179,26 @@ export const useAppStore = create<AppStoreState>()(
       setActiveConversationId: (value) => set({ activeConversationId: value }),
       setThemeMode: (value) => set({ themeMode: value }),
       setFontSizeMode: (value) => set({ fontSizeMode: value }),
-      increaseFontSize: () => set((state) => ({ fontSizeMode: state.fontSizeMode === 'small' ? 'medium' : state.fontSizeMode === 'medium' ? 'large' : 'large' })),
-      decreaseFontSize: () => set((state) => ({ fontSizeMode: state.fontSizeMode === 'large' ? 'medium' : state.fontSizeMode === 'medium' ? 'small' : 'small' })),
+      increaseFontSize: () => set((state) => ({
+        fontSizeMode:
+          state.fontSizeMode === 'small'
+            ? 'medium'
+            : state.fontSizeMode === 'medium'
+              ? 'large'
+              : state.fontSizeMode === 'large'
+                ? 'xlarge'
+                : 'xlarge',
+      })),
+      decreaseFontSize: () => set((state) => ({
+        fontSizeMode:
+          state.fontSizeMode === 'xlarge'
+            ? 'large'
+            : state.fontSizeMode === 'large'
+              ? 'medium'
+              : state.fontSizeMode === 'medium'
+                ? 'small'
+                : 'small',
+      })),
       setHasHydrated: (value) => set({ hasHydrated: value }),
       setDraft: (conversationId, value) =>
         set((state) => ({
