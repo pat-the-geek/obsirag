@@ -2,10 +2,12 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from pathlib import Path
+import re
 from uuid import uuid4
 
 from src.config import settings
 from src.storage.json_state import JsonStateStore
+from src.storage.safe_read import read_text_lines
 from src.storage.slugify import build_ascii_stem
 
 from .schemas import (
@@ -130,29 +132,10 @@ class ApiConversationStore:
             raise KeyError(conversation_id)
 
         title = conversation.title.strip() or self._derive_title(conversation.messages)
-        month = datetime.now(UTC).strftime("%Y-%m")
-        timestamp = datetime.now(UTC).strftime("%Y%m%d_%H%M")
         slug = self._slugify_title(title, fallback="conversation")
-        out_dir = settings.conversations_dir / month
-        out_dir.mkdir(parents=True, exist_ok=True)
-        out_path = out_dir / f"{slug}_{timestamp}.md"
-
-        lines = [
-            "---",
-            "tags:",
-            "  - conversation",
-            "  - obsirag",
-            "---",
-            "",
-            f"# {title}",
-            "",
-        ]
-        for message in conversation.messages:
-            if message.role == "user":
-                lines.extend([f"## 🧑 {message.content[:120]}", "", f"> {message.content}", ""])
-            elif message.role == "assistant":
-                lines.extend(["### 🤖 Réponse", "", message.content, ""])
-        out_path.write_text("\n".join(lines).strip() + "\n", encoding="utf-8")
+        out_path = self._resolve_saved_conversation_path(conversation_id, slug)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text(self._render_conversation_markdown(conversation, title), encoding="utf-8")
         return out_path
 
     def save_report_markdown(self, conversation_id: str, markdown: str, *, title: str | None = None) -> Path:
@@ -191,6 +174,70 @@ class ApiConversationStore:
     @staticmethod
     def _slugify_title(title: str, *, fallback: str) -> str:
         return build_ascii_stem(title, fallback=fallback, max_length=60, separator="-")
+
+    @staticmethod
+    def _conversation_filename(slug: str, conversation_id: str) -> str:
+        return f"{slug}_{conversation_id}.md"
+
+    def _resolve_saved_conversation_path(self, conversation_id: str, slug: str) -> Path:
+        existing_path = self._find_saved_conversation_markdown(conversation_id)
+        if existing_path is not None:
+            return existing_path
+
+        month = datetime.now(UTC).strftime("%Y-%m")
+        out_dir = settings.conversations_dir / month
+        return out_dir / self._conversation_filename(slug, conversation_id)
+
+    def _find_saved_conversation_markdown(self, conversation_id: str) -> Path | None:
+        root = settings.conversations_dir
+        if not root.exists():
+            return None
+
+        for month_dir in sorted((path for path in root.iterdir() if path.is_dir()), reverse=True):
+            for path in sorted(month_dir.glob("*.md"), reverse=True):
+                if self._read_frontmatter_value(path, "conversation_id") == conversation_id:
+                    return path
+        return None
+
+    @staticmethod
+    def _read_frontmatter_value(path: Path, key: str) -> str | None:
+        lines = read_text_lines(path, default=[])
+        if not lines or lines[0].strip() != "---":
+            return None
+
+        pattern = re.compile(rf"^{re.escape(key)}\s*:\s*(.+?)\s*$")
+        for line in lines[1:]:
+            stripped = line.strip()
+            if stripped == "---":
+                break
+            match = pattern.match(stripped)
+            if match is None:
+                continue
+            value = match.group(1).strip()
+            if value.startswith(('"', "'")) and value.endswith(('"', "'")) and len(value) >= 2:
+                value = value[1:-1]
+            return value
+        return None
+
+    @staticmethod
+    def _render_conversation_markdown(conversation: ConversationDetailModel, title: str) -> str:
+        lines = [
+            "---",
+            "tags:",
+            "  - conversation",
+            "  - obsirag",
+            f"conversation_id: {conversation.id}",
+            "---",
+            "",
+            f"# {title}",
+            "",
+        ]
+        for message in conversation.messages:
+            if message.role == "user":
+                lines.extend([f"## 🧑 {message.content[:120]}", "", f"> {message.content}", ""])
+            elif message.role == "assistant":
+                lines.extend(["### 🤖 Réponse", "", message.content, ""])
+        return "\n".join(lines).strip() + "\n"
 
     @staticmethod
     def _latest_generation_stats(messages: list[ChatMessageModel]):

@@ -69,8 +69,91 @@ class TestApiConversationStore:
 
         assert saved_path.exists()
         content = saved_path.read_text(encoding="utf-8")
+        assert "conversation_id: conv-1" in content
         assert "# Mission Artemis" in content
         assert "### 🤖 Réponse" in content
+
+    def test_save_markdown_reuses_same_file_for_same_conversation(self, tmp_path: Path, tmp_settings):
+        store = ApiConversationStore(tmp_path / "api" / "conversations.json")
+        conversation = ConversationDetailModel(
+            id="conv-stable",
+            title="Mission Artemis",
+            updatedAt="2026-04-16T18:00:00",
+            draft="",
+            messages=[
+                ChatMessageModel(
+                    id="u1",
+                    role="user",
+                    content="Parle moi de Artemis II",
+                    createdAt="2026-04-16T18:00:00",
+                ),
+                ChatMessageModel(
+                    id="a1",
+                    role="assistant",
+                    content="Premiere reponse",
+                    createdAt="2026-04-16T18:00:01",
+                ),
+            ],
+        )
+
+        with patch("src.api.conversation_store.settings", tmp_settings):
+            store.upsert(conversation)
+            first_path = store.save_markdown(conversation.id)
+
+            conversation.messages.append(
+                ChatMessageModel(
+                    id="a2",
+                    role="assistant",
+                    content="Reponse mise a jour",
+                    createdAt="2026-04-16T18:00:02",
+                )
+            )
+            store.upsert(conversation)
+            second_path = store.save_markdown(conversation.id)
+
+        assert first_path == second_path
+        assert list(tmp_settings.conversations_dir.rglob("*.md")) == [first_path]
+        content = second_path.read_text(encoding="utf-8")
+        assert "Reponse mise a jour" in content
+
+    def test_save_markdown_reuses_existing_markdown_with_same_conversation_id(self, tmp_path: Path, tmp_settings):
+        store = ApiConversationStore(tmp_path / "api" / "conversations.json")
+        conversation = ConversationDetailModel(
+            id="conv-reuse",
+            title="Titre change",
+            updatedAt="2026-04-16T18:00:00",
+            draft="",
+            messages=[
+                ChatMessageModel(
+                    id="u1",
+                    role="user",
+                    content="Question de test",
+                    createdAt="2026-04-16T18:00:00",
+                )
+            ],
+        )
+
+        legacy_dir = tmp_settings.conversations_dir / "2026-03"
+        legacy_dir.mkdir(parents=True, exist_ok=True)
+        legacy_path = legacy_dir / "ancien_nom.md"
+        legacy_path.write_text(
+            "---\n"
+            "tags:\n"
+            "  - conversation\n"
+            "conversation_id: conv-reuse\n"
+            "---\n\n"
+            "# Ancien titre\n",
+            encoding="utf-8",
+        )
+
+        with patch("src.api.conversation_store.settings", tmp_settings):
+            store.upsert(conversation)
+            saved_path = store.save_markdown(conversation.id)
+
+        assert saved_path == legacy_path
+        content = saved_path.read_text(encoding="utf-8")
+        assert "# Titre change" in content
+        assert "Question de test" in content
 
     def test_save_report_markdown_writes_insight_file(self, tmp_path: Path, tmp_settings):
         store = ApiConversationStore(tmp_path / "api" / "conversations.json")
