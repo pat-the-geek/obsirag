@@ -1240,7 +1240,16 @@ async def create_message(
     started_at = time.perf_counter()
     if payload.useEuria:
         try:
-            result = _generate_euria_answer_with_optional_rag(prompt=payload.prompt, history=history, llm=llm, svc=svc)
+            result = (
+                _generate_euria_answer_with_optional_rag(prompt=payload.prompt, history=history, llm=llm, svc=svc)
+                if payload.useRag
+                else _generate_euria_direct_answer_with_options(
+                    prompt=payload.prompt,
+                    history=history,
+                    llm=llm,
+                    enable_web_search=True,
+                )
+            )
         except RuntimeError as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
 
@@ -1336,24 +1345,52 @@ async def stream_message(
 
         if payload.useEuria:
             euria_steps: list[tuple[str, str]] = [("analysis", "Analyse de la requete")]
-            if _can_build_local_rag_context(svc) and not _should_skip_euria_rag(payload.prompt):
+            if payload.useRag and _can_build_local_rag_context(svc) and not _should_skip_euria_rag(payload.prompt):
                 euria_steps.append(("context", "Recherche dans le coffre"))
-            euria_steps.extend([
-                ("generation", "Generation via Euria"),
-                ("entities", "Extraction des entites NER"),
-                ("finalize", "Finalisation de la reponse"),
-            ])
+            euria_steps.append(("generation", "Generation via Euria + web" if not payload.useRag else "Generation via Euria"))
+            euria_steps.append(("entities", "Extraction des entites NER"))
+            euria_steps.append(("finalize", "Finalisation de la reponse"))
             for phase, status_message in euria_steps:
                 _append_timeline_step(timeline, status_message)
                 yield _sse_event("retrieval_status", {"phase": phase, "message": status_message})
 
             try:
-                result = await asyncio.to_thread(_generate_euria_answer_with_optional_rag, prompt=payload.prompt, history=history, llm=llm, svc=svc)
+                stream_plan = _prepare_euria_stream_plan(
+                    prompt=payload.prompt,
+                    history=history,
+                    use_rag=payload.useRag,
+                    svc=svc,
+                )
+                raw_stream = llm.stream(
+                    stream_plan["messages"],
+                    temperature=float(stream_plan["temperature"]),
+                    max_tokens=int(stream_plan["max_tokens"]),
+                    operation=str(stream_plan["operation"]),
+                    enable_web_search=bool(stream_plan["enable_web_search"]),
+                )
+                streamed_parts: list[str] = []
+                ttft = 0.0
+                while True:
+                    token = await asyncio.to_thread(_next_stream_value, raw_stream)
+                    if token is _STREAM_ITERATION_END:
+                        break
+                    token_text = str(token or "")
+                    if not token_text:
+                        continue
+                    if ttft == 0.0 and token_text.strip():
+                        ttft = max(time.perf_counter() - started_at, 0.001)
+                    streamed_parts.append(token_text)
+                    yield _sse_event("token", {"token": token_text})
             except RuntimeError as exc:
                 yield _sse_event("message_error", {"detail": str(exc)})
                 return
 
-            answer = str(result.get("answer") or "")
+            answer = _sanitize_assistant_answer_text("".join(streamed_parts))
+            result = dict(stream_plan["result"])
+            result["answer"] = answer
+            if payload.useRag:
+                result = _maybe_upgrade_euria_result_with_web_fallback(prompt=payload.prompt, result=result, llm=llm, svc=svc)
+                answer = _sanitize_assistant_answer_text(str(result.get("answer") or answer))
             sources = list(result.get("sources") or [])
             source_models = _build_source_models(sources)
             primary_source = next((item for item in source_models if item.isPrimary), None)
@@ -1376,12 +1413,11 @@ async def stream_message(
                 provenance=str(result.get("provenance") or "vault"),
                 llm_provider=llm_provider,
                 enrichment_path=str(result.get("enrichment_path") or "") or None,
+                ttft=ttft,
             )
             if assistant_message.provenance == "web":
                 _append_timeline_step(timeline, "Recherche web via Euria")
                 assistant_message.timeline = timeline
-            for token in _iter_answer_tokens(answer):
-                yield _sse_event("token", {"token": token})
             yield _sse_event("sources_ready", {"sources": [item.model_dump(mode="json") for item in assistant_message.sources]})
             conversation_store.append_messages(
                 conversation_id,
@@ -2440,6 +2476,7 @@ def _build_assistant_message(
     answer: str,
     sources: list[dict],
     started_at: float,
+    ttft: float = 0.0,
     timeline: list[str],
     query_overview: dict[str, Any] | None = None,
     entity_contexts: list[dict[str, Any]] | None = None,
@@ -2468,7 +2505,7 @@ def _build_assistant_message(
         enrichmentPath=enrichment_path,
         provenance=normalized_provenance,
         sentinel=sentinel,
-        stats=_build_generation_stats(answer, started_at),
+        stats=_build_generation_stats(answer, started_at, ttft=ttft),
     )
 
 
@@ -2804,6 +2841,16 @@ def _iter_answer_tokens(answer: str) -> list[str]:
     return re.findall(r"\S+\s*|\s+", answer)
 
 
+_STREAM_ITERATION_END = object()
+
+
+def _next_stream_value(iterator):
+    try:
+        return next(iterator)
+    except StopIteration:
+        return _STREAM_ITERATION_END
+
+
 def _decode_worker_payload(stdout: str) -> dict[str, Any]:
     payload = (stdout or "").strip()
     if not payload:
@@ -2844,7 +2891,149 @@ def _conversation_llm_provider(use_euria: bool) -> str:
     return "Euria" if use_euria else "MLX"
 
 
+def _build_euria_direct_messages(prompt: str, history: list[dict[str, str]]) -> list[dict[str, str]]:
+    return [
+        {
+            "role": "system",
+            "content": (
+                "Tu réponds en français, avec du Markdown valide et propre. "
+                "N'écris pas de balisage incomplet. "
+                "Si tu produis un tableau, utilise un vrai tableau Markdown avec des pipes. "
+                "Ne répète jamais une ligne, une ligne de tableau, un paragraphe ou une section. "
+                "Termine toujours proprement la réponse, sans couper un mot ni une emphase Markdown."
+            ),
+        },
+        *[
+            {"role": str(item.get("role") or "user"), "content": str(item.get("content") or "")}
+            for item in history
+            if str(item.get("content") or "").strip()
+        ],
+        {"role": "user", "content": prompt},
+    ]
+
+
+def _build_euria_rag_messages(
+    prompt: str,
+    history: list[dict[str, str]],
+    rag_context: str,
+    rag_sources: list[dict[str, Any]],
+) -> list[dict[str, str]]:
+    source_titles = _build_rag_source_titles(rag_sources)
+    return [
+        {
+            "role": "system",
+            "content": (
+                "Tu réponds en français, avec du Markdown valide et propre. "
+                "Appuie-toi d'abord sur le contexte du coffre fourni. "
+                "N'invente aucune information absente du contexte. "
+                "Si l'information demandée n'est pas dans le contexte, réponds exactement : "
+                '"Cette information n\'est pas dans ton coffre." '
+                "Quand tu utilises une note du coffre, cite son titre entre crochets. "
+                "Ne répète jamais une ligne, un paragraphe ou une section."
+            ),
+        },
+        *[
+            {"role": str(item.get("role") or "user"), "content": str(item.get("content") or "")}
+            for item in history
+            if str(item.get("content") or "").strip()
+        ],
+        {
+            "role": "user",
+            "content": (
+                "Contexte du coffre :\n"
+                f"{rag_context}\n\n"
+                f"Notes disponibles : {source_titles or 'non precisees'}\n\n"
+                f"Question : {prompt}"
+            ),
+        },
+    ]
+
+
+def _prepare_euria_stream_plan(*, prompt: str, history: list[dict[str, str]], use_rag: bool, svc) -> dict[str, Any]:
+    if not use_rag:
+        return {
+            "messages": _build_euria_direct_messages(prompt, history),
+            "temperature": 0.3,
+            "max_tokens": 1700,
+            "operation": "conversation_euria_fast_web",
+            "enable_web_search": True,
+            "result": {
+                "sources": [],
+                "provenance": "web",
+                "query_overview": {},
+                "entity_contexts": [],
+                "enrichment_path": "euria-direct-web",
+                "rag_lookup_attempted": False,
+                "rag_context_used": False,
+            },
+        }
+
+    if _should_skip_euria_rag(prompt):
+        return {
+            "messages": _build_euria_direct_messages(prompt, history),
+            "temperature": 0.3,
+            "max_tokens": 1700,
+            "operation": "conversation_euria_fast",
+            "enable_web_search": False,
+            "result": {
+                "sources": [],
+                "provenance": "vault",
+                "query_overview": {},
+                "entity_contexts": [],
+                "enrichment_path": "euria-direct",
+                "rag_lookup_attempted": False,
+                "rag_context_used": False,
+            },
+        }
+
+    rag_context, rag_sources = _build_local_rag_context(prompt, svc)
+    if rag_context:
+        return {
+            "messages": _build_euria_rag_messages(prompt, history, rag_context, rag_sources),
+            "temperature": 0.2,
+            "max_tokens": 1700,
+            "operation": "conversation_euria_rag",
+            "enable_web_search": False,
+            "result": {
+                "sources": list(rag_sources or []),
+                "provenance": "vault",
+                "query_overview": {},
+                "entity_contexts": [],
+                "enrichment_path": "euria-rag",
+                "rag_lookup_attempted": True,
+                "rag_context_used": True,
+            },
+        }
+
+    return {
+        "messages": _build_euria_direct_messages(prompt, history),
+        "temperature": 0.3,
+        "max_tokens": 1700,
+        "operation": "conversation_euria_fast",
+        "enable_web_search": False,
+        "result": {
+            "sources": [],
+            "provenance": "vault",
+            "query_overview": {},
+            "entity_contexts": [],
+            "enrichment_path": "euria-direct",
+            "rag_lookup_attempted": _can_build_local_rag_context(svc),
+            "rag_context_used": False,
+        },
+    }
+
+
 def _generate_euria_direct_answer(*, prompt: str, history: list[dict[str, str]], llm) -> dict[str, Any]:
+    return _generate_euria_direct_answer_with_options(prompt=prompt, history=history, llm=llm, enable_web_search=False)
+
+
+def _generate_euria_direct_answer_with_options(
+    *,
+    prompt: str,
+    history: list[dict[str, str]],
+    llm,
+    enable_web_search: bool,
+) -> dict[str, Any]:
     messages = [
         {
             "role": "system",
@@ -2867,8 +3056,8 @@ def _generate_euria_direct_answer(*, prompt: str, history: list[dict[str, str]],
         messages,
         temperature=0.3,
         max_tokens=1700,
-        operation="conversation_euria_fast",
-        enable_web_search=False,
+        operation="conversation_euria_fast_web" if enable_web_search else "conversation_euria_fast",
+        enable_web_search=enable_web_search,
     )
     cleaned_answer = _sanitize_assistant_answer_text(answer)
     if not cleaned_answer:
@@ -2876,10 +3065,10 @@ def _generate_euria_direct_answer(*, prompt: str, history: list[dict[str, str]],
     return {
         "answer": cleaned_answer,
         "sources": [],
-        "provenance": "vault",
+        "provenance": "web" if enable_web_search else "vault",
         "query_overview": {},
         "entity_contexts": [],
-        "enrichment_path": "euria-direct",
+        "enrichment_path": "euria-direct-web" if enable_web_search else "euria-direct",
     }
 
 

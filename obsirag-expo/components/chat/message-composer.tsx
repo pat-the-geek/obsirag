@@ -9,7 +9,9 @@ type MessageComposerProps = {
   onSubmit: (value: string) => void;
   disabled?: boolean;
   withEuria?: boolean;
+  withRag?: boolean;
   onToggleWithEuria?: (value: boolean) => void;
+  onToggleWithRag?: (value: boolean) => void;
   secondaryActionLabel?: string;
   onSecondaryAction?: () => void;
   secondaryActionDisabled?: boolean;
@@ -24,7 +26,9 @@ export function MessageComposer({
   onSubmit,
   disabled,
   withEuria,
+  withRag,
   onToggleWithEuria,
+  onToggleWithRag,
   secondaryActionLabel,
   onSecondaryAction,
   secondaryActionDisabled,
@@ -189,6 +193,28 @@ export function MessageComposer({
                 {withEuria ? <Text style={[styles.checkboxMark, { color: theme.colors.primaryText, fontSize: scaleFontSize(12, scale), lineHeight: scaleLineHeight(12, scale) }]}>✓</Text> : null}
               </View>
               <Text style={[styles.toggleLabel, { color: theme.colors.text, fontSize: scaleFontSize(13, scale) }]}>Avec Euria</Text>
+            </Pressable>
+          ) : null}
+          {withEuria && typeof withRag === 'boolean' && onToggleWithRag ? (
+            <Pressable
+              testID="message-composer-rag-toggle"
+              accessibilityRole="checkbox"
+              accessibilityState={{ checked: withRag }}
+              onPress={() => onToggleWithRag(!withRag)}
+              style={styles.toggleRow}
+            >
+              <View
+                style={[
+                  styles.checkbox,
+                  {
+                    borderColor: withRag ? theme.colors.primary : theme.colors.border,
+                    backgroundColor: withRag ? theme.colors.primary : theme.colors.surface,
+                  },
+                ]}
+              >
+                {withRag ? <Text style={[styles.checkboxMark, { color: theme.colors.primaryText, fontSize: scaleFontSize(12, scale), lineHeight: scaleLineHeight(12, scale) }]}>✓</Text> : null}
+              </View>
+              <Text style={[styles.toggleLabel, { color: theme.colors.text, fontSize: scaleFontSize(13, scale) }]}>RAG</Text>
             </Pressable>
           ) : null}
           <Pressable testID="message-composer-submit" disabled={!canSubmit} onPress={submitDraft} style={[styles.button, { backgroundColor: theme.colors.primary, borderColor: theme.colors.primary }, !canSubmit && styles.buttonDisabled]}>

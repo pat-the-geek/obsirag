@@ -35,12 +35,14 @@ const mockExplicitWebSearchMutate = jest.fn();
 const mockStreamMessageMutate = jest.fn();
 const mockSetDraft = jest.fn();
 const mockSetUseEuriaForConversation = jest.fn();
+const mockSetUseRagForConversation = jest.fn();
 const mockScrollToEnd = jest.fn();
 const alertSpy = jest.spyOn(Alert, 'alert');
 const originalConfirm = globalThis.confirm;
 const mockConfirm = jest.fn();
 let mockDraftValue = '';
 let mockUseEuriaForConversation = false;
+let mockUseRagForConversation = true;
 let mockStreamMessageState = { mutate: mockStreamMessageMutate, isPending: false, error: null as Error | null };
 let mockExplicitWebSearchState = { mutate: mockExplicitWebSearchMutate, isPending: false };
 let mockConversationData: ConversationDetail | undefined = {
@@ -112,6 +114,7 @@ jest.mock('../../store/app-store', () => ({
     selector({
       drafts: { 'conv-1': mockDraftValue },
       useEuriaForConversation: mockUseEuriaForConversation,
+      useRagForConversation: mockUseRagForConversation,
       setDraft: (conversationId: string, value: string) => {
         mockSetDraft(conversationId, value);
         if (conversationId === 'conv-1') {
@@ -121,6 +124,10 @@ jest.mock('../../store/app-store', () => ({
       setUseEuriaForConversation: (value: boolean) => {
         mockSetUseEuriaForConversation(value);
         mockUseEuriaForConversation = value;
+      },
+      setUseRagForConversation: (value: boolean) => {
+        mockSetUseRagForConversation(value);
+        mockUseRagForConversation = value;
       },
     }),
 }));
@@ -237,9 +244,11 @@ describe('ConversationDetailScreen', () => {
     mockStreamMessageMutate.mockReset();
     mockSetDraft.mockReset();
     mockSetUseEuriaForConversation.mockReset();
+    mockSetUseRagForConversation.mockReset();
     mockScrollToEnd.mockReset();
     mockDraftValue = '';
     mockUseEuriaForConversation = false;
+    mockUseRagForConversation = true;
     alertSpy.mockReset();
     mockConfirm.mockReset();
     mockStreamMessageState = { mutate: mockStreamMessageMutate, isPending: false, error: null };
@@ -272,6 +281,7 @@ describe('ConversationDetailScreen', () => {
 
     expect(textTreeContains(tree, 'Provider actif')).toBe(true);
     expect(textTreeContains(tree, 'Euria')).toBe(true);
+    expect(tree.root.findByProps({ testID: 'message-composer-rag-toggle' })).toBeTruthy();
   });
 
   it('updates the conversation provider when the checkbox is toggled', () => {
@@ -282,6 +292,24 @@ describe('ConversationDetailScreen', () => {
     });
 
     expect(mockSetUseEuriaForConversation).toHaveBeenCalledWith(true);
+  });
+
+  it('shows the RAG toggle only when Euria is enabled and updates it independently', () => {
+    const tree = renderer.create(<ConversationDetailScreen />);
+
+    expect(() => tree.root.findByProps({ testID: 'message-composer-rag-toggle' })).toThrow();
+
+    mockUseEuriaForConversation = true;
+    const euriaTree = renderer.create(<ConversationDetailScreen />);
+
+    const ragToggle = euriaTree.root.findByProps({ testID: 'message-composer-rag-toggle' });
+    expect(ragToggle).toBeTruthy();
+
+    act(() => {
+      ragToggle.props.onPress();
+    });
+
+    expect(mockSetUseRagForConversation).toHaveBeenCalledWith(false);
   });
 
   it('clears the draft immediately and scrolls to the bottom when sending a question', () => {

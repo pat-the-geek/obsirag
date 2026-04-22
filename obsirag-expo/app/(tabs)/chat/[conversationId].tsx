@@ -35,7 +35,9 @@ export default function ConversationDetailScreen() {
   const draft = useAppStore((state) => (conversationId ? state.drafts[conversationId] ?? '' : ''));
   const setDraft = useAppStore((state) => state.setDraft);
   const useEuriaForConversation = useAppStore((state) => state.useEuriaForConversation);
+  const useRagForConversation = useAppStore((state) => state.useRagForConversation);
   const setUseEuriaForConversation = useAppStore((state) => state.setUseEuriaForConversation);
+  const setUseRagForConversation = useAppStore((state) => state.setUseRagForConversation);
   const theme = useAppTheme();
   const { data, isLoading, isRefetching, refetch } = useConversation(conversationId);
   const messages = data?.messages ?? [];
@@ -261,7 +263,9 @@ export default function ConversationDetailScreen() {
                 value={draft}
                 onChangeText={(value) => setDraft(conversationId, value)}
                 withEuria={useEuriaForConversation}
+                withRag={useRagForConversation}
                 onToggleWithEuria={setUseEuriaForConversation}
+                onToggleWithRag={setUseRagForConversation}
                 onSubmit={(submittedValue) => {
                   const trimmedDraft = submittedValue.trim();
                   if (!trimmedDraft) {

@@ -34,6 +34,7 @@ type StreamHandlers = {
 
 type ConversationRequestOptions = {
   useEuria?: boolean;
+  useRag?: boolean;
 };
 
 type GraphQueryFilters = {
@@ -396,7 +397,7 @@ export class ObsiRagApi {
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ prompt, useEuria: options?.useEuria ?? false }),
+          body: JSON.stringify({ prompt, useEuria: options?.useEuria ?? false, useRag: options?.useRag ?? true }),
         },
       );
       handlers.onComplete?.(fallbackMessage);
@@ -413,7 +414,7 @@ export class ObsiRagApi {
           'Content-Type': 'application/json',
           Accept: 'text/event-stream',
         },
-        body: JSON.stringify({ prompt, useEuria: options?.useEuria ?? false }),
+        body: JSON.stringify({ prompt, useEuria: options?.useEuria ?? false, useRag: options?.useRag ?? true }),
       });
     } catch (error) {
       return fallbackToStandardMessage();

@@ -95,7 +95,7 @@ export const mockSystemStatus: SystemStatus = {
     nerModel: 'xx_ent_wiki_sm',
     autolearnMode: 'worker',
     euriaProvider: 'Infomaniak',
-    euriaModel: 'qwen3',
+    euriaModel: 'Qwen/Qwen3.5-122B-A10B-FP8',
     euriaEnabled: true,
   },
   startup: {

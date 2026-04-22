@@ -63,6 +63,7 @@ type AppStoreState = {
   accessToken: string;
   useMockServer: boolean;
   useEuriaForConversation: boolean;
+  useRagForConversation: boolean;
   activeConversationId: string | undefined;
   themeMode: 'system' | 'light' | 'dark' | 'quiet' | 'abyss';
   fontSizeMode: 'small' | 'medium' | 'large' | 'xlarge';
@@ -76,6 +77,7 @@ type AppStoreState = {
   setAccessToken: (value: string) => void;
   setUseMockServer: (value: boolean) => void;
   setUseEuriaForConversation: (value: boolean) => void;
+  setUseRagForConversation: (value: boolean) => void;
   setActiveConversationId: (value?: string) => void;
   setThemeMode: (value: 'system' | 'light' | 'dark' | 'quiet' | 'abyss') => void;
   setFontSizeMode: (value: 'small' | 'medium' | 'large' | 'xlarge') => void;
@@ -101,6 +103,7 @@ function sanitizePersistedState(state: unknown): Partial<AppStoreState> {
     accessToken: typeof candidate.accessToken === 'string' ? candidate.accessToken : '',
     useMockServer: typeof candidate.useMockServer === 'boolean' ? candidate.useMockServer : false,
     useEuriaForConversation: typeof candidate.useEuriaForConversation === 'boolean' ? candidate.useEuriaForConversation : false,
+    useRagForConversation: typeof candidate.useRagForConversation === 'boolean' ? candidate.useRagForConversation : true,
     activeConversationId: typeof candidate.activeConversationId === 'string' ? candidate.activeConversationId : undefined,
     themeMode: coerceThemeMode(candidate.themeMode),
     fontSizeMode: coerceFontSizeMode(candidate.fontSizeMode),
@@ -166,6 +169,7 @@ export const useAppStore = create<AppStoreState>()(
       accessToken: '',
       useMockServer: false,
       useEuriaForConversation: false,
+      useRagForConversation: true,
       activeConversationId: undefined,
       themeMode: 'system',
       fontSizeMode: 'medium',
@@ -176,6 +180,7 @@ export const useAppStore = create<AppStoreState>()(
       setAccessToken: (value) => set({ accessToken: value }),
       setUseMockServer: (value) => set({ useMockServer: value }),
       setUseEuriaForConversation: (value) => set({ useEuriaForConversation: value }),
+      setUseRagForConversation: (value) => set({ useRagForConversation: value }),
       setActiveConversationId: (value) => set({ activeConversationId: value }),
       setThemeMode: (value) => set({ themeMode: value }),
       setFontSizeMode: (value) => set({ fontSizeMode: value }),
@@ -225,7 +230,7 @@ export const useAppStore = create<AppStoreState>()(
     }),
     {
       name: 'obsirag-expo-store',
-      version: 5,
+      version: 6,
       storage: safeAppStoreStorage,
       migrate: (persistedState) => {
         return sanitizePersistedState(persistedState);
@@ -238,6 +243,7 @@ export const useAppStore = create<AppStoreState>()(
         accessToken: state.accessToken,
         useMockServer: state.useMockServer,
         useEuriaForConversation: state.useEuriaForConversation,
+        useRagForConversation: state.useRagForConversation,
         ...(state.activeConversationId ? { activeConversationId: state.activeConversationId } : {}),
         themeMode: state.themeMode,
         fontSizeMode: state.fontSizeMode,

@@ -24,6 +24,7 @@ from src.api.app import _normalize_report_markdown
 from src.api.app import _related_note_from_note
 from src.api.app import _generate_euria_answer_with_optional_rag
 from src.api.app import _generate_euria_direct_answer
+from src.api.app import _generate_euria_direct_answer_with_options
 from src.api.app import _sanitize_assistant_answer_text
 from src.api.conversation_store import ApiConversationStore
 from src.api.schemas import ChatMessageModel
@@ -78,8 +79,9 @@ class _StubServiceManager:
 
 
 class _FakeEuriaClient(EuriaClient):
-    def __init__(self, responses: dict[tuple[str, bool], str]) -> None:
+    def __init__(self, responses: dict[tuple[str, bool], str], streams: dict[tuple[str, bool], list[str]] | None = None) -> None:
         self._responses = responses
+        self._streams = streams or {}
 
     def chat(
         self,
@@ -93,6 +95,21 @@ class _FakeEuriaClient(EuriaClient):
         if key not in self._responses:
             raise RuntimeError(f"unexpected call: {key}")
         return self._responses[key]
+
+    def stream(
+        self,
+        messages: list[dict[str, str]],
+        temperature: float = 0.3,
+        max_tokens: int = 2048,
+        operation: str = "stream",
+        enable_web_search: bool | None = None,
+    ):
+        key = (operation, bool(enable_web_search))
+        if key in self._streams:
+            return iter(self._streams[key])
+        if key in self._responses:
+            return iter(_iter_answer_tokens(self._responses[key]))
+        raise RuntimeError(f"unexpected stream call: {key}")
 
 
 def _message(payload: dict) -> ChatMessageModel:
@@ -193,6 +210,24 @@ def test_generate_euria_direct_answer_adds_markdown_guardrails_and_sanitizes_out
     messages = fake_llm.chat.call_args.args[0]
     assert messages[0]["role"] == "system"
     assert "Markdown valide" in messages[0]["content"]
+
+
+def test_generate_euria_direct_answer_with_options_enables_native_web_search_when_requested():
+    fake_llm = MagicMock()
+    fake_llm.chat.return_value = "Réponse web Euria"
+
+    result = _generate_euria_direct_answer_with_options(
+        prompt="Que dit le web sur Ada Lovelace ?",
+        history=[],
+        llm=fake_llm,
+        enable_web_search=True,
+    )
+
+    assert result["answer"] == "Réponse web Euria"
+    assert result["provenance"] == "web"
+    assert result["enrichment_path"] == "euria-direct-web"
+    assert fake_llm.chat.call_args.kwargs["enable_web_search"] is True
+    assert fake_llm.chat.call_args.kwargs["operation"] == "conversation_euria_fast_web"
 
 
 def test_compose_assistant_web_answer_prefers_euria_native_then_completes_with_ddg():
@@ -1091,7 +1126,7 @@ def test_create_message_bypasses_local_worker_when_euria_is_enabled(tmp_path: Pa
     assert stored.messages[1].entityContexts[0].value == "Paul Atreides"
 
 
-def test_stream_message_bypasses_local_worker_when_euria_is_enabled(tmp_path: Path, tmp_settings):
+def test_create_message_keeps_entity_enrichment_when_euria_native_web_mode_is_enabled(tmp_path: Path, tmp_settings):
     store = ApiConversationStore(tmp_path / "api" / "conversations.json")
     service_manager = _StubServiceManager()
 
@@ -1100,14 +1135,53 @@ def test_stream_message_bypasses_local_worker_when_euria_is_enabled(tmp_path: Pa
         patch("src.api.app.conversation_store", store),
         patch("src.api.app.get_service_manager", return_value=service_manager),
         patch(
-            "src.api.app._generate_euria_answer_with_optional_rag",
+            "src.api.app._generate_euria_direct_answer_with_options",
             return_value={
-                "answer": "Réponse stream Euria.",
+                "answer": "Réponse web Euria.",
                 "sources": [],
-                "provenance": "vault",
-                "enrichment_path": "euria-direct",
+                "provenance": "web",
+                "enrichment_path": "euria-direct-web",
             },
         ) as euria_mock,
+        patch("src.api.app._run_chat_generation_worker", side_effect=AssertionError("worker should not be called")),
+        patch(
+            "src.api.app._lookup_conversation_entity_contexts",
+            return_value=[{"type": "PERSON", "type_label": "Personne", "value": "Paul Atreides", "mentions": 1}],
+        ),
+        patch(
+            "src.api.app._enrich_entity_contexts",
+            return_value=[{"type": "PERSON", "type_label": "Personne", "value": "Paul Atreides", "mentions": 1}],
+        ),
+    ):
+        client = TestClient(app)
+        response = client.post(
+            "/api/v1/conversations/conv-euria-fast-web/messages",
+            json={"prompt": "Parle-moi de Dune", "useEuria": True, "useRag": False},
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["content"] == "Réponse web Euria."
+    assert payload["llmProvider"] == "Euria"
+    assert payload["entityContexts"][0]["value"] == "Paul Atreides"
+    assert payload["enrichmentPath"] == "euria-direct-web"
+    euria_mock.assert_called_once()
+
+    stored = store.get("conv-euria-fast-web")
+    assert stored is not None
+    assert stored.messages[1].entityContexts[0].value == "Paul Atreides"
+
+
+def test_stream_message_bypasses_local_worker_when_euria_is_enabled(tmp_path: Path, tmp_settings):
+    store = ApiConversationStore(tmp_path / "api" / "conversations.json")
+    service_manager = _StubServiceManager()
+    fake_llm = _FakeEuriaClient({}, {("conversation_euria_fast", False): ["Réponse ", "stream ", "Euria."]})
+
+    with (
+        patch("src.api.app.settings", tmp_settings),
+        patch("src.api.app.conversation_store", store),
+        patch("src.api.app.get_service_manager", return_value=service_manager),
+        patch("src.api.app._conversation_llm", return_value=fake_llm),
         patch("src.api.app._run_chat_generation_worker", side_effect=AssertionError("worker should not be called")),
         patch(
             "src.api.app._lookup_conversation_entity_contexts",
@@ -1129,19 +1203,57 @@ def test_stream_message_bypasses_local_worker_when_euria_is_enabled(tmp_path: Pa
     assert "Extraction des entites NER" in response.text
     assert "Recherche DDG" not in response.text
     assert "Réponse stream Euria." in response.text
-    euria_mock.assert_called_once()
 
     stored = store.get("conv-euria-stream")
     assert stored is not None
     assert len(stored.messages) == 2
     assert stored.messages[1].content == "Réponse stream Euria."
-    assert stored.messages[1].llmProvider == "Euria"
+    assert stored.messages[1].stats.ttft > 0
+
+
+def test_stream_message_keeps_entity_enrichment_when_euria_native_web_mode_is_enabled(tmp_path: Path, tmp_settings):
+    store = ApiConversationStore(tmp_path / "api" / "conversations.json")
+    service_manager = _StubServiceManager()
+    fake_llm = _FakeEuriaClient({}, {("conversation_euria_fast_web", True): ["Réponse ", "stream ", "web ", "Euria."]})
+
+    with (
+        patch("src.api.app.settings", tmp_settings),
+        patch("src.api.app.conversation_store", store),
+        patch("src.api.app.get_service_manager", return_value=service_manager),
+        patch("src.api.app._conversation_llm", return_value=fake_llm),
+        patch("src.api.app._run_chat_generation_worker", side_effect=AssertionError("worker should not be called")),
+        patch(
+            "src.api.app._lookup_conversation_entity_contexts",
+            return_value=[{"type": "PERSON", "type_label": "Personne", "value": "Paul Atreides", "mentions": 1}],
+        ),
+        patch(
+            "src.api.app._enrich_entity_contexts",
+            return_value=[{"type": "PERSON", "type_label": "Personne", "value": "Paul Atreides", "mentions": 1}],
+        ),
+    ):
+        client = TestClient(app)
+        response = client.post(
+            "/api/v1/conversations/conv-euria-stream-web/messages/stream",
+            json={"prompt": "Parle-moi de Dune", "useEuria": True, "useRag": False},
+        )
+
+    assert response.status_code == 200
+    assert "Generation via Euria + web" in response.text
+    assert "Extraction des entites NER" in response.text
+    assert "Réponse stream web Euria." in response.text
+
+    stored = store.get("conv-euria-stream-web")
+    assert stored is not None
     assert stored.messages[1].entityContexts[0].value == "Paul Atreides"
+    assert stored.messages[1].content == "Réponse stream web Euria."
+    assert stored.messages[1].llmProvider == "Euria"
+    assert stored.messages[1].stats.ttft > 0
     assert stored.messages[1].timeline == [
         "Analyse de la requete",
-        "Generation via Euria",
+        "Generation via Euria + web",
         "Extraction des entites NER",
         "Finalisation de la reponse",
+        "Recherche web via Euria",
     ]
 
 
@@ -1384,31 +1496,13 @@ def test_stream_message_uses_local_rag_context_with_euria_when_available(tmp_pat
     service_manager = _StubServiceManager()
     service_manager.learner._question_answering = MagicMock()
     service_manager.learner._question_answering._build_rag_context = MagicMock(return_value=("Contexte coffre", []))
+    fake_llm = _FakeEuriaClient({}, {("conversation_euria_rag", False): ["Réponse ", "stream ", "Euria ", "avec ", "coffre."]})
 
     with (
         patch("src.api.app.settings", tmp_settings),
         patch("src.api.app.conversation_store", store),
         patch("src.api.app.get_service_manager", return_value=service_manager),
-        patch(
-            "src.api.app._generate_euria_answer_with_optional_rag",
-            return_value={
-                "answer": "Réponse stream Euria avec coffre.",
-                "sources": [
-                    {
-                        "metadata": {
-                            "file_path": "Stories/Dune.md",
-                            "note_title": "Dune",
-                            "is_primary": True,
-                        },
-                        "score": 0.92,
-                    }
-                ],
-                "provenance": "vault",
-                "enrichment_path": "euria-rag",
-                "rag_lookup_attempted": True,
-                "rag_context_used": True,
-            },
-        ) as euria_mock,
+        patch("src.api.app._conversation_llm", return_value=fake_llm),
         patch("src.api.app._run_chat_generation_worker", side_effect=AssertionError("worker should not be called")),
         patch(
             "src.api.app._lookup_conversation_entity_contexts",
@@ -1428,12 +1522,12 @@ def test_stream_message_uses_local_rag_context_with_euria_when_available(tmp_pat
     assert response.status_code == 200
     assert "Recherche dans le coffre" in response.text
     assert "Réponse stream Euria avec coffre." in response.text
-    euria_mock.assert_called_once()
 
     stored = store.get("conv-euria-rag-stream")
     assert stored is not None
     assert stored.messages[1].enrichmentPath == "euria-rag"
-    assert stored.messages[1].sources[0].filePath == "Stories/Dune.md"
+    assert stored.messages[1].sources == []
+    assert stored.messages[1].stats.ttft > 0
     assert stored.messages[1].timeline == [
         "Analyse de la requete",
         "Recherche dans le coffre",
@@ -2246,3 +2340,37 @@ def test_create_message_enriches_entity_contexts_with_line_number_and_relation_e
     assert payload["entityContexts"][0]["relationExplanation"] == (
         "Alphabet est cité dans la source car elle suit aussi les projets spatiaux associés à Alpha Impulsion."
     )
+
+
+def test_enrich_entity_contexts_uses_llm_relation_explanations(tmp_settings):
+    service_manager = _StubServiceManager()
+    source_note = tmp_settings.vault / "Space" / "Alpha Impulsion.md"
+    source_note.parent.mkdir(parents=True, exist_ok=True)
+    source_note.write_text(
+        "# Alpha Impulsion\n\n"
+        "Alphabet s'intéresse aux mêmes projets de propulsion et d'observation orbitale.\n",
+        encoding="utf-8",
+    )
+    source = SourceRefModel(filePath="Space/Alpha Impulsion.md", noteTitle="Alpha Impulsion", isPrimary=True)
+
+    result = __import__("src.api.app", fromlist=["_enrich_entity_contexts"])._enrich_entity_contexts(
+        user_text="Parle-moi d'Alphabet",
+        answer="Alphabet suit ces projets spatiaux.",
+        entity_contexts=[
+            {
+                "type": "ORG",
+                "type_label": "Organisation",
+                "value": "Alphabet",
+                "mentions": 2,
+                "notes": [{"title": "Alpha Impulsion", "file_path": "Space/Alpha Impulsion.md"}],
+            }
+        ],
+        sources=[source],
+        primary_source=source,
+        svc=service_manager,
+        llm=service_manager.llm,
+    )
+
+    assert result[0]["value"] == "Alphabet"
+    assert result[0].get("relation_explanation")
+    service_manager.llm.chat.assert_called_once()

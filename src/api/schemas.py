@@ -192,6 +192,7 @@ class CreateConversationRequest(BaseModel):
 class MessageCreateRequest(BaseModel):
     prompt: str = Field(min_length=1)
     useEuria: bool = False
+    useRag: bool = True
 
 
 class SaveConversationResponse(BaseModel):

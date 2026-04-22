@@ -64,7 +64,7 @@ describe('dashboard screen', () => {
           nerModel: 'xx_ent_wiki_sm',
           autolearnMode: 'worker',
           euriaProvider: 'Infomaniak',
-          euriaModel: 'qwen3',
+          euriaModel: 'Qwen/Qwen3.5-122B-A10B-FP8',
           euriaEnabled: true,
         },
       },
@@ -89,7 +89,7 @@ describe('dashboard screen', () => {
     expect(renderedText).toContain('LLM actif ObsiRAG');
     expect(renderedText).toContain('mlx-community/Qwen2.5-7B-Instruct-4bit');
     expect(renderedText).toContain('Euria Infomaniak');
-    expect(renderedText).toContain('qwen3');
+    expect(renderedText).toContain('Qwen/Qwen3.5-122B-A10B-FP8');
     expect(renderedText).toContain('Provider: Infomaniak');
     expect(renderedText).toContain('Statut: Disponible');
     expect(renderedText).toContain('Source runtime: API FastAPI live');
@@ -135,7 +135,7 @@ describe('dashboard screen', () => {
           nerModel: 'xx_ent_wiki_sm',
           autolearnMode: 'worker',
           euriaProvider: 'Infomaniak',
-          euriaModel: 'qwen3',
+          euriaModel: 'Qwen/Qwen3.5-122B-A10B-FP8',
           euriaEnabled: true,
         },
       },

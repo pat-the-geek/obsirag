@@ -327,6 +327,7 @@ export function useStreamMessage(conversationId: string) {
   const queryClient = useQueryClient();
   const setDraft = useAppStore((state) => state.setDraft);
   const useEuriaForConversation = useAppStore((state) => state.useEuriaForConversation);
+  const useRagForConversation = useAppStore((state) => state.useRagForConversation);
 
   return useMutation({
     mutationFn: async (prompt: string) => {
@@ -429,7 +430,7 @@ export function useStreamMessage(conversationId: string) {
             };
           });
         },
-      }, { useEuria: useEuriaForConversation });
+      }, { useEuria: useEuriaForConversation, useRag: useRagForConversation });
 
       setDraft(conversationId, '');
       await queryClient.invalidateQueries({ queryKey: ['conversation', conversationId] });
