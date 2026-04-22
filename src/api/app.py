@@ -1461,7 +1461,8 @@ async def stream_message(
                 yield _sse_event("retrieval_status", {"phase": phase, "message": status_message})
 
             try:
-                stream_plan = _prepare_euria_stream_plan(
+                stream_plan = await asyncio.to_thread(
+                    _prepare_euria_stream_plan,
                     prompt=payload.prompt,
                     history=history,
                     use_rag=payload.useRag,
@@ -1498,18 +1499,29 @@ async def stream_message(
                 result = _maybe_upgrade_euria_result_with_web_fallback(prompt=payload.prompt, result=result, llm=llm, svc=svc)
                 answer = _sanitize_assistant_answer_text(str(result.get("answer") or answer))
             else:
-                result = _maybe_attach_local_vault_references(prompt=payload.prompt, answer=answer, result=result, svc=svc)
+                result = await asyncio.to_thread(
+                    _maybe_attach_local_vault_references,
+                    prompt=payload.prompt,
+                    answer=answer,
+                    result=result,
+                    svc=svc,
+                )
             sources = list(result.get("sources") or [])
             source_models = _build_source_models(sources)
             primary_source = next((item for item in source_models if item.isPrimary), None)
-            entity_contexts = _enrich_entity_contexts(
-                user_text=payload.prompt,
-                answer=answer,
-                entity_contexts=_lookup_conversation_entity_contexts(payload.prompt, answer, svc),
-                sources=source_models,
-                primary_source=primary_source,
-                svc=svc,
-                llm=llm,
+            _prompt, _answer, _source_models, _primary_source, _svc, _llm = (
+                payload.prompt, answer, source_models, primary_source, svc, llm
+            )
+            entity_contexts = await asyncio.to_thread(
+                lambda: _enrich_entity_contexts(
+                    user_text=_prompt,
+                    answer=_answer,
+                    entity_contexts=_lookup_conversation_entity_contexts(_prompt, _answer, _svc),
+                    sources=_source_models,
+                    primary_source=_primary_source,
+                    svc=_svc,
+                    llm=_llm,
+                )
             )
             assistant_message = _build_assistant_message(
                 answer=answer,
@@ -1588,7 +1600,8 @@ async def stream_message(
             _append_timeline_step(timeline, status_message)
             yield _sse_event("retrieval_status", {"phase": phase, "message": status_message})
             if phase == "web":
-                enriched_result = _compose_assistant_web_answer(
+                enriched_result = await asyncio.to_thread(
+                    _compose_assistant_web_answer,
                     prompt=payload.prompt,
                     answer=answer,
                     sources=sources,
@@ -1605,17 +1618,24 @@ async def stream_message(
                 source_models = _build_source_models(sources)
                 primary_source = next((item for item in source_models if item.isPrimary), None)
             elif phase == "entities":
-                entity_contexts = _enrich_entity_contexts(
-                    user_text=payload.prompt,
-                    answer=answer,
-                    entity_contexts=_lookup_conversation_entity_contexts(payload.prompt, answer, svc),
-                    sources=source_models,
-                    primary_source=primary_source,
-                    svc=svc,
-                    llm=llm,
+                _prompt, _answer, _source_models, _primary_source, _svc, _llm = (
+                    payload.prompt, answer, source_models, primary_source, svc, llm
+                )
+                entity_contexts = await asyncio.to_thread(
+                    lambda: _enrich_entity_contexts(
+                        user_text=_prompt,
+                        answer=_answer,
+                        entity_contexts=_lookup_conversation_entity_contexts(_prompt, _answer, _svc),
+                        sources=_source_models,
+                        primary_source=_primary_source,
+                        svc=_svc,
+                        llm=_llm,
+                    )
                 )
                 if sentinel and not query_overview:
-                    query_overview = _lookup_query_overview(payload.prompt, svc, llm=llm)
+                    query_overview = await asyncio.to_thread(
+                        _lookup_query_overview, payload.prompt, svc, llm=llm
+                    )
 
         for token in _iter_answer_tokens(answer):
             yield _sse_event("token", {"token": token})

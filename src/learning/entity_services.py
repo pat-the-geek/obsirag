@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import concurrent.futures
 import json
 import re
 import urllib.parse
@@ -13,7 +14,8 @@ from loguru import logger
 from src.learning.entity_cache import GeocodeCache, WuddaiCache
 
 
-_DDG_TIMEOUT_SECONDS = 6
+_DDG_TIMEOUT_SECONDS = 3
+_DDG_ENTITY_MAX_WORKERS = 5
 _DDG_USER_AGENT = "Mozilla/5.0 (ObsiRAG/1.0; +https://github.com/pat-the-geek/obsirag)"
 _ENTITY_MATCH_STOPWORDS = {
     "qui", "que", "quoi", "est", "suis", "sont", "dans", "avec", "sans", "pour",
@@ -120,19 +122,49 @@ class AutoLearnEntityServices:
         entities = self._owner._load_wuddai_entities()
         notes = self._list_notes()
         matches = self._match_wuddai_entities(text, entities, max_entities=max_entities) if entities else []
-        contexts: list[dict] = []
-        seen_values: set[str] = set()
-        for match in matches:
-            context = self._build_entity_context(match, notes, max_notes=max_notes)
-            contexts.append(context)
-            seen_values.add(self._owner._normalize_entity_name(context["value"]))
 
-        remaining = max(0, max_entities - len(contexts))
+        seen_values: set[str] = set()
+        all_matches: list[dict] = []
+        for match in matches:
+            normalized = self._owner._normalize_entity_name(str(match.get("value") or ""))
+            if normalized:
+                seen_values.add(normalized)
+            all_matches.append(match)
+
+        remaining = max(0, max_entities - len(all_matches))
         if remaining:
             fallback_matches = self._extract_fallback_entities(text, excluded_values=seen_values, max_entities=remaining)
-            for match in fallback_matches:
-                context = self._build_entity_context(match, notes, max_notes=max_notes)
-                contexts.append(context)
+            all_matches.extend(fallback_matches)
+
+        if not all_matches:
+            return []
+
+        # Fetch DDG knowledge for all entities in parallel
+        max_workers = min(len(all_matches), _DDG_ENTITY_MAX_WORKERS)
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+            ddg_futures = {
+                match["value"]: executor.submit(self._fetch_ddg_entity_knowledge, match["value"])
+                for match in all_matches
+            }
+
+        contexts: list[dict] = []
+        for match in all_matches:
+            tag = self._entity_tag(match)
+            related_notes = self._find_notes_for_tag(notes, tag, max_notes=max_notes) if tag else []
+            try:
+                ddg_knowledge = ddg_futures[match["value"]].result()
+            except Exception:
+                ddg_knowledge = {}
+            contexts.append({
+                "type": match["type"],
+                "type_label": self._entity_type_label(match["type"]),
+                "value": match["value"],
+                "mentions": match.get("mentions", 0),
+                "image_url": match.get("image_url"),
+                "tag": tag,
+                "notes": related_notes,
+                "ddg_knowledge": ddg_knowledge,
+            })
 
         return contexts
 

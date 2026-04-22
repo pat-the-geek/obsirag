@@ -17,15 +17,17 @@ export PYTHONPATH="$PWD"
 
 mkdir -p "$APP_DATA_DIR" "$LOG_DIR"
 
+UVICORN_WORKERS="${UVICORN_WORKERS:-2}"
+
 if [ -x ".venv/bin/python" ]; then
   if [[ "$use_reload" == "1" ]]; then
     exec .venv/bin/python -m uvicorn src.api.main:app --host 0.0.0.0 --port 8000 --reload
   fi
-  exec .venv/bin/python -m uvicorn src.api.main:app --host 0.0.0.0 --port 8000
+  exec .venv/bin/python -m uvicorn src.api.main:app --host 0.0.0.0 --port 8000 --workers "$UVICORN_WORKERS"
 fi
 
 if [[ "$use_reload" == "1" ]]; then
   exec python3 -m uvicorn src.api.main:app --host 0.0.0.0 --port 8000 --reload
 fi
 
-exec python3 -m uvicorn src.api.main:app --host 0.0.0.0 --port 8000
+exec python3 -m uvicorn src.api.main:app --host 0.0.0.0 --port 8000 --workers "$UVICORN_WORKERS"
