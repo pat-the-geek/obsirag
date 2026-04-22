@@ -2843,11 +2843,18 @@ def _generate_entity_relation_explanations(
     try:
         raw = chat(
             [
-                {"role": "system", "content": "Tu produis des explications relationnelles d'entités, précises et très concises."},
+                {
+                    "role": "system",
+                    "content": (
+                        "/no_think\n"
+                        "Tu produis des explications relationnelles d'entités, précises et très concises. "
+                        "Réponds uniquement avec le JSON demandé, sans texte supplémentaire."
+                    ),
+                },
                 {"role": "user", "content": "\n".join(prompt_lines)},
             ],
             temperature=0.0,
-            max_tokens=500,
+            max_tokens=1200,
             operation="entity_relation_explanations",
         )
     except Exception:
@@ -3008,7 +3015,8 @@ def _build_euria_direct_messages(prompt: str, history: list[dict[str, str]]) -> 
         {
             "role": "system",
             "content": (
-                "Tu réponds en français, avec du Markdown valide et propre. "
+                "Tu réponds UNIQUEMENT et EXCLUSIVEMENT en français, quelle que soit la langue de la question. "
+                "Utilise du Markdown valide et propre. "
                 "N'écris pas de balisage incomplet. "
                 "Si tu produis un tableau, utilise un vrai tableau Markdown avec des pipes. "
                 "Ne répète jamais une ligne, une ligne de tableau, un paragraphe ou une section. "
@@ -3053,7 +3061,9 @@ def _build_euria_web_messages(
         {
             "role": "system",
             "content": (
-                "Tu réponds en français, avec du Markdown valide et propre. "
+                "Tu réponds UNIQUEMENT et EXCLUSIVEMENT en français, quelle que soit la langue des sources ou de la question. "
+                "Même si les résultats de recherche web sont en anglais, ta réponse doit être entièrement rédigée en français. "
+                "Utilise du Markdown valide et propre. "
                 "N'écris pas de balisage incomplet. "
                 "Si tu produis un tableau, utilise un vrai tableau Markdown avec des pipes. "
                 "Ne répète jamais une ligne, une ligne de tableau, un paragraphe ou une section. "
@@ -3111,7 +3121,10 @@ def _build_euria_rag_messages(
 
 def _prepare_euria_stream_plan(*, prompt: str, history: list[dict[str, str]], use_rag: bool, svc) -> dict[str, Any]:
     if not use_rag:
-        web_results = _fetch_ddg_snippets(prompt)
+        try:
+            web_results = _fetch_ddg_snippets(prompt)
+        except Exception:
+            web_results = []
         messages = (
             _build_euria_web_messages(prompt, history, web_results)
             if web_results
@@ -3124,7 +3137,10 @@ def _prepare_euria_stream_plan(*, prompt: str, history: list[dict[str, str]], us
             "summary": "",
             "sources": web_results,
         } if web_results else {}
-        _, vault_sources = _build_local_rag_context(prompt, svc)
+        try:
+            _, vault_sources = _build_local_rag_context(prompt, svc)
+        except Exception:
+            vault_sources = []
         return {
             "messages": messages,
             "temperature": 0.3,

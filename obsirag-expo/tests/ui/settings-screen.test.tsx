@@ -6,8 +6,8 @@ const mockPush = jest.fn();
 const mockReplace = jest.fn();
 const mockInvalidateQueries = jest.fn();
 const mockUseServerConfig = jest.fn();
-const mockUseSessionStatus = jest.fn();
 const mockUseSystemStatus = jest.fn();
+const mockUseReindexData = jest.fn();
 const mockSetThemeMode = jest.fn();
 const mockIncreaseFontSize = jest.fn();
 const mockDecreaseFontSize = jest.fn();
@@ -39,15 +39,11 @@ jest.mock('@tanstack/react-query', () => ({
 
 jest.mock('../../features/auth/use-server-config', () => ({
   useServerConfig: () => mockUseServerConfig(),
-  useSessionStatus: () => mockUseSessionStatus(),
 }));
 
 jest.mock('../../features/system/use-system-status', () => ({
   useSystemStatus: () => mockUseSystemStatus(),
-}));
-
-jest.mock('../../services/storage/secure-session', () => ({
-  clearAccessToken: jest.fn(),
+  useReindexData: () => mockUseReindexData(),
 }));
 
 import SettingsScreen from '../../app/(tabs)/settings';
@@ -84,16 +80,6 @@ describe('settings screen', () => {
       setAccessToken: jest.fn(),
       setUseMockServer: jest.fn(),
     });
-    mockUseSessionStatus.mockReturnValue({
-      isRefetching: false,
-      refetch: jest.fn(),
-      data: {
-        authenticated: true,
-        requiresAuth: false,
-        tokenPreview: 'tok_abc',
-        mode: 'open',
-      },
-    });
     mockUseSystemStatus.mockReturnValue({
       isRefetching: false,
       refetch: jest.fn(),
@@ -114,15 +100,26 @@ describe('settings screen', () => {
           llmProvider: 'MLX',
           llmModel: 'mlx-community/Qwen2.5-7B-Instruct-4bit',
           embeddingModel: 'paraphrase-multilingual-MiniLM-L12-v2',
+          vectorStore: 'ChromaDB',
+        },
+        indexing: {
+          running: false,
+          processed: 12,
+          total: 12,
+          current: 'Indexation terminee',
         },
       },
+    });
+    mockUseReindexData.mockReturnValue({
+      mutate: jest.fn(),
+      isPending: false,
     });
     mockSetThemeMode.mockReset();
     mockIncreaseFontSize.mockReset();
     mockDecreaseFontSize.mockReset();
   });
 
-  it('shows live runtime mode and active model details', () => {
+  it('shows runtime and Chroma details without the old server/session sections', () => {
     const tree = renderer.create(<SettingsScreen />);
     const textNodes = tree.root.findAllByType(Text);
     const renderedText = textNodes
@@ -132,10 +129,30 @@ describe('settings screen', () => {
       })
       .join('\n');
 
-    expect(renderedText).toContain('Backend: http://192.168.1.217:8000');
-    expect(renderedText).toContain('Source runtime: API FastAPI live');
     expect(renderedText).toContain('Modele actif: mlx-community/Qwen2.5-7B-Instruct-4bit');
     expect(renderedText).toContain('Provider LLM: MLX');
+    expect(renderedText).toContain('ChromaDB');
+    expect(renderedText).toContain('Moteur vectoriel: ChromaDB');
+    expect(renderedText).toContain('Notes indexees: 12');
+    expect(renderedText).toContain('Chunks stockes: 48');
+    expect(renderedText).not.toContain('Configuration serveur');
+    expect(renderedText).not.toContain('Session');
+  });
+
+  it('triggers a reindex from the dedicated Chroma button', () => {
+    const mutate = jest.fn();
+    mockUseReindexData.mockReturnValue({
+      mutate,
+      isPending: false,
+    });
+
+    const tree = renderer.create(<SettingsScreen />);
+
+    act(() => {
+      tree.root.findByProps({ testID: 'settings-reindex-button' }).props.onPress();
+    });
+
+    expect(mutate).toHaveBeenCalled();
   });
 
   it('renders theme choices at the top and allows selecting Dark+', () => {

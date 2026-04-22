@@ -304,6 +304,37 @@ describe('MessageBubble', () => {
     expect(texts).toContain('Notes/Charles.md');
   });
 
+  it('labels vault references distinctly when they are attached after a web response', () => {
+    const message: ChatMessage = {
+      id: 'assistant-web-vault-refs',
+      role: 'assistant',
+      content: 'Voici une réponse web Euria.',
+      createdAt: '2026-04-16T12:00:00Z',
+      provenance: 'web',
+      enrichmentPath: 'euria-direct-web',
+      queryOverview: {
+        query: 'Paul Atreides',
+        searchQuery: 'Paul Atreides Dune',
+        summary: 'Paul Atreides est un personnage central de Dune.',
+        sources: [],
+      },
+      sources: [
+        {
+          filePath: 'Stories/Dune.md',
+          noteTitle: 'Dune',
+        },
+      ],
+    };
+
+    const tree = renderer.create(<MessageBubble message={message} />);
+
+    const texts = tree.root.findAllByType(Text).flatMap((node) => collectText(node.props.children));
+    expect(texts).toContain('Références coffre');
+    expect(texts).toContain('Notes associées après la réponse');
+    expect(tree.root.findByProps({ testID: 'message-query-overview-response' })).toBeTruthy();
+    expect(tree.root.findByProps({ testID: 'sources-panel-toggle' })).toBeTruthy();
+  });
+
   it('uses the active light theme palette for the assistant bubble', () => {
     const message: ChatMessage = {
       id: 'assistant-light',

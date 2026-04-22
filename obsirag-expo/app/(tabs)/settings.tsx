@@ -1,21 +1,14 @@
 import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
 import { Feather } from '@expo/vector-icons';
-import { useRouter } from 'expo-router';
-import { useQueryClient } from '@tanstack/react-query';
 
 import { Screen } from '../../components/ui/screen';
 import { SectionCard } from '../../components/ui/section-card';
 import { StatusPill } from '../../components/ui/status-pill';
-import { useServerConfig, useSessionStatus } from '../../features/auth/use-server-config';
-import { clearAccessToken } from '../../services/storage/secure-session';
+import { useReindexData, useSystemStatus } from '../../features/system/use-system-status';
 import { useAppStore } from '../../store/app-store';
 import { formatFontSizeModeLabel, formatThemeModeLabel, scaleFontSize, scaleLineHeight, useAppFontScale, useAppTheme } from '../../theme/app-theme';
-import { useSystemStatus } from '../../features/system/use-system-status';
 
 export default function SettingsScreen() {
-  const router = useRouter();
-  const queryClient = useQueryClient();
-  const { backendUrl, useMockServer, accessToken, setAccessToken, setUseMockServer } = useServerConfig();
   const themeMode = useAppStore((state) => state.themeMode);
   const setThemeMode = useAppStore((state) => state.setThemeMode);
   const increaseFontSize = useAppStore((state) => state.increaseFontSize);
@@ -23,36 +16,35 @@ export default function SettingsScreen() {
   const theme = useAppTheme();
   const fontScale = useAppFontScale();
   const { data, refetch, isRefetching } = useSystemStatus();
-  const session = useSessionStatus();
+  const reindexData = useReindexData();
 
-  const onLogout = async () => {
-    await clearAccessToken();
-    setAccessToken('');
-    await queryClient.invalidateQueries({ queryKey: ['session'] });
-    Alert.alert('Session effacee', 'Le token local a ete supprime de l\'app Expo.');
-    router.replace('/(auth)/login');
+  const autolearnLabel = data?.autolearn?.running
+    ? data.autolearn.managedBy === 'worker'
+      ? 'Worker separe actif'
+      : 'Auto-learner actif'
+    : data?.autolearn?.managedBy === 'worker'
+      ? 'Worker separe inactif'
+      : 'Auto-learner inactif';
+
+  const autolearnTone = data?.autolearn?.running ? 'success' : 'neutral';
+  const indexingTone = data?.indexing?.running ? 'warning' : 'success';
+  const indexingLabel = data?.indexing?.running
+    ? `Indexation en cours ${data.indexing.processed}/${data.indexing.total || '?'}`
+    : 'Index ChromaDB pret';
+
+  const onReindex = () => {
+    reindexData.mutate(undefined, {
+      onSuccess: (result) => {
+        Alert.alert(
+          'Reindexation terminee',
+          `+${result.added} ajoutees, ${result.updated} mises a jour, ${result.deleted} supprimees, ${result.skipped} ignorees.`,
+        );
+      },
+      onError: (error) => {
+        Alert.alert('Reindexation impossible', error instanceof Error ? error.message : 'La reindexation a echoue.');
+      },
+    });
   };
-
-  const onSwitchToMock = async () => {
-    setUseMockServer(true);
-    await queryClient.invalidateQueries();
-  };
-
-  const autolearnLabel = useMockServer
-    ? 'Worker mock'
-    : data?.autolearn?.running
-      ? data.autolearn.managedBy === 'worker'
-        ? 'Worker separe actif'
-        : 'Auto-learner actif'
-      : data?.autolearn?.managedBy === 'worker'
-        ? 'Worker separe inactif'
-        : 'Auto-learner inactif';
-
-  const autolearnTone = useMockServer
-    ? 'warning'
-    : data?.autolearn?.running
-      ? 'success'
-      : 'neutral';
 
   const themeOptions: Array<{ value: 'system' | 'light' | 'dark' | 'quiet' | 'abyss'; title: string; subtitle: string }> = [
     { value: 'system', title: 'Automatique', subtitle: `Suit le systeme (${theme.resolvedMode === 'dark' ? 'Dark+' : 'Light+'})` },
@@ -63,7 +55,7 @@ export default function SettingsScreen() {
   ];
 
   return (
-    <Screen refreshing={isRefetching || session.isRefetching} onRefresh={() => { void refetch(); void session.refetch(); }}>
+    <Screen refreshing={isRefetching || reindexData.isPending} onRefresh={() => { void refetch(); }}>
       <SectionCard title="Affichage" subtitle="Choisissez le rendu global de l'application Expo.">
         <StatusPill label={`Theme actif: ${themeMode === 'system' ? `${formatThemeModeLabel(themeMode)} (${theme.resolvedMode === 'dark' ? 'Dark+' : 'Light+'})` : formatThemeModeLabel(themeMode)}`} tone="neutral" />
         <View style={[styles.fontSizePanel, { backgroundColor: theme.colors.surfaceMuted, borderColor: theme.colors.border }] }>
@@ -116,44 +108,11 @@ export default function SettingsScreen() {
           })}
         </View>
       </SectionCard>
-      <SectionCard title="Configuration serveur" subtitle="Le frontend est deja structure pour un backend Python expose via API REST/SSE.">
-        <Text style={[styles.bodyText, { color: theme.colors.text, fontSize: scaleFontSize(14, fontScale.scale), lineHeight: scaleLineHeight(20, fontScale.scale) }]}>Backend: {backendUrl}</Text>
-        <StatusPill label={useMockServer ? 'Mode mock' : 'Mode live'} tone={useMockServer ? 'warning' : 'success'} />
-        <Text style={[styles.bodyText, { color: theme.colors.text, fontSize: scaleFontSize(14, fontScale.scale), lineHeight: scaleLineHeight(20, fontScale.scale) }]}>Source runtime: {useMockServer ? 'Donnees mock locales' : 'API FastAPI live'}</Text>
-        <Pressable onPress={() => router.push('/(auth)/server-config?allowStay=1')} style={[styles.button, { backgroundColor: theme.colors.primary }]}> 
-          <Text style={[styles.buttonText, { color: theme.colors.primaryText, fontSize: scaleFontSize(13, fontScale.scale) }]}>Modifier la connexion</Text>
-        </Pressable>
-        {!useMockServer ? (
-          <Pressable onPress={onSwitchToMock} style={[styles.secondaryButton, { backgroundColor: theme.colors.secondaryButton }]}>
-            <Text style={[styles.secondaryButtonText, { color: theme.colors.secondaryButtonText, fontSize: scaleFontSize(13, fontScale.scale) }]}>Basculer en mock</Text>
-          </Pressable>
-        ) : null}
-      </SectionCard>
-      <SectionCard title="Session" subtitle="Etat de la session backend et gestion locale du token. Rechargement par pull-to-refresh.">
-        <StatusPill
-          label={useMockServer ? 'Session mock' : session.data?.authenticated ? 'Session valide' : 'Session non verifiee'}
-          tone={useMockServer ? 'warning' : session.data?.authenticated ? 'success' : 'danger'}
-        />
-        <Text style={[styles.bodyText, { color: theme.colors.text, fontSize: scaleFontSize(14, fontScale.scale), lineHeight: scaleLineHeight(20, fontScale.scale) }]}>Mode: {session.data?.mode ?? (useMockServer ? 'mock' : 'inconnu')}</Text>
-        <Text style={[styles.bodyText, { color: theme.colors.text, fontSize: scaleFontSize(14, fontScale.scale), lineHeight: scaleLineHeight(20, fontScale.scale) }]}>Auth requise: {session.data?.requiresAuth ? 'oui' : 'non'}</Text>
-        <Text style={[styles.bodyText, { color: theme.colors.text, fontSize: scaleFontSize(14, fontScale.scale), lineHeight: scaleLineHeight(20, fontScale.scale) }]}>Token local: {accessToken ? 'present' : 'absent'}</Text>
-        <Text style={[styles.bodyText, { color: theme.colors.text, fontSize: scaleFontSize(14, fontScale.scale), lineHeight: scaleLineHeight(20, fontScale.scale) }]}>Preview token: {session.data?.tokenPreview ?? '-'}</Text>
-        {!useMockServer ? (
-          <Pressable onPress={() => { void session.refetch(); }} style={[styles.secondaryButton, { backgroundColor: theme.colors.secondaryButton }]}>
-            <Text style={[styles.secondaryButtonText, { color: theme.colors.secondaryButtonText, fontSize: scaleFontSize(13, fontScale.scale) }]}>Verifier la session</Text>
-          </Pressable>
-        ) : null}
-        <Pressable onPress={() => { void onLogout(); }} style={[styles.dangerButton, { backgroundColor: theme.colors.danger }]}>
-          <Text style={[styles.buttonText, { color: theme.colors.dangerText, fontSize: scaleFontSize(13, fontScale.scale) }]}>Effacer la session</Text>
-        </Pressable>
-      </SectionCard>
       <SectionCard title="Runtime visible">
         <Text style={[styles.bodyText, { color: theme.colors.text, fontSize: scaleFontSize(14, fontScale.scale), lineHeight: scaleLineHeight(20, fontScale.scale) }]}>LLM: {data?.llmAvailable ? 'disponible' : 'indisponible'}</Text>
         <Text style={[styles.bodyText, { color: theme.colors.text, fontSize: scaleFontSize(14, fontScale.scale), lineHeight: scaleLineHeight(20, fontScale.scale) }]}>Provider LLM: {data?.runtime?.llmProvider ?? '-'}</Text>
-        <Text style={[styles.bodyText, { color: theme.colors.text, fontSize: scaleFontSize(14, fontScale.scale), lineHeight: scaleLineHeight(20, fontScale.scale) }]}>Modele actif: {data?.runtime?.llmModel ?? (useMockServer ? 'mock' : 'en attente')}</Text>
+        <Text style={[styles.bodyText, { color: theme.colors.text, fontSize: scaleFontSize(14, fontScale.scale), lineHeight: scaleLineHeight(20, fontScale.scale) }]}>Modele actif: {data?.runtime?.llmModel ?? 'en attente'}</Text>
         <Text style={[styles.bodyText, { color: theme.colors.text, fontSize: scaleFontSize(14, fontScale.scale), lineHeight: scaleLineHeight(20, fontScale.scale) }]}>Embeddings: {data?.runtime?.embeddingModel ?? '-'}</Text>
-        <Text style={[styles.bodyText, { color: theme.colors.text, fontSize: scaleFontSize(14, fontScale.scale), lineHeight: scaleLineHeight(20, fontScale.scale) }]}>Notes indexees: {data?.notesIndexed ?? '-'}</Text>
-        <Text style={[styles.bodyText, { color: theme.colors.text, fontSize: scaleFontSize(14, fontScale.scale), lineHeight: scaleLineHeight(20, fontScale.scale) }]}>Chunks: {data?.chunksIndexed ?? '-'}</Text>
         <StatusPill label={autolearnLabel} tone={autolearnTone} />
         <Text style={[styles.bodyText, { color: theme.colors.text, fontSize: scaleFontSize(14, fontScale.scale), lineHeight: scaleLineHeight(20, fontScale.scale) }]}>Gestion auto-learn: {data?.autolearn?.managedBy ?? '-'}</Text>
         <Text style={[styles.bodyText, { color: theme.colors.text, fontSize: scaleFontSize(14, fontScale.scale), lineHeight: scaleLineHeight(20, fontScale.scale) }]}>PID worker: {data?.autolearn?.pid ?? '-'}</Text>
@@ -161,6 +120,31 @@ export default function SettingsScreen() {
         <Text style={[styles.bodyText, { color: theme.colors.text, fontSize: scaleFontSize(14, fontScale.scale), lineHeight: scaleLineHeight(20, fontScale.scale) }]}>Debut worker: {formatTimestamp(data?.autolearn?.startedAt)}</Text>
         <Text style={[styles.bodyText, { color: theme.colors.text, fontSize: scaleFontSize(14, fontScale.scale), lineHeight: scaleLineHeight(20, fontScale.scale) }]}>Derniere maj: {formatTimestamp(data?.autolearn?.updatedAt)}</Text>
         <Text style={[styles.bodyText, { color: theme.colors.text, fontSize: scaleFontSize(14, fontScale.scale), lineHeight: scaleLineHeight(20, fontScale.scale) }]}>Prochain cycle: {formatTimestamp(data?.autolearn?.nextRunAt)}</Text>
+      </SectionCard>
+      <SectionCard
+        title="ChromaDB"
+        subtitle="Etat de l'index vectoriel local et relance manuelle de l'indexation du coffre."
+        headerAccessory={<StatusPill label={indexingLabel} tone={indexingTone} />}
+      >
+        <Text style={[styles.bodyText, { color: theme.colors.text, fontSize: scaleFontSize(14, fontScale.scale), lineHeight: scaleLineHeight(20, fontScale.scale) }]}>Moteur vectoriel: {data?.runtime?.vectorStore ?? 'ChromaDB'}</Text>
+        <Text style={[styles.bodyText, { color: theme.colors.text, fontSize: scaleFontSize(14, fontScale.scale), lineHeight: scaleLineHeight(20, fontScale.scale) }]}>Notes indexees: {data?.notesIndexed ?? '-'}</Text>
+        <Text style={[styles.bodyText, { color: theme.colors.text, fontSize: scaleFontSize(14, fontScale.scale), lineHeight: scaleLineHeight(20, fontScale.scale) }]}>Chunks stockes: {data?.chunksIndexed ?? '-'}</Text>
+        <Text style={[styles.bodyText, { color: theme.colors.text, fontSize: scaleFontSize(14, fontScale.scale), lineHeight: scaleLineHeight(20, fontScale.scale) }]}>Progression: {data?.indexing?.processed ?? 0} / {data?.indexing?.total ?? 0}</Text>
+        <Text style={[styles.bodyText, { color: theme.colors.text, fontSize: scaleFontSize(14, fontScale.scale), lineHeight: scaleLineHeight(20, fontScale.scale) }]}>Etape courante: {data?.indexing?.current || 'Indexation terminee'}</Text>
+        <Pressable
+          testID="settings-reindex-button"
+          disabled={reindexData.isPending || data?.indexing?.running}
+          onPress={onReindex}
+          style={[
+            styles.button,
+            { backgroundColor: theme.colors.primary },
+            (reindexData.isPending || data?.indexing?.running) && styles.optionDisabled,
+          ]}
+        >
+          <Text style={[styles.buttonText, { color: theme.colors.primaryText, fontSize: scaleFontSize(13, fontScale.scale) }]}>
+            {reindexData.isPending ? 'Reindexation en cours...' : 'Reindexer les donnees'}
+          </Text>
+        </Pressable>
       </SectionCard>
     </Screen>
   );

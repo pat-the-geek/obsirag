@@ -6,6 +6,7 @@ import {
   GraphData,
   InsightItem,
   NoteDetail,
+  ReindexResult,
   RelatedNote,
   SaveConversationResult,
   ServerConfig,
@@ -35,6 +36,7 @@ type StreamHandlers = {
 type ConversationRequestOptions = {
   useEuria?: boolean;
   useRag?: boolean;
+  signal?: AbortSignal;
 };
 
 type GraphQueryFilters = {
@@ -102,6 +104,30 @@ export class ObsiRagApi {
     }
 
     return this.requestJson<SystemStatus>('/api/v1/system/status');
+  }
+
+  async reindexData(): Promise<ReindexResult> {
+    if (this.config.useMockServer) {
+      return {
+        status: 'ok',
+        added: 3,
+        updated: 1,
+        deleted: 0,
+        skipped: 732,
+        notesIndexed: mockSystemStatus.notesIndexed,
+        chunksIndexed: mockSystemStatus.chunksIndexed,
+        indexing: {
+          running: false,
+          processed: mockSystemStatus.notesIndexed,
+          total: mockSystemStatus.notesIndexed,
+          current: 'Indexation terminee',
+        },
+      };
+    }
+
+    return this.requestJson<ReindexResult>('/api/v1/system/reindex', {
+      method: 'POST',
+    });
   }
 
   async getConversations(): Promise<ConversationSummary[]> {
@@ -415,8 +441,12 @@ export class ObsiRagApi {
           Accept: 'text/event-stream',
         },
         body: JSON.stringify({ prompt, useEuria: options?.useEuria ?? false, useRag: options?.useRag ?? true }),
+        signal: options?.signal,
       });
     } catch (error) {
+      if (this.isAbortError(error)) {
+        throw error;
+      }
       return fallbackToStandardMessage();
     }
 
@@ -440,6 +470,9 @@ export class ObsiRagApi {
       try {
         ({ value, done } = await reader.read());
       } catch (error) {
+        if (this.isAbortError(error)) {
+          throw error;
+        }
         if (!sawStreamBytes) {
           return fallbackToStandardMessage();
         }
@@ -522,6 +555,10 @@ export class ObsiRagApi {
       throw await this.toRequestError(response, `Request failed for ${path}.`);
     }
     return response.json() as Promise<T>;
+  }
+
+  private isAbortError(error: unknown): boolean {
+    return Boolean(error) && typeof error === 'object' && (error as { name?: string }).name === 'AbortError';
   }
 
   private toNetworkError(error: unknown, fallbackMessage: string): Error {

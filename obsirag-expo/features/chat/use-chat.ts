@@ -1,3 +1,4 @@
+import { useRef } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { useServerConfig } from '../auth/use-server-config';
@@ -328,9 +329,28 @@ export function useStreamMessage(conversationId: string) {
   const setDraft = useAppStore((state) => state.setDraft);
   const useEuriaForConversation = useAppStore((state) => state.useEuriaForConversation);
   const useRagForConversation = useAppStore((state) => state.useRagForConversation);
+  const activeStreamControllerRef = useRef<AbortController | null>(null);
+  const activeStreamUserMessageIdRef = useRef<string | null>(null);
 
-  return useMutation({
+  const clearActiveStreamingTurn = () => {
+    const activeUserMessageId = activeStreamUserMessageIdRef.current;
+
+    queryClient.setQueryData<ConversationDetail | undefined>(['conversation', conversationId], (current) => {
+      if (!current) {
+        return current;
+      }
+
+      return {
+        ...current,
+        messages: current.messages.filter((item) => item.id !== STREAMING_ASSISTANT_ID && item.id !== activeUserMessageId),
+      };
+    });
+  };
+
+  const mutation = useMutation({
     mutationFn: async (prompt: string) => {
+      activeStreamControllerRef.current?.abort();
+      activeStreamControllerRef.current = new AbortController();
       const conversation = queryClient.getQueryData<ConversationDetail>(['conversation', conversationId]);
       const userMessage: ChatMessage = {
         id: `user-${Date.now()}`,
@@ -339,6 +359,7 @@ export function useStreamMessage(conversationId: string) {
         createdAt: new Date().toISOString(),
         transient: true,
       };
+      activeStreamUserMessageIdRef.current = userMessage.id;
 
       queryClient.setQueryData<ConversationDetail | undefined>(['conversation', conversationId], (current) => {
         const safeCurrent = current ?? conversation;
@@ -358,95 +379,110 @@ export function useStreamMessage(conversationId: string) {
       let streamedTimeline: string[] = ['Réponse en préparation'];
       let streamedSources: NonNullable<ChatMessage['sources']> = [];
       let streamedPrimarySource: SourceRef | null = null;
-      const message = await api.streamConversationResponse(conversationId, prompt, {
-        onStatus: (status) => {
-          streamedTimeline = appendTimelineStep(streamedTimeline, status);
-          queryClient.setQueryData<ConversationDetail | undefined>(['conversation', conversationId], (current) => {
-            if (!current) {
-              return current;
-            }
-            const draftAssistant: ChatMessage = {
-              id: STREAMING_ASSISTANT_ID,
-              role: 'assistant',
-              content: streamedContent.trim(),
-              createdAt: new Date().toISOString(),
-              transient: true,
-              provenance: 'vault',
-              timeline: streamedTimeline,
-              sources: streamedSources,
-              primarySource: streamedPrimarySource,
-            };
-            return {
-              ...current,
-              messages: upsertStreamingTurn(current.messages, userMessage, draftAssistant),
-            };
-          });
-        },
-        onToken: (token) => {
-          streamedContent += token;
-          queryClient.setQueryData<ConversationDetail | undefined>(['conversation', conversationId], (current) => {
-            if (!current) {
-              return current;
-            }
-            const draftAssistant: ChatMessage = {
-              id: STREAMING_ASSISTANT_ID,
-              role: 'assistant',
-              content: streamedContent.trim(),
-              createdAt: new Date().toISOString(),
-              transient: true,
-              provenance: 'vault',
-              timeline: streamedTimeline,
-              sources: streamedSources,
-              primarySource: streamedPrimarySource,
-            };
-            return {
-              ...current,
-              messages: upsertStreamingTurn(current.messages, userMessage, draftAssistant),
-            };
-          });
-        },
-        onSources: ({ sources, primarySource }) => {
-          streamedSources = sources ?? [];
-          streamedPrimarySource = primarySource ?? null;
-        },
-        onComplete: (assistantMessage) => {
-          queryClient.setQueryData<ConversationDetail | undefined>(['conversation', conversationId], (current) => {
-            if (!current) {
-              return current;
-            }
-            const finalizedMessage: ChatMessage = {
-              ...assistantMessage,
-              transient: true,
-              content: assistantMessage.content?.trim() ? assistantMessage.content : streamedContent.trim(),
-              timeline: assistantMessage.timeline?.length ? assistantMessage.timeline : streamedTimeline,
-              sources: assistantMessage.sources?.length ? assistantMessage.sources : streamedSources,
-              primarySource: assistantMessage.primarySource ?? streamedPrimarySource,
-            };
-            return {
-              ...current,
-              messages: upsertStreamingTurn(current.messages, userMessage, finalizedMessage),
-              ...(finalizedMessage.stats ? { lastGenerationStats: finalizedMessage.stats } : {}),
-              updatedAt: new Date().toISOString(),
-            };
-          });
-        },
-      }, { useEuria: useEuriaForConversation, useRag: useRagForConversation });
+      try {
+        const message = await api.streamConversationResponse(conversationId, prompt, {
+          onStatus: (status) => {
+            streamedTimeline = appendTimelineStep(streamedTimeline, status);
+            queryClient.setQueryData<ConversationDetail | undefined>(['conversation', conversationId], (current) => {
+              if (!current) {
+                return current;
+              }
+              const draftAssistant: ChatMessage = {
+                id: STREAMING_ASSISTANT_ID,
+                role: 'assistant',
+                content: streamedContent.trim(),
+                createdAt: new Date().toISOString(),
+                transient: true,
+                provenance: 'vault',
+                timeline: streamedTimeline,
+                sources: streamedSources,
+                primarySource: streamedPrimarySource,
+              };
+              return {
+                ...current,
+                messages: upsertStreamingTurn(current.messages, userMessage, draftAssistant),
+              };
+            });
+          },
+          onToken: (token) => {
+            streamedContent += token;
+            queryClient.setQueryData<ConversationDetail | undefined>(['conversation', conversationId], (current) => {
+              if (!current) {
+                return current;
+              }
+              const draftAssistant: ChatMessage = {
+                id: STREAMING_ASSISTANT_ID,
+                role: 'assistant',
+                content: streamedContent.trim(),
+                createdAt: new Date().toISOString(),
+                transient: true,
+                provenance: 'vault',
+                timeline: streamedTimeline,
+                sources: streamedSources,
+                primarySource: streamedPrimarySource,
+              };
+              return {
+                ...current,
+                messages: upsertStreamingTurn(current.messages, userMessage, draftAssistant),
+              };
+            });
+          },
+          onSources: ({ sources, primarySource }) => {
+            streamedSources = sources ?? [];
+            streamedPrimarySource = primarySource ?? null;
+          },
+          onComplete: (assistantMessage) => {
+            queryClient.setQueryData<ConversationDetail | undefined>(['conversation', conversationId], (current) => {
+              if (!current) {
+                return current;
+              }
+              const finalizedMessage: ChatMessage = {
+                ...assistantMessage,
+                transient: true,
+                content: assistantMessage.content?.trim() ? assistantMessage.content : streamedContent.trim(),
+                timeline: assistantMessage.timeline?.length ? assistantMessage.timeline : streamedTimeline,
+                sources: assistantMessage.sources?.length ? assistantMessage.sources : streamedSources,
+                primarySource: assistantMessage.primarySource ?? streamedPrimarySource,
+              };
+              return {
+                ...current,
+                messages: upsertStreamingTurn(current.messages, userMessage, finalizedMessage),
+                ...(finalizedMessage.stats ? { lastGenerationStats: finalizedMessage.stats } : {}),
+                updatedAt: new Date().toISOString(),
+              };
+            });
+          },
+        }, { useEuria: useEuriaForConversation, useRag: useRagForConversation, signal: activeStreamControllerRef.current.signal });
 
-      setDraft(conversationId, '');
-      await queryClient.invalidateQueries({ queryKey: ['conversation', conversationId] });
-      await queryClient.invalidateQueries({ queryKey: ['conversations'] });
-      return message;
+        setDraft(conversationId, '');
+        await queryClient.invalidateQueries({ queryKey: ['conversation', conversationId] });
+        await queryClient.invalidateQueries({ queryKey: ['conversations'] });
+        return message;
+      } finally {
+        if (activeStreamControllerRef.current?.signal.aborted) {
+          clearActiveStreamingTurn();
+        }
+        activeStreamControllerRef.current = null;
+        activeStreamUserMessageIdRef.current = null;
+      }
     },
     onError: () => {
-      queryClient.setQueryData<ConversationDetail | undefined>(['conversation', conversationId], (current) => {
-        if (!current) {
-          return current;
-        }
-        return {
-          ...current,
-          messages: current.messages.filter((item) => item.id !== STREAMING_ASSISTANT_ID),
-        };
-      });
+      clearActiveStreamingTurn();
     },
   });
+
+  const cancelStream = () => {
+    if (!activeStreamControllerRef.current) {
+      return;
+    }
+
+    clearActiveStreamingTurn();
+    activeStreamControllerRef.current.abort();
+    mutation.reset();
+  };
+
+  return {
+    ...mutation,
+    cancelStream,
+  };
 }

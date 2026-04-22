@@ -402,6 +402,37 @@ def test_system_status_infers_ready_startup_when_status_file_is_missing(tmp_sett
     assert payload["startup"]["steps"][-1] == "Tous les services sont opérationnels"
 
 
+def test_system_reindex_returns_updated_chroma_counts(tmp_settings):
+    service_manager = _StubServiceManager()
+    service_manager.indexer.index_vault.return_value = {
+        "added": 5,
+        "updated": 2,
+        "deleted": 1,
+        "skipped": 8,
+    }
+    service_manager.chroma.count_notes.return_value = 42
+    service_manager.chroma.count.return_value = 256
+
+    with (
+        patch("src.api.app.settings", tmp_settings),
+        patch("src.api.app.get_service_manager", return_value=service_manager),
+    ):
+        client = TestClient(app)
+        response = client.post("/api/v1/system/reindex")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "ok"
+    assert payload["added"] == 5
+    assert payload["updated"] == 2
+    assert payload["deleted"] == 1
+    assert payload["skipped"] == 8
+    assert payload["notesIndexed"] == 42
+    assert payload["chunksIndexed"] == 256
+    assert payload["indexing"]["running"] is False
+    assert payload["indexing"]["current"] == "Indexation terminee"
+
+
 def test_normalize_indexing_status_replaces_stale_current_when_not_running():
     normalized = _normalize_indexing_status({
         "running": False,
@@ -1129,6 +1160,16 @@ def test_create_message_bypasses_local_worker_when_euria_is_enabled(tmp_path: Pa
 def test_create_message_keeps_entity_enrichment_when_euria_native_web_mode_is_enabled(tmp_path: Path, tmp_settings):
     store = ApiConversationStore(tmp_path / "api" / "conversations.json")
     service_manager = _StubServiceManager()
+    rag_sources = [
+        {
+            "metadata": {
+                "file_path": "Stories/Dune.md",
+                "note_title": "Dune",
+                "is_primary": True,
+            },
+            "score": 0.92,
+        }
+    ]
 
     with (
         patch("src.api.app.settings", tmp_settings),
@@ -1143,6 +1184,7 @@ def test_create_message_keeps_entity_enrichment_when_euria_native_web_mode_is_en
                 "enrichment_path": "euria-direct-web",
             },
         ) as euria_mock,
+        patch("src.api.app._build_local_rag_context", return_value=("References coffre Dune", rag_sources)),
         patch("src.api.app._run_chat_generation_worker", side_effect=AssertionError("worker should not be called")),
         patch(
             "src.api.app._lookup_conversation_entity_contexts",
@@ -1165,11 +1207,13 @@ def test_create_message_keeps_entity_enrichment_when_euria_native_web_mode_is_en
     assert payload["llmProvider"] == "Euria"
     assert payload["entityContexts"][0]["value"] == "Paul Atreides"
     assert payload["enrichmentPath"] == "euria-direct-web"
+    assert payload["sources"][0]["filePath"] == "Stories/Dune.md"
     euria_mock.assert_called_once()
 
     stored = store.get("conv-euria-fast-web")
     assert stored is not None
     assert stored.messages[1].entityContexts[0].value == "Paul Atreides"
+    assert stored.messages[1].sources[0].filePath == "Stories/Dune.md"
 
 
 def test_stream_message_bypasses_local_worker_when_euria_is_enabled(tmp_path: Path, tmp_settings):
@@ -1215,12 +1259,23 @@ def test_stream_message_keeps_entity_enrichment_when_euria_native_web_mode_is_en
     store = ApiConversationStore(tmp_path / "api" / "conversations.json")
     service_manager = _StubServiceManager()
     fake_llm = _FakeEuriaClient({}, {("conversation_euria_fast_web", True): ["Réponse ", "stream ", "web ", "Euria."]})
+    rag_sources = [
+        {
+            "metadata": {
+                "file_path": "Stories/Dune.md",
+                "note_title": "Dune",
+                "is_primary": True,
+            },
+            "score": 0.92,
+        }
+    ]
 
     with (
         patch("src.api.app.settings", tmp_settings),
         patch("src.api.app.conversation_store", store),
         patch("src.api.app.get_service_manager", return_value=service_manager),
         patch("src.api.app._conversation_llm", return_value=fake_llm),
+        patch("src.api.app._build_local_rag_context", return_value=("References coffre Dune", rag_sources)),
         patch("src.api.app._run_chat_generation_worker", side_effect=AssertionError("worker should not be called")),
         patch(
             "src.api.app._lookup_conversation_entity_contexts",
@@ -1241,12 +1296,14 @@ def test_stream_message_keeps_entity_enrichment_when_euria_native_web_mode_is_en
     assert "Generation via Euria + web" in response.text
     assert "Extraction des entites NER" in response.text
     assert "Réponse stream web Euria." in response.text
+    assert "Références du coffre associées" in response.text
 
     stored = store.get("conv-euria-stream-web")
     assert stored is not None
     assert stored.messages[1].entityContexts[0].value == "Paul Atreides"
     assert stored.messages[1].content == "Réponse stream web Euria."
     assert stored.messages[1].llmProvider == "Euria"
+    assert stored.messages[1].sources[0].filePath == "Stories/Dune.md"
     assert stored.messages[1].stats.ttft > 0
     assert stored.messages[1].timeline == [
         "Analyse de la requete",
@@ -1254,6 +1311,7 @@ def test_stream_message_keeps_entity_enrichment_when_euria_native_web_mode_is_en
         "Extraction des entites NER",
         "Finalisation de la reponse",
         "Recherche web via Euria",
+        "Références du coffre associées",
     ]
 
 

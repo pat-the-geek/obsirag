@@ -58,6 +58,12 @@ export function MessageBubble({
   const statsLabel = !isUser && !isPendingAssistant ? formatGenerationStats(message.stats) : null;
   const displayedAssistantContent = targetAssistantContent;
   const displayedQueryOverviewContent = ddgMarkdown;
+  const usesPostResponseVaultReferences = Boolean(
+    !isUser &&
+    message.provenance === 'web' &&
+    message.enrichmentPath === 'euria-direct-web' &&
+    message.sources?.length,
+  );
   const [pendingFrameIndex, setPendingFrameIndex] = useState(0);
   const assistantTone = theme.isDark ? 'dark' : 'light';
   const userBubbleBackground = theme.isDark ? theme.colors.primaryMuted : '#191919';
@@ -169,14 +175,6 @@ export function MessageBubble({
                 {...(onOpenTag ? { onOpenTag } : {})}
               />
             )}
-            {!isUser && message.sources?.length ? (
-              <SourceList
-                sources={message.sources}
-                isOpen={sourcesOpen}
-                onToggleOpen={() => setSourcesOpen((current) => !current)}
-                onSelectSource={(source) => onOpenNote?.(source.filePath)}
-              />
-            ) : null}
             {!isUser && message.entityContexts?.length ? (
               <EntityContextList
                 entities={message.entityContexts}
@@ -222,6 +220,18 @@ export function MessageBubble({
               />
             </View>
           </View>
+        </Animated.View>
+      ) : null}
+      {!isUser && message.sources?.length ? (
+        <Animated.View style={assistantRevealStyle}>
+          <SourceList
+            sources={message.sources}
+            isOpen={sourcesOpen}
+            onToggleOpen={() => setSourcesOpen((current) => !current)}
+            onSelectSource={(source) => onOpenNote?.(source.filePath)}
+            title={usesPostResponseVaultReferences ? 'Références coffre' : undefined}
+            caption={usesPostResponseVaultReferences ? 'Notes associées après la réponse' : undefined}
+          />
         </Animated.View>
       ) : null}
       {showWebSearchAction || showDeleteAction ? (

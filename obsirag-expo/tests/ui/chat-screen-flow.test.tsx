@@ -33,6 +33,7 @@ const mockGenerateConversationReportMutate = jest.fn();
 const mockDeleteConversationMessageMutate = jest.fn();
 const mockExplicitWebSearchMutate = jest.fn();
 const mockStreamMessageMutate = jest.fn();
+const mockCancelStream = jest.fn();
 const mockSetDraft = jest.fn();
 const mockSetUseEuriaForConversation = jest.fn();
 const mockSetUseRagForConversation = jest.fn();
@@ -43,7 +44,7 @@ const mockConfirm = jest.fn();
 let mockDraftValue = '';
 let mockUseEuriaForConversation = false;
 let mockUseRagForConversation = true;
-let mockStreamMessageState = { mutate: mockStreamMessageMutate, isPending: false, error: null as Error | null };
+let mockStreamMessageState = { mutate: mockStreamMessageMutate, isPending: false, error: null as Error | null, cancelStream: mockCancelStream };
 let mockExplicitWebSearchState = { mutate: mockExplicitWebSearchMutate, isPending: false };
 let mockConversationData: ConversationDetail | undefined = {
   id: 'conv-1',
@@ -242,6 +243,7 @@ describe('ConversationDetailScreen', () => {
     mockDeleteConversationMessageMutate.mockReset();
     mockExplicitWebSearchMutate.mockReset();
     mockStreamMessageMutate.mockReset();
+    mockCancelStream.mockReset();
     mockSetDraft.mockReset();
     mockSetUseEuriaForConversation.mockReset();
     mockSetUseRagForConversation.mockReset();
@@ -251,7 +253,7 @@ describe('ConversationDetailScreen', () => {
     mockUseRagForConversation = true;
     alertSpy.mockReset();
     mockConfirm.mockReset();
-    mockStreamMessageState = { mutate: mockStreamMessageMutate, isPending: false, error: null };
+    mockStreamMessageState = { mutate: mockStreamMessageMutate, isPending: false, error: null, cancelStream: mockCancelStream };
     mockExplicitWebSearchState = { mutate: mockExplicitWebSearchMutate, isPending: false };
   });
 
@@ -607,6 +609,7 @@ describe('ConversationDetailScreen', () => {
       sourcePressable?.props.onPress();
     });
 
+    expect(mockCancelStream).toHaveBeenCalled();
     expect(mockRouterPush).toHaveBeenCalledWith(`/(tabs)/note/${encodeURIComponent('Notes/Ada.md')}?returnTo=${encodeURIComponent('/(tabs)/chat/conv-1')}`);
   });
 
@@ -727,7 +730,7 @@ describe('ConversationDetailScreen', () => {
         },
       ],
     };
-    mockStreamMessageState = { mutate: mockStreamMessageMutate, isPending: true, error: null };
+    mockStreamMessageState = { mutate: mockStreamMessageMutate, isPending: true, error: null, cancelStream: mockCancelStream };
 
     const tree = renderer.create(<ConversationDetailScreen />);
 

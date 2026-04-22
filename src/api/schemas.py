@@ -72,6 +72,17 @@ class SystemStatusResponse(BaseModel):
     alerts: list[SystemAlertModel] = Field(default_factory=list)
 
 
+class ReindexResponseModel(BaseModel):
+    status: Literal["ok"] = "ok"
+    added: int
+    updated: int
+    deleted: int
+    skipped: int
+    notesIndexed: int
+    chunksIndexed: int
+    indexing: IndexingStatusModel
+
+
 class SourceRefModel(BaseModel):
     filePath: str
     noteTitle: str

@@ -248,6 +248,17 @@ export type SystemStatus = {
   alerts?: SystemAlert[];
 };
 
+export type ReindexResult = {
+  status: 'ok';
+  added: number;
+  updated: number;
+  deleted: number;
+  skipped: number;
+  notesIndexed: number;
+  chunksIndexed: number;
+  indexing: NonNullable<SystemStatus['indexing']>;
+};
+
 export type ServerConfig = {
   backendUrl: string;
   accessToken?: string;

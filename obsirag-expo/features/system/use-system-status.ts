@@ -1,4 +1,4 @@
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { useServerConfig } from '../auth/use-server-config';
 
@@ -13,5 +13,17 @@ export function useSystemStatus(options?: UseSystemStatusOptions) {
     queryKey: ['system-status'],
     queryFn: () => api.getSystemStatus(),
     refetchInterval: options?.refetchIntervalMs ?? 10000,
+  });
+}
+
+export function useReindexData() {
+  const { api } = useServerConfig();
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: () => api.reindexData(),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['system-status'] });
+    },
   });
 }

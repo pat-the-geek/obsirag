@@ -9,9 +9,11 @@ type SourceListProps = {
   onSelectSource?: (source: SourceRef) => void;
   isOpen?: boolean;
   onToggleOpen?: () => void;
+  title?: string;
+  caption?: string;
 };
 
-export function SourceList({ sources, onSelectSource, isOpen = false, onToggleOpen }: SourceListProps) {
+export function SourceList({ sources, onSelectSource, isOpen = false, onToggleOpen, title, caption }: SourceListProps) {
   const theme = useAppTheme();
   const { scale } = useAppFontScale();
   const uniqueSources = useMemo(() => dedupeSources(sources), [sources]);
@@ -24,8 +26,8 @@ export function SourceList({ sources, onSelectSource, isOpen = false, onToggleOp
     <View style={[styles.container, { backgroundColor: theme.colors.surfaceMuted, borderColor: theme.colors.border }]}>
       <Pressable testID="sources-panel-toggle" style={styles.header} onPress={onToggleOpen}>
         <View style={styles.headerCopy}>
-          <Text style={[styles.title, { color: theme.colors.text, fontSize: scaleFontSize(13, scale) }]}>Sources</Text>
-          <Text style={[styles.caption, { color: theme.colors.textMuted, fontSize: scaleFontSize(12, scale) }]}>{uniqueSources.length} source{uniqueSources.length > 1 ? 's' : ''}</Text>
+          <Text style={[styles.title, { color: theme.colors.text, fontSize: scaleFontSize(13, scale) }]}>{title || 'Sources'}</Text>
+          <Text style={[styles.caption, { color: theme.colors.textMuted, fontSize: scaleFontSize(12, scale) }]}>{caption || `${uniqueSources.length} source${uniqueSources.length > 1 ? 's' : ''}`}</Text>
         </View>
         <Text style={[styles.chevron, { color: theme.colors.primary, fontSize: scaleFontSize(12, scale) }]}>{isOpen ? 'Masquer' : 'Afficher'}</Text>
       </Pressable>

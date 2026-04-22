@@ -184,4 +184,60 @@ describe('useStreamMessage', () => {
       { role: 'assistant', content: 'Bonjour' },
     ]);
   });
+
+  it('cancels an active stream and removes the transient turn', async () => {
+    queryClient = new QueryClient({
+      defaultOptions: {
+        queries: { retry: false, gcTime: Infinity },
+        mutations: { retry: false, gcTime: Infinity },
+      },
+    });
+
+    queryClient.setQueryData<ConversationDetail>(['conversation', 'conv-1'], {
+      id: 'conv-1',
+      title: 'Conversation test',
+      updatedAt: '2026-04-18T12:00:00Z',
+      draft: '',
+      messages: [],
+    });
+
+    mockStreamConversationResponse.mockImplementation(
+      async (_conversationId: string, _prompt: string, handlers: Record<string, Function>, options?: { signal?: AbortSignal }) => {
+        handlers.onStatus?.('Generation MLX');
+
+        return await new Promise<ChatMessage>((_resolve, reject) => {
+          options?.signal?.addEventListener('abort', () => {
+            reject(new DOMException('The user aborted a request.', 'AbortError'));
+          });
+        });
+      },
+    );
+
+    let mutation: ReturnType<typeof useStreamMessage> | null = null;
+
+    function Harness() {
+      mutation = useStreamMessage('conv-1');
+      return null;
+    }
+
+    testRenderer = renderer.create(
+      <QueryClientProvider client={queryClient}>
+        <Harness />
+      </QueryClientProvider>,
+    );
+
+    let pendingPromise: Promise<unknown> | undefined;
+
+    await act(async () => {
+      pendingPromise = mutation?.mutateAsync('Question interrompue').catch((error) => error);
+    });
+
+    await act(async () => {
+      mutation?.cancelStream();
+      await pendingPromise;
+    });
+
+    const conversation = queryClient.getQueryData<ConversationDetail>(['conversation', 'conv-1']);
+    expect(conversation?.messages).toEqual([]);
+  });
 });

@@ -106,7 +106,7 @@ class EuriaClient:
             "temperature": temperature,
         }
         if enable_web_search is None:
-            enable_web_search = "/euria/" in self._url
+            enable_web_search = False
         if enable_web_search:
             payload["enable_web_search"] = True
         return payload
