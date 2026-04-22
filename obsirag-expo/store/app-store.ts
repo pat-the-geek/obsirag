@@ -103,7 +103,7 @@ function sanitizePersistedState(state: unknown): Partial<AppStoreState> {
     accessToken: typeof candidate.accessToken === 'string' ? candidate.accessToken : '',
     useMockServer: typeof candidate.useMockServer === 'boolean' ? candidate.useMockServer : false,
     useEuriaForConversation: typeof candidate.useEuriaForConversation === 'boolean' ? candidate.useEuriaForConversation : false,
-    useRagForConversation: typeof candidate.useRagForConversation === 'boolean' ? candidate.useRagForConversation : true,
+    useRagForConversation: candidate.useEuriaForConversation === true ? false : (typeof candidate.useRagForConversation === 'boolean' ? candidate.useRagForConversation : true),
     activeConversationId: typeof candidate.activeConversationId === 'string' ? candidate.activeConversationId : undefined,
     themeMode: coerceThemeMode(candidate.themeMode),
     fontSizeMode: coerceFontSizeMode(candidate.fontSizeMode),

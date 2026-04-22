@@ -26,7 +26,11 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from src.ai.euria_client import EuriaClient
 from src.ai.mermaid_sanitizer import sanitize_mermaid_blocks
 from src.ai.web_search import (
+    _ddg_instant_answer_search,
+    _ddg_search,
     _format_query_overview_markdown,
+    _keywordize_query,
+    _merge_search_results,
     build_query_overview_from_results_sync,
     build_query_overview_sync,
     is_not_in_vault,
@@ -58,6 +62,7 @@ from src.api.schemas import (
     NoteDetailModel,
     QueryOverviewModel,
     RelatedNoteModel,
+    ReindexResponseModel,
     RuntimeInfoModel,
     SaveConversationResponse,
     SessionRequest,
@@ -734,6 +739,44 @@ def _maybe_upgrade_euria_result_with_web_fallback(*, prompt: str, result: dict[s
     return web_result
 
 
+def _build_post_answer_reference_query(prompt: str, answer: str) -> str:
+    normalized_prompt = str(prompt or "").strip()
+    normalized_answer = re.sub(r"\s+", " ", str(answer or "")).strip()
+    if len(normalized_answer) > 600:
+        normalized_answer = normalized_answer[:600].rstrip()
+    return "\n\n".join(part for part in (normalized_prompt, normalized_answer) if part)
+
+
+def _maybe_attach_local_vault_references(*, prompt: str, answer: str, result: dict[str, Any], svc) -> dict[str, Any]:
+    if list(result.get("sources") or []):
+        return result
+    if _should_skip_euria_rag(prompt):
+        return result
+
+    reference_query = _build_post_answer_reference_query(prompt, answer)
+    if not reference_query:
+        return result
+
+    _rag_context, rag_sources = _build_local_rag_context(reference_query, svc)
+    if not rag_sources:
+        return result
+
+    enriched_result = dict(result)
+    enriched_result["sources"] = list(rag_sources)
+    enriched_result["rag_lookup_attempted"] = True
+    enriched_result.setdefault("rag_context_used", False)
+    return enriched_result
+
+
+def _has_post_response_vault_references(*, payload, assistant_message: ChatMessageModel) -> bool:
+    return bool(
+        not payload.useRag
+        and assistant_message.provenance == "web"
+        and assistant_message.enrichmentPath == "euria-direct-web"
+        and assistant_message.sources
+    )
+
+
 def _generate_euria_answer_with_optional_rag(*, prompt: str, history: list[dict[str, str]], llm, svc) -> dict[str, Any]:
     if _should_skip_euria_rag(prompt):
         result = _generate_euria_direct_answer(prompt=prompt, history=history, llm=llm)
@@ -1137,6 +1180,67 @@ def system_status(_: None = Depends(require_api_auth)) -> SystemStatusResponse:
     )
 
 
+@app.post("/api/v1/system/reindex", response_model=ReindexResponseModel)
+def system_reindex(_: None = Depends(require_api_auth)) -> ReindexResponseModel:
+    service_manager = get_service_manager()
+
+    if bool(service_manager.indexing_status.get("running")):
+        raise HTTPException(status_code=409, detail="Indexation deja en cours")
+
+    persist_indexing_status = getattr(service_manager, "_persist_indexing_status", None)
+
+    def _persist_status() -> None:
+        if callable(persist_indexing_status):
+            persist_indexing_status()
+
+    def _on_progress(current: str, processed: int, total: int) -> None:
+        service_manager.indexing_status.update({
+            "running": True,
+            "processed": processed,
+            "total": total,
+            "current": current,
+        })
+        _persist_status()
+
+    service_manager.indexing_status.update({
+        "running": True,
+        "processed": 0,
+        "total": 0,
+        "current": "Reindexation demandee depuis Expo",
+    })
+    _persist_status()
+
+    try:
+        stats = service_manager.indexer.index_vault(on_progress=_on_progress)
+    except Exception as exc:
+        service_manager.indexing_status.update({
+            "running": False,
+            "current": f"Erreur d'indexation: {exc}",
+        })
+        _persist_status()
+        raise HTTPException(status_code=500, detail=f"Reindexation impossible: {exc}") from exc
+
+    notes_indexed = int(service_manager.chroma.count_notes())
+    chunks_indexed = int(service_manager.chroma.count())
+    service_manager.indexing_status.update({
+        "running": False,
+        "processed": notes_indexed,
+        "total": notes_indexed,
+        "current": "Indexation terminee",
+    })
+    _persist_status()
+
+    return ReindexResponseModel(
+        added=int(stats.get("added", 0)),
+        updated=int(stats.get("updated", 0)),
+        deleted=int(stats.get("deleted", 0)),
+        skipped=int(stats.get("skipped", 0)),
+        notesIndexed=notes_indexed,
+        chunksIndexed=chunks_indexed,
+        indexing=_normalize_indexing_status(service_manager.indexing_status),
+    )
+
+
 @app.get("/api/v1/conversations", response_model=list[ConversationSummaryModel])
 def list_conversations(_: None = Depends(require_api_auth)) -> list[ConversationSummaryModel]:
     items = conversation_store.list()
@@ -1254,6 +1358,8 @@ async def create_message(
             raise HTTPException(status_code=503, detail=str(exc)) from exc
 
         answer = str(result.get("answer") or "")
+        if not payload.useRag:
+            result = _maybe_attach_local_vault_references(prompt=payload.prompt, answer=answer, result=result, svc=svc)
         sources = list(result.get("sources") or [])
         provenance = str(result.get("provenance") or "vault")
         enrichment_path = str(result.get("enrichment_path") or "") or None
@@ -1391,6 +1497,8 @@ async def stream_message(
             if payload.useRag:
                 result = _maybe_upgrade_euria_result_with_web_fallback(prompt=payload.prompt, result=result, llm=llm, svc=svc)
                 answer = _sanitize_assistant_answer_text(str(result.get("answer") or answer))
+            else:
+                result = _maybe_attach_local_vault_references(prompt=payload.prompt, answer=answer, result=result, svc=svc)
             sources = list(result.get("sources") or [])
             source_models = _build_source_models(sources)
             primary_source = next((item for item in source_models if item.isPrimary), None)
@@ -1418,6 +1526,10 @@ async def stream_message(
             if assistant_message.provenance == "web":
                 _append_timeline_step(timeline, "Recherche web via Euria")
                 assistant_message.timeline = timeline
+            if _has_post_response_vault_references(payload=payload, assistant_message=assistant_message):
+                _append_timeline_step(timeline, "Références du coffre associées")
+                assistant_message.timeline = timeline
+                yield _sse_event("retrieval_status", {"phase": "references", "message": "Références du coffre associées"})
             yield _sse_event("sources_ready", {"sources": [item.model_dump(mode="json") for item in assistant_message.sources]})
             conversation_store.append_messages(
                 conversation_id,
@@ -2900,7 +3012,11 @@ def _build_euria_direct_messages(prompt: str, history: list[dict[str, str]]) -> 
                 "N'écris pas de balisage incomplet. "
                 "Si tu produis un tableau, utilise un vrai tableau Markdown avec des pipes. "
                 "Ne répète jamais une ligne, une ligne de tableau, un paragraphe ou une section. "
-                "Termine toujours proprement la réponse, sans couper un mot ni une emphase Markdown."
+                "Termine toujours proprement la réponse, sans couper un mot ni une emphase Markdown. "
+                "Tu as accès à une recherche web en temps réel. "
+                "Pour toute question portant sur des produits, prix, actualités, événements récents ou faits susceptibles d'avoir évolué, "
+                "effectue une recherche web avant de répondre et base ta réponse sur les résultats obtenus. "
+                "Ne te fie jamais à tes données d'entraînement pour des informations récentes ou factuelles : vérifie toujours sur le web."
             ),
         },
         *[
@@ -2909,6 +3025,50 @@ def _build_euria_direct_messages(prompt: str, history: list[dict[str, str]]) -> 
             if str(item.get("content") or "").strip()
         ],
         {"role": "user", "content": prompt},
+    ]
+
+
+def _fetch_ddg_snippets(prompt: str, max_results: int = 5) -> list[dict]:
+    search_query = _keywordize_query(prompt)
+    instant = _ddg_instant_answer_search(search_query, max_results=3)
+    ddg = _ddg_search(search_query, max_results=max_results)
+    return _merge_search_results(instant, ddg, max_results=max_results)
+
+
+def _build_euria_web_messages(
+    prompt: str,
+    history: list[dict[str, str]],
+    web_results: list[dict],
+) -> list[dict[str, str]]:
+    snippets = "\n\n".join(
+        f"**{r.get('title', '')}** ({r.get('href', '')})\n{r.get('body', '')}"
+        for r in web_results
+        if r.get("body")
+    )
+    user_content = (
+        f"Résultats de recherche web récents :\n\n{snippets}\n\n"
+        f"Question : {prompt}"
+    ) if snippets else prompt
+    return [
+        {
+            "role": "system",
+            "content": (
+                "Tu réponds en français, avec du Markdown valide et propre. "
+                "N'écris pas de balisage incomplet. "
+                "Si tu produis un tableau, utilise un vrai tableau Markdown avec des pipes. "
+                "Ne répète jamais une ligne, une ligne de tableau, un paragraphe ou une section. "
+                "Termine toujours proprement la réponse, sans couper un mot ni une emphase Markdown. "
+                "Des résultats de recherche web récents te sont fournis comme contexte. "
+                "Appuie-toi dessus pour répondre avec précision et cite les sources entre crochets. "
+                "Priorité absolue aux informations du contexte web sur tes données d'entraînement."
+            ),
+        },
+        *[
+            {"role": str(item.get("role") or "user"), "content": str(item.get("content") or "")}
+            for item in history
+            if str(item.get("content") or "").strip()
+        ],
+        {"role": "user", "content": user_content},
     ]
 
 
@@ -2951,19 +3111,33 @@ def _build_euria_rag_messages(
 
 def _prepare_euria_stream_plan(*, prompt: str, history: list[dict[str, str]], use_rag: bool, svc) -> dict[str, Any]:
     if not use_rag:
+        web_results = _fetch_ddg_snippets(prompt)
+        messages = (
+            _build_euria_web_messages(prompt, history, web_results)
+            if web_results
+            else _build_euria_direct_messages(prompt, history)
+        )
+        search_query = _keywordize_query(prompt)
+        query_overview = {
+            "query": prompt,
+            "search_query": search_query,
+            "summary": "",
+            "sources": web_results,
+        } if web_results else {}
+        _, vault_sources = _build_local_rag_context(prompt, svc)
         return {
-            "messages": _build_euria_direct_messages(prompt, history),
+            "messages": messages,
             "temperature": 0.3,
-            "max_tokens": 1700,
+            "max_tokens": 4096,
             "operation": "conversation_euria_fast_web",
             "enable_web_search": True,
             "result": {
-                "sources": [],
+                "sources": list(vault_sources) if vault_sources else [],
                 "provenance": "web",
-                "query_overview": {},
+                "query_overview": query_overview,
                 "entity_contexts": [],
                 "enrichment_path": "euria-direct-web",
-                "rag_lookup_attempted": False,
+                "rag_lookup_attempted": True,
                 "rag_context_used": False,
             },
         }
@@ -3034,28 +3208,19 @@ def _generate_euria_direct_answer_with_options(
     llm,
     enable_web_search: bool,
 ) -> dict[str, Any]:
-    messages = [
-        {
-            "role": "system",
-            "content": (
-                "Tu réponds en français, avec du Markdown valide et propre. "
-                "N'écris pas de balisage incomplet. "
-                "Si tu produis un tableau, utilise un vrai tableau Markdown avec des pipes. "
-                "Ne répète jamais une ligne, une ligne de tableau, un paragraphe ou une section. "
-                "Termine toujours proprement la réponse, sans couper un mot ni une emphase Markdown."
-            ),
-        },
-        *[
-            {"role": str(item.get("role") or "user"), "content": str(item.get("content") or "")}
-            for item in history
-            if str(item.get("content") or "").strip()
-        ],
-        {"role": "user", "content": prompt},
-    ]
+    if enable_web_search:
+        web_results = _fetch_ddg_snippets(prompt)
+        messages = (
+            _build_euria_web_messages(prompt, history, web_results)
+            if web_results
+            else _build_euria_direct_messages(prompt, history)
+        )
+    else:
+        messages = _build_euria_direct_messages(prompt, history)
     answer = llm.chat(
         messages,
         temperature=0.3,
-        max_tokens=1700,
+        max_tokens=4096 if enable_web_search else 1700,
         operation="conversation_euria_fast_web" if enable_web_search else "conversation_euria_fast",
         enable_web_search=enable_web_search,
     )

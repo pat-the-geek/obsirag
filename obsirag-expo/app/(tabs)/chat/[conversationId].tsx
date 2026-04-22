@@ -85,6 +85,7 @@ export default function ConversationDetailScreen() {
   const conversationRoute = conversationId ? `/(tabs)/chat/${conversationId}` : '';
 
   const openNoteFromConversation = (notePath: string) => {
+    streamMessage.cancelStream?.();
     router.push(buildNoteRoute(notePath, conversationRoute ? { returnTo: conversationRoute } : undefined));
   };
 
@@ -264,7 +265,10 @@ export default function ConversationDetailScreen() {
                 onChangeText={(value) => setDraft(conversationId, value)}
                 withEuria={useEuriaForConversation}
                 withRag={useRagForConversation}
-                onToggleWithEuria={setUseEuriaForConversation}
+                onToggleWithEuria={(value) => {
+                  setUseEuriaForConversation(value);
+                  if (value) setUseRagForConversation(false);
+                }}
                 onToggleWithRag={setUseRagForConversation}
                 onSubmit={(submittedValue) => {
                   const trimmedDraft = submittedValue.trim();
