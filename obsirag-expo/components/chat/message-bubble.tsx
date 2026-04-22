@@ -41,7 +41,7 @@ export function MessageBubble({
   const isUser = message.role === 'user';
   const revealProgress = useRef(new Animated.Value(isUser || process.env.NODE_ENV === 'test' ? 1 : 0)).current;
   const [sourcesOpen, setSourcesOpen] = useState(false);
-  const [entityContextsOpen, setEntityContextsOpen] = useState(false);
+  const [entityContextsOpen, setEntityContextsOpen] = useState(true);
   const hasRenderableQueryOverview = isRenderableQueryOverview(message);
   const hasMermaidContent = containsMermaidFence(message.content);
   const shouldHideAssistantMainBubble = Boolean(
@@ -229,8 +229,7 @@ export function MessageBubble({
             isOpen={sourcesOpen}
             onToggleOpen={() => setSourcesOpen((current) => !current)}
             onSelectSource={(source) => onOpenNote?.(source.filePath)}
-            title={usesPostResponseVaultReferences ? 'Références coffre' : undefined}
-            caption={usesPostResponseVaultReferences ? 'Notes associées après la réponse' : undefined}
+            {...(usesPostResponseVaultReferences ? { title: 'Références coffre', caption: 'Notes associées après la réponse' } : {})}
           />
         </Animated.View>
       ) : null}
