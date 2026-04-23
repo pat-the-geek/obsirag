@@ -667,7 +667,8 @@ def _generate_euria_rag_answer(
         {
             "role": "system",
             "content": (
-                "Tu réponds en français, avec du Markdown valide et propre. "
+                "/no_think\n"
+                "Tu réponds UNIQUEMENT en français, avec du Markdown valide et propre. "
                 "Appuie-toi d'abord sur le contexte du coffre fourni. "
                 "N'invente aucune information absente du contexte. "
                 "Si l'information demandée n'est pas dans le contexte, réponds exactement : "
@@ -861,7 +862,8 @@ def _generate_euria_rag_answer(
         {
             "role": "system",
             "content": (
-                "Tu réponds en français, avec du Markdown valide et propre. "
+                "/no_think\n"
+                "Tu réponds UNIQUEMENT en français, avec du Markdown valide et propre. "
                 "Appuie-toi d'abord sur le contexte du coffre fourni. "
                 "N'invente aucune information absente du contexte. "
                 "Si l'information demandée n'est pas dans le contexte, réponds exactement : "
@@ -3081,6 +3083,7 @@ def _build_euria_web_messages(
         {
             "role": "system",
             "content": (
+                "/no_think\n"
                 "Tu réponds UNIQUEMENT et EXCLUSIVEMENT en français, quelle que soit la langue des sources ou de la question. "
                 "Même si les résultats de recherche web sont en anglais, ta réponse doit être entièrement rédigée en français. "
                 "Utilise du Markdown valide et propre. "
@@ -3113,7 +3116,8 @@ def _build_euria_rag_messages(
         {
             "role": "system",
             "content": (
-                "Tu réponds en français, avec du Markdown valide et propre. "
+                "/no_think\n"
+                "Tu réponds UNIQUEMENT en français, avec du Markdown valide et propre. "
                 "Appuie-toi d'abord sur le contexte du coffre fourni. "
                 "N'invente aucune information absente du contexte. "
                 "Si l'information demandée n'est pas dans le contexte, réponds exactement : "
@@ -3141,6 +3145,7 @@ def _build_euria_rag_messages(
 
 def _prepare_euria_stream_plan(*, prompt: str, history: list[dict[str, str]], use_rag: bool, svc) -> dict[str, Any]:
     if not use_rag:
+        # Pré-fetch DDG + injection contexte (Euria native web search non supportée en streaming)
         try:
             web_results = _fetch_ddg_snippets(prompt)
         except Exception:
@@ -3165,14 +3170,14 @@ def _prepare_euria_stream_plan(*, prompt: str, history: list[dict[str, str]], us
             "messages": messages,
             "temperature": 0.3,
             "max_tokens": 4096,
-            "operation": "conversation_euria_fast_web",
-            "enable_web_search": True,
+            "operation": "conversation_euria_web",
+            "enable_web_search": False,
             "result": {
                 "sources": list(vault_sources) if vault_sources else [],
                 "provenance": "web",
                 "query_overview": query_overview,
                 "entity_contexts": [],
-                "enrichment_path": "euria-direct-web",
+                "enrichment_path": "euria-ddg-web",
                 "rag_lookup_attempted": True,
                 "rag_context_used": False,
             },

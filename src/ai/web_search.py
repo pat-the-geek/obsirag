@@ -7,6 +7,7 @@ les résultats, et un insight Markdown est écrit dans obsirag/insights/.
 """
 from __future__ import annotations
 
+import concurrent.futures
 import json
 import re
 import threading
@@ -469,29 +470,39 @@ def _ddg_search(query: str, max_results: int = 5) -> list[dict]:
         candidate_queries.append(f"{query} wikipedia")
     candidate_queries = list(dict.fromkeys(candidate_queries))
 
-    try:
-        from ddgs import DDGS
-        best_results: list[dict] = []
-        best_score = -10**9
-        for candidate_query in candidate_queries:
+    def _run_one(candidate_query: str) -> tuple[str, list[dict], int]:
+        try:
+            from ddgs import DDGS
             with DDGS(timeout=_DDG_TIMEOUT_SECONDS) as ddgs:
-                # region=fr-fr : priorité aux sources francophones/européennes
-                # safesearch=off : pas de filtre superflu sur un usage personnel
                 raw = list(ddgs.text(
                     candidate_query,
                     region="fr-fr",
                     safesearch="off",
-                    max_results=max_results + 3,  # marge pour le filtrage
+                    max_results=max_results + 3,
                 ))
             filtered = [
                 r for r in raw
-                if _is_latin_text(r.get('title', '')) and _is_latin_text(r.get('body', ''))
+                if _is_latin_text(r.get("title", "")) and _is_latin_text(r.get("body", ""))
             ]
             result = filtered[:max_results]
             score = _score_search_results(query, candidate_query, result)
             logger.info(
                 f"WebSearch DDG: requête={candidate_query!r} {len(raw)} résultats bruts, {len(result)} après filtrage, score={score}"
             )
+            return candidate_query, result, score
+        except Exception as exc:
+            logger.warning(f"WebSearch DDG error ({candidate_query!r}): {exc}")
+            return candidate_query, [], -10**9
+
+    try:
+        max_workers = min(len(candidate_queries), 4)
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = [executor.submit(_run_one, cq) for cq in candidate_queries]
+            outcomes = [f.result() for f in concurrent.futures.as_completed(futures)]
+
+        best_results: list[dict] = []
+        best_score = -10**9
+        for _cq, result, score in outcomes:
             if result and (not best_results or score > best_score):
                 best_score = score
                 best_results = result

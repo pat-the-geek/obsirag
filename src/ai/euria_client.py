@@ -13,6 +13,7 @@ from src.config import settings
 class EuriaClient:
     DEFAULT_MODEL = "Qwen/Qwen3.5-122B-A10B-FP8"
     _RETRY_MAX_TOKENS = 4096
+    _WEB_SEARCH_MAX_TOKENS = 12000
 
     def __init__(
         self,
@@ -57,12 +58,15 @@ class EuriaClient:
         data = self._post_chat(payload)
         content = self._extract_message_content(data)
         if not content and self._should_retry_for_reasoning_only(data, max_tokens):
+            is_web_search = bool(payload.get("enable_web_search"))
+            retry_ceil = self._WEB_SEARCH_MAX_TOKENS if is_web_search else self._RETRY_MAX_TOKENS
             retry_payload = dict(payload)
-            retry_payload["max_tokens"] = min(self._RETRY_MAX_TOKENS, max(max_tokens * 2, 2200))
+            retry_payload["max_tokens"] = min(retry_ceil, max(max_tokens * 4 if is_web_search else max_tokens * 2, 8000 if is_web_search else 2200))
             logger.info(
-                "[EuriaClient] {} retrying truncated reasoning-only response with max_tokens={}",
+                "[EuriaClient] {} retrying truncated reasoning-only response with max_tokens={} (web_search={})",
                 operation,
                 retry_payload["max_tokens"],
+                is_web_search,
             )
             data = self._post_chat(retry_payload)
             content = self._extract_message_content(data)
@@ -209,13 +213,16 @@ class EuriaClient:
                     saw_content = True
                     yield content
 
-        if not saw_content and saw_reasoning and finish_reason.strip().lower() == "length" and max_tokens < self._RETRY_MAX_TOKENS:
+        is_web_search = bool(payload.get("enable_web_search"))
+        retry_ceil = self._WEB_SEARCH_MAX_TOKENS if is_web_search else self._RETRY_MAX_TOKENS
+        if not saw_content and saw_reasoning and finish_reason.strip().lower() == "length" and max_tokens < retry_ceil:
             retry_payload = dict(payload)
-            retry_payload["max_tokens"] = min(self._RETRY_MAX_TOKENS, max(max_tokens * 2, 2200))
+            retry_payload["max_tokens"] = min(retry_ceil, max(max_tokens * 4 if is_web_search else max_tokens * 2, 8000 if is_web_search else 2200))
             logger.info(
-                "[EuriaClient] {} retrying truncated reasoning-only stream with max_tokens={}",
+                "[EuriaClient] {} retrying truncated reasoning-only stream with max_tokens={} (web_search={})",
                 operation,
                 retry_payload["max_tokens"],
+                is_web_search,
             )
             yield from self._stream_payload(retry_payload, operation=operation, max_tokens=retry_payload["max_tokens"])
             return
