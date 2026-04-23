@@ -445,7 +445,7 @@ export class ObsiRagApi {
           Accept: 'text/event-stream',
         },
         body: JSON.stringify({ prompt, useEuria: options?.useEuria ?? false, useRag: options?.useRag ?? true }),
-        signal: options?.signal,
+        signal: options?.signal ?? null,
       });
     } catch (error) {
       if (this.isAbortError(error)) {

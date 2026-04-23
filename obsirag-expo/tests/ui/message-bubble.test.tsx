@@ -735,12 +735,12 @@ describe('MessageBubble', () => {
       tree = renderer.create(<MessageBubble message={message} />);
 
       act(() => {
-        tree.root.findByProps({ testID: 'entity-contexts-panel-toggle' }).props.onPress();
+        tree!.root.findByProps({ testID: 'entity-contexts-panel-toggle' }).props.onPress();
       });
 
-      const panel = tree.root.findByProps({ testID: 'entity-contexts-panel' });
+      const panel = tree!.root.findByProps({ testID: 'entity-contexts-panel' });
       const panelStyle = flattenStyle(panel.props.style);
-      const tableSurface = tree.root.findByProps({ testID: 'markdown-table-surface' });
+      const tableSurface = tree!.root.findByProps({ testID: 'markdown-table-surface' });
       const tableStyle = flattenStyle(tableSurface.props.style);
 
       expect(panelStyle).toEqual(
@@ -786,12 +786,12 @@ describe('MessageBubble', () => {
       tree = renderer.create(<MessageBubble message={message} />);
 
       act(() => {
-        tree.root.findByProps({ testID: 'entity-contexts-panel-toggle' }).props.onPress();
+        tree!.root.findByProps({ testID: 'entity-contexts-panel-toggle' }).props.onPress();
       });
 
-      const panel = tree.root.findByProps({ testID: 'entity-contexts-panel' });
+      const panel = tree!.root.findByProps({ testID: 'entity-contexts-panel' });
       const panelStyle = flattenStyle(panel.props.style);
-      const tableSurface = tree.root.findByProps({ testID: 'markdown-table-surface' });
+      const tableSurface = tree!.root.findByProps({ testID: 'markdown-table-surface' });
       const tableStyle = flattenStyle(tableSurface.props.style);
 
       expect(panelStyle).toEqual(
