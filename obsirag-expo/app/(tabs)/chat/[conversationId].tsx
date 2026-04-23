@@ -14,8 +14,6 @@ import { useAppTheme } from '../../../theme/app-theme';
 import { formatMetadataDate, formatSizeBytes, joinMetadataParts } from '../../../utils/format-display';
 import { buildNoteRoute } from '../../../utils/note-route';
 
-const PENDING_ASSISTANT_IDS = new Set(['streaming-assistant', 'pending-web-assistant']);
-
 const DEFAULT_CHAT_SUGGESTIONS = [
   'Resume la note principale sur Artemis II',
   'Quelles connexions utiles vois-tu entre mes notes recentes ?',
@@ -42,23 +40,11 @@ export default function ConversationDetailScreen() {
   const { data, isLoading, isRefetching, refetch } = useConversation(conversationId);
   const messages = data?.messages ?? [];
   const streamMessage = useStreamMessage(conversationId ?? '');
+  const { nerProgress } = streamMessage;
   const explicitWebSearch = useExplicitWebSearch(conversationId ?? '');
   const deleteConversationMessage = useDeleteConversationMessage(conversationId ?? '');
   const saveConversation = useSaveConversation();
   const generateConversationReport = useGenerateConversationReport();
-  const pendingAssistantMessage = useMemo(
-    () => [...messages].reverse().find((item) => item.role === 'assistant' && PENDING_ASSISTANT_IDS.has(item.id)),
-    [messages],
-  );
-  const responseActionPending = streamMessage.isPending || explicitWebSearch.isPending;
-  const activeProgressSteps = responseActionPending
-    ? (pendingAssistantMessage?.timeline?.length ? pendingAssistantMessage.timeline : ['Réponse en préparation'])
-    : [];
-  const activeProgressLabel = activeProgressSteps[activeProgressSteps.length - 1] ?? null;
-  const latestAssistantMessage = useMemo(
-    () => [...messages].reverse().find((item) => item.role === 'assistant'),
-    [messages],
-  );
   const latestUserMessage = useMemo(
     () => [...messages].reverse().find((item) => item.role === 'user'),
     [messages],
@@ -72,11 +58,9 @@ export default function ConversationDetailScreen() {
     [latestUserMessage?.content],
   );
   const aggregatedEntityContexts = useMemo(() => aggregateConversationEntityContexts(messages), [messages]);
-  const [generationActivityFrame, setGenerationActivityFrame] = useState(0);
   const showEntityAside = Platform.OS === 'web' && width >= 1180 && aggregatedEntityContexts.length > 0;
   const showEntityCompact = !showEntityAside && aggregatedEntityContexts.length > 0;
   const asideEntityMaxHeight = Math.max(360, height - Math.max(24, insets.top + 18) - 18);
-  const isGenerationStepActive = streamMessage.isPending && activeProgressSteps.some((step) => isGenerationStep(step));
   const scrollRef = useRef<ScrollView | null>(null);
   const conversationMetadata = joinMetadataParts([
     data?.updatedAt ? `Modifie le ${formatMetadataDate(data.updatedAt)}` : null,
@@ -99,19 +83,6 @@ export default function ConversationDetailScreen() {
       scrollRef.current?.scrollToEnd({ animated: true });
     });
   };
-
-  useEffect(() => {
-    if (!isGenerationStepActive) {
-      setGenerationActivityFrame(0);
-      return undefined;
-    }
-
-    const timer = setInterval(() => {
-      setGenerationActivityFrame((current) => (current + 1) % GENERATION_ACTIVITY_FRAMES.length);
-    }, 220);
-
-    return () => clearInterval(timer);
-  }, [isGenerationStepActive]);
 
   useEffect(() => {
     if (!messages.length) {
@@ -229,29 +200,10 @@ export default function ConversationDetailScreen() {
             </View>
 
             <View style={[styles.dock, { backgroundColor: theme.colors.background }, Platform.OS === 'web' ? [styles.dockWeb, { borderTopColor: theme.colors.border, shadowColor: theme.colors.shadow }] : null]}>
-              {(responseActionPending || generateConversationReport.isPending) ? (
-                <View style={[styles.progressCard, { backgroundColor: theme.colors.surfaceMuted, borderColor: theme.colors.border }]}>
-                  <Text style={[styles.progressTitle, { color: theme.colors.text }]}>Progression du traitement</Text>
-                  {activeProgressLabel ? <Text style={[styles.progressCurrent, { color: theme.colors.primary }]}>{activeProgressLabel}</Text> : null}
-                  <View style={styles.progressList}>
-                    {activeProgressSteps.map((step, index) => {
-                      const isLast = index === activeProgressSteps.length - 1;
-                      // Afficher la boucle d'activité sur la dernière étape si génération rapport
-                      const showGenerationActivity = (isLast && isGenerationStep(step) && isGenerationStepActive) || generateConversationReport.isPending;
-                      return (
-                        <View key={`${step}-${index}`} style={styles.progressItem}>
-                          <View style={[styles.progressDot, { backgroundColor: theme.colors.textSubtle }, isLast ? [styles.progressDotActive, { backgroundColor: theme.colors.primary }] : null]} />
-                          <View style={styles.progressTextRow}>
-                            <Text style={[styles.progressText, { color: theme.colors.textMuted }, isLast ? [styles.progressTextActive, { color: theme.colors.text }] : null]}>{step}</Text>
-                            <Text style={[styles.progressActivityGlyph, showGenerationActivity ? [styles.progressActivityGlyphActive, { color: theme.colors.primary }] : null]}>
-                              {showGenerationActivity ? GENERATION_ACTIVITY_FRAMES[generationActivityFrame] : ' '}
-                            </Text>
-                          </View>
-                        </View>
-                      );
-                    })}
-                  </View>
-                </View>
+              {nerProgress ? (
+                <Text style={[styles.statusText, { color: theme.colors.textMuted }]}>
+                  Analyse des entités ({nerProgress.index}/{nerProgress.total})…
+                </Text>
               ) : null}
               {explicitWebSearch.isPending ? <Text style={[styles.statusText, { color: theme.colors.textMuted }]}>Recherche sur le web en cours...</Text> : null}
               {streamMessage.error ? (

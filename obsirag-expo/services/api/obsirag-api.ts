@@ -3,6 +3,7 @@ import {
   ConversationDetail,
   ConversationSummary,
   DetectSynapsesResult,
+  EntityContext,
   GraphData,
   InsightItem,
   NoteDetail,
@@ -31,6 +32,9 @@ type StreamHandlers = {
   onToken?: (value: string) => void;
   onSources?: (message: Pick<ChatMessage, 'sources' | 'primarySource'>) => void;
   onComplete?: (message: ChatMessage) => void;
+  onEntityContexts?: (messageId: string, entityContexts: EntityContext[]) => void;
+  onEnrichmentStarted?: (messageId: string, total: number) => void;
+  onEntityContextPartial?: (messageId: string, entityContext: EntityContext, index: number, total: number) => void;
 };
 
 type ConversationRequestOptions = {
@@ -522,6 +526,32 @@ export class ObsiRagApi {
         if (parsed.event === 'message_complete') {
           completedMessage = data as ChatMessage;
           handlers.onComplete?.(completedMessage);
+        }
+
+        if (parsed.event === 'entity_enrichment_started') {
+          const messageId = typeof data.messageId === 'string' ? data.messageId : '';
+          const total = typeof data.total === 'number' ? data.total : 0;
+          if (messageId && total > 0) {
+            handlers.onEnrichmentStarted?.(messageId, total);
+          }
+        }
+
+        if (parsed.event === 'entity_context_partial') {
+          const messageId = typeof data.messageId === 'string' ? data.messageId : '';
+          const index = typeof data.index === 'number' ? data.index : 0;
+          const total = typeof data.total === 'number' ? data.total : 0;
+          const entityContext = data.entityContext as EntityContext | undefined;
+          if (messageId && entityContext?.value) {
+            handlers.onEntityContextPartial?.(messageId, entityContext, index, total);
+          }
+        }
+
+        if (parsed.event === 'entity_contexts_ready') {
+          const messageId = typeof data.messageId === 'string' ? data.messageId : '';
+          const entityContexts = Array.isArray(data.entityContexts) ? (data.entityContexts as EntityContext[]) : [];
+          if (messageId && entityContexts.length > 0) {
+            handlers.onEntityContexts?.(messageId, entityContexts);
+          }
         }
 
         if (parsed.event === 'message_error') {

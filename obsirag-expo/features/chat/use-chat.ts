@@ -1,4 +1,4 @@
-import { useRef } from 'react';
+import { useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { useServerConfig } from '../auth/use-server-config';
@@ -331,6 +331,7 @@ export function useStreamMessage(conversationId: string) {
   const useRagForConversation = useAppStore((state) => state.useRagForConversation);
   const activeStreamControllerRef = useRef<AbortController | null>(null);
   const activeStreamUserMessageIdRef = useRef<string | null>(null);
+  const [nerProgress, setNerProgress] = useState<{ messageId: string; index: number; total: number } | null>(null);
 
   const clearActiveStreamingTurn = () => {
     const activeUserMessageId = activeStreamUserMessageIdRef.current;
@@ -452,6 +453,36 @@ export function useStreamMessage(conversationId: string) {
               };
             });
           },
+          onEntityContexts: (messageId, entityContexts) => {
+            setNerProgress(null);
+            queryClient.setQueryData<ConversationDetail | undefined>(['conversation', conversationId], (current) => {
+              if (!current) return current;
+              return {
+                ...current,
+                messages: current.messages.map((msg) =>
+                  msg.id === messageId ? { ...msg, entityContexts } : msg
+                ),
+              };
+            });
+          },
+          onEnrichmentStarted: (messageId, total) => {
+            setNerProgress({ messageId, index: 0, total });
+          },
+          onEntityContextPartial: (messageId, entityContext, index, total) => {
+            setNerProgress({ messageId, index, total });
+            queryClient.setQueryData<ConversationDetail | undefined>(['conversation', conversationId], (current) => {
+              if (!current) return current;
+              return {
+                ...current,
+                messages: current.messages.map((msg) => {
+                  if (msg.id !== messageId) return msg;
+                  const existing = msg.entityContexts ?? [];
+                  const alreadyPresent = existing.some((ec) => ec.value === entityContext.value);
+                  return alreadyPresent ? msg : { ...msg, entityContexts: [...existing, entityContext] };
+                }),
+              };
+            });
+          },
         }, { useEuria: useEuriaForConversation, useRag: useRagForConversation, signal: activeStreamControllerRef.current.signal });
 
         setDraft(conversationId, '');
@@ -459,6 +490,7 @@ export function useStreamMessage(conversationId: string) {
         await queryClient.invalidateQueries({ queryKey: ['conversations'] });
         return message;
       } finally {
+        setNerProgress(null);
         if (activeStreamControllerRef.current?.signal.aborted) {
           clearActiveStreamingTurn();
         }
@@ -467,6 +499,7 @@ export function useStreamMessage(conversationId: string) {
       }
     },
     onError: () => {
+      setNerProgress(null);
       clearActiveStreamingTurn();
     },
   });
@@ -484,5 +517,6 @@ export function useStreamMessage(conversationId: string) {
   return {
     ...mutation,
     cancelStream,
+    nerProgress,
   };
 }

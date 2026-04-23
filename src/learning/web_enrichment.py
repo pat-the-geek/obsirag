@@ -93,12 +93,14 @@ class AutoLearnWebEnrichment:
             logger.debug(f"Synthèse sources web échouée : {exc}")
             return ""
 
+    _DDGS_TIMEOUT = 5
+
     def web_search(self, query: str) -> list[dict]:
         try:
             from ddgs import DDGS
 
             enriched_query = self.build_search_query(query)
-            with DDGS() as ddgs:
+            with DDGS(timeout=self._DDGS_TIMEOUT) as ddgs:
                 results = list(ddgs.text(enriched_query, max_results=15))
             trusted = [
                 result for result in results

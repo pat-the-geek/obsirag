@@ -4,6 +4,7 @@ import asyncio
 import json
 import queue
 import re
+import threading
 import sqlite3
 import subprocess
 import sys
@@ -452,8 +453,12 @@ def _build_query_overview_from_autolearn_results(
     web_results: list[dict[str, Any]] | None = None,
     llm=None,
 ) -> dict[str, Any]:
-    search_query, autolearn_results = _lookup_autolearn_web_results(user_text, svc)
-    candidate_results = web_results if isinstance(web_results, list) and web_results else autolearn_results
+    if isinstance(web_results, list) and web_results:
+        search_query = user_text
+        candidate_results = web_results
+    else:
+        search_query, autolearn_results = _lookup_autolearn_web_results(user_text, svc)
+        candidate_results = autolearn_results
     if not candidate_results:
         return {}
 
@@ -550,7 +555,9 @@ def _compose_assistant_web_answer(
     try:
         rag_context, rag_sources = build_rag_context(prompt)
         compose_sources = list(sources or rag_sources or [])
-        if native_web_answer and isinstance(llm, EuriaClient):
+        if isinstance(llm, EuriaClient):
+            if not native_web_answer:
+                return _apply_native_web_fallback(overview=payload["query_overview"], search_query=search_query)
             enriched_answer = _merge_euria_native_answer_with_ddg(
                 query=prompt,
                 native_answer=native_web_answer,
@@ -1452,15 +1459,15 @@ async def stream_message(
         emitted_preparation_steps: set[str] = set()
 
         if payload.useEuria:
-            euria_steps: list[tuple[str, str]] = [("analysis", "Analyse de la requete")]
-            if payload.useRag and _can_build_local_rag_context(svc) and not _should_skip_euria_rag(payload.prompt):
-                euria_steps.append(("context", "Recherche dans le coffre"))
-            euria_steps.append(("generation", "Generation via Euria + web" if not payload.useRag else "Generation via Euria"))
-            euria_steps.append(("entities", "Extraction des entites NER"))
-            euria_steps.append(("finalize", "Finalisation de la reponse"))
-            for phase, status_message in euria_steps:
-                _append_timeline_step(timeline, status_message)
-                yield _sse_event("retrieval_status", {"phase": phase, "message": status_message})
+            def _euria_status(phase: str, msg: str) -> str:
+                _append_timeline_step(timeline, msg)
+                return _sse_event("retrieval_status", {"phase": phase, "message": msg})
+
+            # Phase 1 — Analysis: shown immediately while plan prep runs (may include vault lookup)
+            if payload.useRag:
+                yield _euria_status("analysis", "Analyse de votre question et recherche de passages pertinents dans le coffre Obsidian…")
+            else:
+                yield _euria_status("analysis", "Analyse de votre question et ouverture d'une session Euria avec accès web en temps réel…")
 
             try:
                 stream_plan = await asyncio.to_thread(
@@ -1470,27 +1477,79 @@ async def stream_message(
                     use_rag=payload.useRag,
                     svc=svc,
                 )
-                raw_stream = llm.stream(
-                    stream_plan["messages"],
-                    temperature=float(stream_plan["temperature"]),
-                    max_tokens=int(stream_plan["max_tokens"]),
-                    operation=str(stream_plan["operation"]),
-                    enable_web_search=bool(stream_plan["enable_web_search"]),
-                )
+
+                # Phase 2 — Context-aware status based on the effective plan
+                _plan_result = stream_plan.get("result") or {}
+                _enrichment_path = str(_plan_result.get("enrichment_path") or "")
+                _rag_context_used = bool(_plan_result.get("rag_context_used"))
+                if _enrichment_path == "euria-native-web":
+                    yield _euria_status(
+                        "generation",
+                        "Connexion à Euria établie — accès web natif activé. Euria interroge le web en temps réel…",
+                    )
+                elif _rag_context_used:
+                    yield _euria_status(
+                        "context",
+                        "Passages pertinents trouvés dans votre coffre — Euria va les utiliser pour construire "
+                        "une réponse ancrée dans vos notes personnelles.",
+                    )
+                elif _enrichment_path == "euria-direct":
+                    yield _euria_status(
+                        "generation",
+                        "Aucun passage du coffre ne correspond directement — génération directe via Euria "
+                        "à partir de ses connaissances générales.",
+                    )
+                else:
+                    yield _euria_status("generation", "Génération de la réponse via Euria…")
+
                 streamed_parts: list[str] = []
                 ttft = 0.0
-                while True:
-                    token = await asyncio.to_thread(_next_stream_value, raw_stream)
-                    if token is _STREAM_ITERATION_END:
-                        break
-                    token_text = str(token or "")
-                    if not token_text:
-                        continue
-                    if ttft == 0.0 and token_text.strip():
-                        ttft = max(time.perf_counter() - started_at, 0.001)
-                    streamed_parts.append(token_text)
-                    yield _sse_event("token", {"token": token_text})
-            except RuntimeError as exc:
+                current_messages = list(stream_plan["messages"])
+
+                if _enrichment_path == "euria-native-web":
+                    # Native Euria web search: single-pass stream, Euria handles search internally
+                    raw_stream = llm.stream(
+                        current_messages,
+                        temperature=float(stream_plan["temperature"]),
+                        max_tokens=int(stream_plan["max_tokens"]),
+                        operation=str(stream_plan["operation"]),
+                        enable_web_search=True,
+                    )
+                    while True:
+                        token = await asyncio.to_thread(_next_stream_value, raw_stream)
+                        if token is _STREAM_ITERATION_END:
+                            break
+                        chunk = str(token or "")
+                        if not chunk:
+                            continue
+                        if ttft == 0.0 and chunk.strip():
+                            ttft = max(time.perf_counter() - started_at, 0.001)
+                        streamed_parts.append(chunk)
+                        yield _sse_event("token", {"token": chunk})
+                else:
+                    # Direct or RAG path: single-pass stream, no web search
+                    raw_stream = llm.stream(
+                        current_messages,
+                        temperature=float(stream_plan["temperature"]),
+                        max_tokens=int(stream_plan["max_tokens"]),
+                        operation=str(stream_plan["operation"]),
+                        enable_web_search=bool(stream_plan.get("enable_web_search", False)),
+                    )
+                    turn_parts: list[str] = []
+                    while True:
+                        token = await asyncio.to_thread(_next_stream_value, raw_stream)
+                        if token is _STREAM_ITERATION_END:
+                            break
+                        turn_parts.append(str(token or ""))
+                    turn_content = "".join(turn_parts)
+                    for chunk in _iter_answer_tokens(turn_content):
+                        if not chunk:
+                            continue
+                        if ttft == 0.0 and chunk.strip():
+                            ttft = max(time.perf_counter() - started_at, 0.001)
+                        streamed_parts.append(chunk)
+                        yield _sse_event("token", {"token": chunk})
+            except Exception as exc:
                 yield _sse_event("message_error", {"detail": str(exc)})
                 return
 
@@ -1498,7 +1557,19 @@ async def stream_message(
             result = dict(stream_plan["result"])
             result["answer"] = answer
             if payload.useRag:
-                result = _maybe_upgrade_euria_result_with_web_fallback(prompt=payload.prompt, result=result, llm=llm, svc=svc)
+                _pre_web_result = dict(result)
+                try:
+                    result = await asyncio.wait_for(
+                        asyncio.to_thread(
+                            lambda: _maybe_upgrade_euria_result_with_web_fallback(
+                                prompt=payload.prompt, result=_pre_web_result, llm=llm, svc=svc
+                            )
+                        ),
+                        timeout=35.0,
+                    )
+                except (asyncio.TimeoutError, Exception) as _web_exc:
+                    logger.warning("[_event_stream] Euria web upgrade skipped: {}", _web_exc)
+                    result = _pre_web_result
                 answer = _sanitize_assistant_answer_text(str(result.get("answer") or answer))
             else:
                 result = await asyncio.to_thread(
@@ -1514,24 +1585,13 @@ async def stream_message(
             _prompt, _answer, _source_models, _primary_source, _svc, _llm = (
                 payload.prompt, answer, source_models, primary_source, svc, llm
             )
-            entity_contexts = await asyncio.to_thread(
-                lambda: _enrich_entity_contexts(
-                    user_text=_prompt,
-                    answer=_answer,
-                    entity_contexts=_lookup_conversation_entity_contexts(_prompt, _answer, _svc),
-                    sources=_source_models,
-                    primary_source=_primary_source,
-                    svc=_svc,
-                    llm=_llm,
-                )
-            )
             assistant_message = _build_assistant_message(
                 answer=answer,
                 sources=sources,
                 started_at=started_at,
                 timeline=timeline,
                 query_overview=result.get("query_overview") or {},
-                entity_contexts=entity_contexts,
+                entity_contexts=[],
                 provenance=str(result.get("provenance") or "vault"),
                 llm_provider=llm_provider,
                 enrichment_path=str(result.get("enrichment_path") or "") or None,
@@ -1551,6 +1611,19 @@ async def stream_message(
                 last_generation_stats=assistant_message.stats,
             )
             yield _sse_event("message_complete", assistant_message.model_dump(mode="json"))
+
+            _ner_msg_id = assistant_message.id
+            _prompt_bg, _answer_bg, _src_bg, _psrc_bg, _svc_bg, _llm_bg = (
+                payload.prompt, answer, source_models, primary_source, svc, llm
+            )
+            async for _ner_event in _stream_ner_background(
+                conversation_id=conversation_id,
+                ner_msg_id=_ner_msg_id,
+                prompt=_prompt_bg, answer=_answer_bg,
+                sources=_src_bg, primary_source=_psrc_bg,
+                svc=_svc_bg, llm=_llm_bg,
+            ):
+                yield _ner_event
             return
 
         for phase, status_message in STREAM_PREPARATION_STEPS:
@@ -1590,54 +1663,45 @@ async def stream_message(
         _append_timeline_step(timeline, "Réponse générée par le worker API")
         yield _sse_event("retrieval_status", {"phase": "generation", "message": "Réponse générée par le worker API"})
 
-        entity_contexts: list[dict[str, Any]] = []
         query_overview: dict[str, Any] = {}
         should_attempt_web = _should_attempt_web_answer(answer, svc)
-        enrichment_steps = [
-            *([("web", "Recherche DDG")] if should_attempt_web else []),
-            ("entities", "Extraction des entites NER"),
-            ("finalize", "Finalisation de la reponse"),
-        ]
-        for phase, status_message in enrichment_steps:
-            _append_timeline_step(timeline, status_message)
-            yield _sse_event("retrieval_status", {"phase": phase, "message": status_message})
-            if phase == "web":
-                enriched_result = await asyncio.to_thread(
-                    _compose_assistant_web_answer,
-                    prompt=payload.prompt,
-                    answer=answer,
-                    sources=sources,
-                    svc=svc,
-                    force=should_attempt_web,
-                    llm=llm,
+        if should_attempt_web:
+            _append_timeline_step(timeline, "Recherche DDG")
+            yield _sse_event("retrieval_status", {"phase": "web", "message": "Recherche DDG"})
+            try:
+                enriched_result = await asyncio.wait_for(
+                    asyncio.to_thread(
+                        _compose_assistant_web_answer,
+                        prompt=payload.prompt,
+                        answer=answer,
+                        sources=sources,
+                        svc=svc,
+                        force=should_attempt_web,
+                        llm=llm,
+                    ),
+                    timeout=20.0,
                 )
-                answer = str(enriched_result.get("answer") or answer)
-                sources = list(enriched_result.get("sources") or sources)
-                provenance = str(enriched_result.get("provenance") or "vault")
-                enrichment_path = str(enriched_result.get("enrichment_path") or "") or None
-                sentinel = is_not_in_vault(answer)
-                query_overview = enriched_result.get("query_overview") or query_overview
-                source_models = _build_source_models(sources)
-                primary_source = next((item for item in source_models if item.isPrimary), None)
-            elif phase == "entities":
-                _prompt, _answer, _source_models, _primary_source, _svc, _llm = (
-                    payload.prompt, answer, source_models, primary_source, svc, llm
+            except (asyncio.TimeoutError, Exception) as _web_exc:
+                logger.warning("[_event_stream] web enrichment skipped: {}", _web_exc)
+                enriched_result = {}
+            answer = str(enriched_result.get("answer") or answer)
+            sources = list(enriched_result.get("sources") or sources)
+            provenance = str(enriched_result.get("provenance") or "vault")
+            enrichment_path = str(enriched_result.get("enrichment_path") or "") or None
+            sentinel = is_not_in_vault(answer)
+            query_overview = enriched_result.get("query_overview") or query_overview
+            source_models = _build_source_models(sources)
+            primary_source = next((item for item in source_models if item.isPrimary), None)
+
+        if sentinel and not query_overview:
+            try:
+                query_overview = await asyncio.wait_for(
+                    asyncio.to_thread(_lookup_query_overview, payload.prompt, svc, llm=llm),
+                    timeout=20.0,
                 )
-                entity_contexts = await asyncio.to_thread(
-                    lambda: _enrich_entity_contexts(
-                        user_text=_prompt,
-                        answer=_answer,
-                        entity_contexts=_lookup_conversation_entity_contexts(_prompt, _answer, _svc),
-                        sources=_source_models,
-                        primary_source=_primary_source,
-                        svc=_svc,
-                        llm=_llm,
-                    )
-                )
-                if sentinel and not query_overview:
-                    query_overview = await asyncio.to_thread(
-                        _lookup_query_overview, payload.prompt, svc, llm=llm
-                    )
+            except (asyncio.TimeoutError, Exception) as _ov_exc:
+                logger.warning("[_event_stream] query overview skipped: {}", _ov_exc)
+                query_overview = {}
 
         for token in _iter_answer_tokens(answer):
             yield _sse_event("token", {"token": token})
@@ -1650,7 +1714,7 @@ async def stream_message(
             started_at=started_at,
             timeline=timeline,
             query_overview=query_overview,
-            entity_contexts=entity_contexts,
+            entity_contexts=[],
             provenance=provenance,
             llm_provider=llm_provider,
             enrichment_path=enrichment_path,
@@ -1662,7 +1726,102 @@ async def stream_message(
         )
         yield _sse_event("message_complete", assistant_message.model_dump(mode="json"))
 
+        _ner_msg_id = assistant_message.id
+        _prompt_bg2, _answer_bg2, _src_bg2, _psrc_bg2, _svc_bg2, _llm_bg2 = (
+            payload.prompt, answer, source_models, primary_source, svc, llm
+        )
+        async for _ner_event in _stream_ner_background(
+            conversation_id=conversation_id,
+            ner_msg_id=_ner_msg_id,
+            prompt=_prompt_bg2, answer=_answer_bg2,
+            sources=_src_bg2, primary_source=_psrc_bg2,
+            svc=_svc_bg2, llm=_llm_bg2,
+        ):
+            yield _ner_event
+
     return StreamingResponse(_event_stream(), media_type="text/event-stream")
+
+
+async def _stream_ner_background(
+    *,
+    conversation_id: str,
+    ner_msg_id: str,
+    prompt: str,
+    answer: str,
+    sources: list,
+    primary_source: Any,
+    svc: Any,
+    llm: Any,
+):
+    """Async generator that streams NER enrichment events progressively."""
+    _ner_queue: asyncio.Queue[tuple[str, Any]] = asyncio.Queue()
+    _loop = asyncio.get_running_loop()
+
+    def _on_partial(entity_dict: dict[str, Any]) -> None:
+        asyncio.run_coroutine_threadsafe(_ner_queue.put(("partial", entity_dict)), _loop)
+
+    def _worker() -> None:
+        try:
+            raw = _lookup_conversation_entity_contexts(prompt, answer, svc)
+            valid_count = sum(1 for e in raw if str(e.get("value") or "").strip())
+            asyncio.run_coroutine_threadsafe(_ner_queue.put(("count", valid_count)), _loop)
+            result = _enrich_entity_contexts(
+                user_text=prompt,
+                answer=answer,
+                entity_contexts=raw,
+                sources=sources,
+                primary_source=primary_source,
+                svc=svc,
+                llm=llm,
+                on_partial=_on_partial,
+            )
+            asyncio.run_coroutine_threadsafe(_ner_queue.put(("done", result)), _loop)
+        except Exception as exc:
+            asyncio.run_coroutine_threadsafe(_ner_queue.put(("error", str(exc))), _loop)
+
+    threading.Thread(target=_worker, daemon=True).start()
+
+    _ner_total = 0
+    _ner_index = 0
+    _deadline = _loop.time() + 65.0
+
+    while True:
+        remaining = _deadline - _loop.time()
+        if remaining <= 0:
+            logger.warning("[_stream_ner_background] timed out for msg {}", ner_msg_id)
+            return
+        try:
+            kind, data = await asyncio.wait_for(_ner_queue.get(), timeout=min(remaining, 3.0))
+        except asyncio.TimeoutError:
+            continue
+
+        if kind == "count":
+            _ner_total = int(data)
+            if _ner_total > 0:
+                yield _sse_event("entity_enrichment_started", {"messageId": ner_msg_id, "total": _ner_total})
+        elif kind == "partial":
+            ec_models = _entity_context_models([data])
+            if ec_models:
+                _ner_index += 1
+                yield _sse_event("entity_context_partial", {
+                    "messageId": ner_msg_id,
+                    "entityContext": ec_models[0].model_dump(mode="json"),
+                    "index": _ner_index,
+                    "total": _ner_total,
+                })
+        elif kind in ("done", "error"):
+            if kind == "error":
+                logger.warning("[_stream_ner_background] worker error: {}", data)
+                return
+            final_entities: list[dict[str, Any]] = data
+            if final_entities:
+                ec_json = [m.model_dump(mode="json") for m in _entity_context_models(final_entities)]
+                try:
+                    conversation_store.patch_message_entity_contexts(conversation_id, ner_msg_id, ec_json)
+                except Exception as _patch_exc:
+                    logger.warning("[_stream_ner_background] patch failed: {}", _patch_exc)
+                yield _sse_event("entity_contexts_ready", {"messageId": ner_msg_id, "entityContexts": ec_json})
+            return
 
 
 def _append_timeline_step(timeline: list[str], value: str) -> None:
@@ -2722,6 +2881,7 @@ def _enrich_entity_contexts(
     primary_source: SourceRefModel | None,
     svc,
     llm=None,
+    on_partial: Any = None,
 ) -> list[dict[str, Any]]:
     enriched: list[dict[str, Any]] = []
     evidence_rows: list[dict[str, Any]] = []
@@ -2736,6 +2896,11 @@ def _enrich_entity_contexts(
         if evidence.get("line_number"):
             clone["line_number"] = evidence["line_number"]
         enriched.append(clone)
+        if on_partial is not None:
+            try:
+                on_partial(dict(clone))
+            except Exception:
+                pass
         evidence_rows.append(
             {
                 "entity": value,
@@ -2836,6 +3001,11 @@ def _generate_entity_relation_explanations(
     selected_llm = llm or getattr(svc, "llm", None)
     chat = getattr(selected_llm, "chat", None)
     if not callable(chat):
+        return {}
+    # Skip if the selected LLM is MLX (has is_loaded) but not currently loaded —
+    # triggering a reload from a background thread races with the watchdog and can freeze the server.
+    _is_loaded_fn = getattr(selected_llm, "is_loaded", None)
+    if callable(_is_loaded_fn) and not _is_loaded_fn():
         return {}
 
     prompt_lines = [
@@ -3042,11 +3212,7 @@ def _build_euria_direct_messages(prompt: str, history: list[dict[str, str]]) -> 
                 "N'écris pas de balisage incomplet. "
                 "Si tu produis un tableau, utilise un vrai tableau Markdown avec des pipes. "
                 "Ne répète jamais une ligne, une ligne de tableau, un paragraphe ou une section. "
-                "Termine toujours proprement la réponse, sans couper un mot ni une emphase Markdown. "
-                "Tu as accès à une recherche web en temps réel. "
-                "Pour toute question portant sur des produits, prix, actualités, événements récents ou faits susceptibles d'avoir évolué, "
-                "effectue une recherche web avant de répondre et base ta réponse sur les résultats obtenus. "
-                "Ne te fie jamais à tes données d'entraînement pour des informations récentes ou factuelles : vérifie toujours sur le web."
+                "Termine toujours proprement la réponse, sans couper un mot ni une emphase Markdown."
             ),
         },
         *[
@@ -3058,11 +3224,130 @@ def _build_euria_direct_messages(prompt: str, history: list[dict[str, str]]) -> 
     ]
 
 
+def _build_euria_agentic_web_messages(prompt: str, history: list[dict[str, str]]) -> list[dict[str, str]]:
+    """Premier tour du protocole agentic : forcer l'émission de balises <search> uniquement."""
+    return [
+        {
+            "role": "system",
+            "content": (
+                "/no_think\n"
+                "Tu as accès à une recherche web en temps réel via la syntaxe <search>requête</search>.\n"
+                "RÈGLE ABSOLUE : ta réponse à ce premier message doit contenir UNIQUEMENT des requêtes de recherche "
+                "au format <search>requête de recherche précise</search>.\n"
+                "Ne fournis PAS encore la réponse finale. Ne génère PAS de texte explicatif.\n"
+                "Formule 1 à 3 requêtes de recherche adaptées à la question, puis arrête-toi.\n"
+                "Exemple de format attendu :\n"
+                "<search>MacBook Neo prix France 2025</search>\n"
+                "<search>Apple MacBook Neo fiche technique</search>"
+            ),
+        },
+        *[
+            {"role": str(item.get("role") or "user"), "content": str(item.get("content") or "")}
+            for item in history
+            if str(item.get("content") or "").strip()
+        ],
+        {"role": "user", "content": prompt},
+    ]
+
+
+def _build_euria_final_answer_messages(
+    prompt: str,
+    history: list[dict[str, str]],
+    search_queries: list[str],
+    search_results_text: str,
+) -> list[dict[str, str]]:
+    """Second tour du protocole agentic : répondre en français avec les résultats web injectés."""
+    queries_display = "\n".join(f"- {q}" for q in search_queries)
+    return [
+        {
+            "role": "system",
+            "content": (
+                "/no_think\n"
+                "Tu réponds UNIQUEMENT et EXCLUSIVEMENT en français, quelle que soit la langue des sources. "
+                "Utilise du Markdown valide et propre. "
+                "N'écris pas de balisage incomplet. "
+                "Si tu produis un tableau, utilise un vrai tableau Markdown avec des pipes. "
+                "Ne répète jamais une ligne, une ligne de tableau, un paragraphe ou une section. "
+                "Termine toujours proprement la réponse, sans couper un mot ni une emphase Markdown. "
+                "Des résultats de recherche web récents te sont fournis. "
+                "Appuie-toi dessus pour répondre avec précision et cite les sources entre crochets. "
+                "Priorité absolue aux informations du contexte web sur tes données d'entraînement."
+            ),
+        },
+        *[
+            {"role": str(item.get("role") or "user"), "content": str(item.get("content") or "")}
+            for item in history
+            if str(item.get("content") or "").strip()
+        ],
+        {
+            "role": "user",
+            "content": (
+                f"J'ai effectué les recherches suivantes :\n{queries_display}\n\n"
+                f"{search_results_text}\n\n"
+                f"Question : {prompt}"
+            ),
+        },
+    ]
+
+
 def _fetch_ddg_snippets(prompt: str, max_results: int = 5) -> list[dict]:
     search_query = _keywordize_query(prompt)
     instant = _ddg_instant_answer_search(search_query, max_results=3)
     ddg = _ddg_search(search_query, max_results=max_results)
     return _merge_search_results(instant, ddg, max_results=max_results)
+
+
+def _extract_euria_search_queries(content: str) -> list[str]:
+    return [q.strip() for q in re.findall(r"<search>\s*(.*?)\s*</search>", content, re.DOTALL | re.IGNORECASE) if q.strip()]
+
+
+def _strip_euria_search_tags(content: str) -> str:
+    cleaned = re.sub(r"<search>.*?</search>", "", content, flags=re.DOTALL | re.IGNORECASE)
+    return re.sub(r"\n{3,}", "\n\n", cleaned).strip()
+
+
+_AGENTIC_DDG_TIMEOUT = 10  # timeout global pour l'ensemble des recherches agentiques
+
+def _run_agentic_ddg_searches(queries: list[str]) -> str:
+    import concurrent.futures
+
+    def _search_one(q: str) -> list[dict]:
+        try:
+            instant = _ddg_instant_answer_search(q, max_results=2)
+            text = _ddg_search(q, max_results=3)
+            return _merge_search_results(instant, text, max_results=3)
+        except Exception:
+            return []
+
+    results: dict[str, list[dict]] = {q: [] for q in queries}
+    executor = concurrent.futures.ThreadPoolExecutor(max_workers=min(len(queries), 5))
+    try:
+        future_to_q = {executor.submit(_search_one, q): q for q in queries}
+        for f in concurrent.futures.as_completed(future_to_q, timeout=_AGENTIC_DDG_TIMEOUT):
+            q = future_to_q[f]
+            try:
+                results[q] = f.result(timeout=1)
+            except Exception:
+                pass
+    except concurrent.futures.TimeoutError:
+        logger.warning("[_run_agentic_ddg_searches] timeout — résultats partiels seulement")
+    finally:
+        executor.shutdown(wait=False, cancel_futures=True)
+
+    lines = ["<search_results>"]
+    for i, q in enumerate(queries, 1):
+        lines.append(f"<query_{i}>{q}</query_{i}>")
+        for j, r in enumerate(results.get(q, []), 1):
+            lines.extend([
+                f"<result_{j}>",
+                f"<title>{r.get('title', '')}</title>",
+                f"<url>{r.get('href', '')}</url>",
+                f"<content>{(r.get('body') or '')[:500]}</content>",
+                f"</result_{j}>",
+            ])
+    lines.append("</search_results>")
+    lines.append("Sur la base de ces résultats de recherche web, réponds à la question en français.")
+    return "\n".join(lines)
 
 
 def _build_euria_web_messages(
@@ -3145,23 +3430,8 @@ def _build_euria_rag_messages(
 
 def _prepare_euria_stream_plan(*, prompt: str, history: list[dict[str, str]], use_rag: bool, svc) -> dict[str, Any]:
     if not use_rag:
-        # Pré-fetch DDG + injection contexte (Euria native web search non supportée en streaming)
-        try:
-            web_results = _fetch_ddg_snippets(prompt)
-        except Exception:
-            web_results = []
-        messages = (
-            _build_euria_web_messages(prompt, history, web_results)
-            if web_results
-            else _build_euria_direct_messages(prompt, history)
-        )
-        search_query = _keywordize_query(prompt)
-        query_overview = {
-            "query": prompt,
-            "search_query": search_query,
-            "summary": "",
-            "sources": web_results,
-        } if web_results else {}
+        # Native Euria web search: single-pass stream with enable_web_search=True
+        messages = _build_euria_direct_messages(prompt, history)
         try:
             _, vault_sources = _build_local_rag_context(prompt, svc)
         except Exception:
@@ -3171,13 +3441,13 @@ def _prepare_euria_stream_plan(*, prompt: str, history: list[dict[str, str]], us
             "temperature": 0.3,
             "max_tokens": 4096,
             "operation": "conversation_euria_web",
-            "enable_web_search": False,
+            "enable_web_search": True,
             "result": {
                 "sources": list(vault_sources) if vault_sources else [],
                 "provenance": "web",
-                "query_overview": query_overview,
+                "query_overview": {},
                 "entity_contexts": [],
-                "enrichment_path": "euria-ddg-web",
+                "enrichment_path": "euria-native-web",
                 "rag_lookup_attempted": True,
                 "rag_context_used": False,
             },

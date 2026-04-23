@@ -13,6 +13,7 @@ from src.storage.slugify import build_ascii_stem
 from .schemas import (
     ChatMessageModel,
     ConversationDetailModel,
+    EntityContextModel,
     StoredConversationCollectionModel,
     StoredConversationModel,
 )
@@ -125,6 +126,25 @@ class ApiConversationStore:
         if conversation.title == "Nouveau fil":
             conversation.title = self._derive_title(conversation.messages)
         return self.upsert(conversation)
+
+    def patch_message_entity_contexts(
+        self,
+        conversation_id: str,
+        message_id: str,
+        entity_contexts: list,
+    ) -> bool:
+        conversation = self.get(conversation_id)
+        if conversation is None:
+            return False
+        for msg in conversation.messages:
+            if msg.id == message_id:
+                msg.entityContexts = [
+                    ec if isinstance(ec, EntityContextModel) else EntityContextModel.model_validate(ec)
+                    for ec in entity_contexts
+                ]
+                self.upsert(conversation)
+                return True
+        return False
 
     def save_markdown(self, conversation_id: str) -> Path:
         conversation = self.get(conversation_id)

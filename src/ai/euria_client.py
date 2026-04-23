@@ -85,15 +85,33 @@ class EuriaClient:
             )
         return content
 
+    @staticmethod
+    def _network_error_message(exc: Exception) -> str:
+        msg = str(exc)
+        if "NameResolutionError" in msg or "Failed to resolve" in msg or "Name or service not known" in msg or "nodename nor servname" in msg:
+            return "Euria est inaccessible — vérifiez votre connexion internet."
+        if "timed out" in msg.lower() or "timeout" in msg.lower():
+            return "Euria n'a pas répondu dans les délais — le service est peut-être surchargé."
+        if "ConnectionRefusedError" in msg or "Connection refused" in msg:
+            return "Euria est inaccessible — connexion refusée."
+        if "401" in msg or "403" in msg or "Unauthorized" in msg or "Forbidden" in msg:
+            return "Accès Euria refusé — vérifiez votre clé API."
+        if "5" in msg[:4]:
+            return "Euria rencontre une erreur serveur — réessayez dans un moment."
+        return "Euria est temporairement inaccessible."
+
     def _post_chat(self, payload: dict[str, Any]) -> dict[str, Any]:
-        response = requests.post(
-            self._url,
-            json=payload,
-            headers=self._request_headers(),
-            timeout=120,
-        )
-        response.raise_for_status()
-        return response.json()
+        try:
+            response = requests.post(
+                self._url,
+                json=payload,
+                headers=self._request_headers(),
+                timeout=(15, 120),
+            )
+            response.raise_for_status()
+            return response.json()
+        except Exception as exc:
+            raise RuntimeError(self._network_error_message(exc)) from exc
 
     def _build_payload(
         self,
@@ -180,14 +198,22 @@ class EuriaClient:
         saw_reasoning = False
         finish_reason = ""
 
-        with requests.post(
-            self._url,
-            json=stream_payload,
-            headers=self._request_headers(),
-            timeout=120,
-            stream=True,
-        ) as response:
-            response.raise_for_status()
+        try:
+            resp_ctx = requests.post(
+                self._url,
+                json=stream_payload,
+                headers=self._request_headers(),
+                timeout=(15, 60),  # (connect, read-per-chunk) — prevents indefinite freeze
+                stream=True,
+            )
+        except Exception as exc:
+            raise RuntimeError(self._network_error_message(exc)) from exc
+
+        with resp_ctx as response:
+            try:
+                response.raise_for_status()
+            except Exception as exc:
+                raise RuntimeError(self._network_error_message(exc)) from exc
             for raw_line in response.iter_lines(decode_unicode=True):
                 if not raw_line:
                     continue
@@ -215,7 +241,7 @@ class EuriaClient:
 
         is_web_search = bool(payload.get("enable_web_search"))
         retry_ceil = self._WEB_SEARCH_MAX_TOKENS if is_web_search else self._RETRY_MAX_TOKENS
-        if not saw_content and saw_reasoning and finish_reason.strip().lower() == "length" and max_tokens < retry_ceil:
+        if not saw_content and saw_reasoning and max_tokens < retry_ceil:
             retry_payload = dict(payload)
             retry_payload["max_tokens"] = min(retry_ceil, max(max_tokens * 4 if is_web_search else max_tokens * 2, 8000 if is_web_search else 2200))
             logger.info(

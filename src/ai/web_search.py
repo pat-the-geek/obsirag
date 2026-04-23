@@ -51,7 +51,7 @@ _QUERY_ASPECT_TERMS = {
     "prix", "date", "sortie", "rumeur", "rumeurs", "review", "avis", "comparatif", "test",
     "specs", "spécifications", "specifications", "version", "versions",
 }
-_DDG_TIMEOUT_SECONDS = 6
+_DDG_TIMEOUT_SECONDS = 3
 _DDG_USER_AGENT = "Mozilla/5.0 (ObsiRAG/1.0; +https://github.com/pat-the-geek/obsirag)"
 _NOT_IN_VAULT_PATTERNS = [
     re.compile(
@@ -494,22 +494,30 @@ def _ddg_search(query: str, max_results: int = 5) -> list[dict]:
             logger.warning(f"WebSearch DDG error ({candidate_query!r}): {exc}")
             return candidate_query, [], -10**9
 
+    _OUTER_TIMEOUT = _DDG_TIMEOUT_SECONDS + 2  # marge pour DNS + connection
+    outcomes: list = []
+    executor = concurrent.futures.ThreadPoolExecutor(max_workers=min(len(candidate_queries), 4))
     try:
-        max_workers = min(len(candidate_queries), 4)
-        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-            futures = [executor.submit(_run_one, cq) for cq in candidate_queries]
-            outcomes = [f.result() for f in concurrent.futures.as_completed(futures)]
-
-        best_results: list[dict] = []
-        best_score = -10**9
-        for _cq, result, score in outcomes:
-            if result and (not best_results or score > best_score):
-                best_score = score
-                best_results = result
-        return best_results
+        futures = [executor.submit(_run_one, cq) for cq in candidate_queries]
+        for f in concurrent.futures.as_completed(futures, timeout=_OUTER_TIMEOUT):
+            try:
+                outcomes.append(f.result(timeout=1))
+            except Exception:
+                pass
+    except concurrent.futures.TimeoutError:
+        logger.warning("WebSearch DDG timeout global — résultats partiels seulement")
     except Exception as exc:
         logger.warning(f"WebSearch DDG error: {exc}")
-        return []
+    finally:
+        executor.shutdown(wait=False, cancel_futures=True)
+
+    best_results: list[dict] = []
+    best_score = -10**9
+    for _cq, result, score in outcomes:
+        if result and (not best_results or score > best_score):
+            best_score = score
+            best_results = result
+    return best_results
 
 
 def _score_search_results(original_query: str, candidate_query: str, results: list[dict]) -> int:
