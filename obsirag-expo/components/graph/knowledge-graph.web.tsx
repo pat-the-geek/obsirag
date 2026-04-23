@@ -936,8 +936,8 @@ function buildAmbientMotionProfile(nodeCount: number) {
   if (nodeCount > 96) {
     return {
       enabled: true,
-      cycleMs: 7600,
-      frameIntervalMs: 96,
+      cycleMs: 238,
+      frameIntervalMs: 3,
       radiusAmplitude: 0.42,
       borderAmplitude: 0.5,
       shadowBase: 12,
@@ -949,8 +949,8 @@ function buildAmbientMotionProfile(nodeCount: number) {
 
   return {
     enabled: true,
-    cycleMs: 6900,
-    frameIntervalMs: 80,
+    cycleMs: 215,
+    frameIntervalMs: 3,
     radiusAmplitude: 0.58,
     borderAmplitude: 0.56,
     shadowBase: 14,
