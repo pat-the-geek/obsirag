@@ -3,9 +3,14 @@ from __future__ import annotations
 import concurrent.futures
 import json
 import re
+import ssl
 import urllib.parse
 import urllib.request
 import unicodedata
+
+_SSL_UNVERIFIED_CTX = ssl.create_default_context()
+_SSL_UNVERIFIED_CTX.check_hostname = False
+_SSL_UNVERIFIED_CTX.verify_mode = ssl.CERT_NONE
 from pathlib import Path
 from typing import Any
 
@@ -522,7 +527,7 @@ class AutoLearnEntityServices:
                 f"https://api.duckduckgo.com/?{params}",
                 headers={"User-Agent": _DDG_USER_AGENT},
             )
-            with urllib.request.urlopen(request, timeout=_DDG_TIMEOUT_SECONDS) as response:
+            with urllib.request.urlopen(request, timeout=_DDG_TIMEOUT_SECONDS, context=_SSL_UNVERIFIED_CTX) as response:
                 payload = json.loads(response.read().decode("utf-8"))
             return self._summarize_ddg_entity_knowledge(payload)
         except Exception as exc:

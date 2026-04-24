@@ -4,10 +4,12 @@ Logging professionnel avec loguru.
 - Fichier rotatif (10 MB, rétention 30 jours, compression zip)
 - Fichier d'erreurs séparé
 - Suivi de la consommation de tokens IA (méthode dédiée)
+- Buffer circulaire en mémoire pour l'API /system/logs
 """
 import sys
 import json
 import threading
+from collections import deque
 from pathlib import Path
 from datetime import datetime, timezone
 from loguru import logger
@@ -16,6 +18,26 @@ from src.storage.safe_read import read_json_file
 
 
 _TOKEN_STATS_LOCK = threading.RLock()
+
+_LOG_BUFFER_LOCK = threading.Lock()
+_LOG_BUFFER: deque[dict] = deque(maxlen=500)
+
+
+def get_log_buffer() -> list[dict]:
+    with _LOG_BUFFER_LOCK:
+        return list(_LOG_BUFFER)
+
+
+def _log_buffer_sink(message) -> None:
+    record = message.record
+    with _LOG_BUFFER_LOCK:
+        _LOG_BUFFER.append({
+            "timestamp": record["time"].isoformat(),
+            "level": record["level"].name,
+            "name": record["name"],
+            "line": record["line"],
+            "message": record["message"],
+        })
 
 
 def configure_logging(log_level: str = "INFO", log_dir: str = "/app/logs") -> None:
@@ -35,6 +57,7 @@ def configure_logging(log_level: str = "INFO", log_dir: str = "/app/logs") -> No
     )
 
     logger.add(sys.stdout, format=fmt_console, level=log_level, colorize=True)
+    logger.add(_log_buffer_sink, level="DEBUG", format="{message}", colorize=False)
 
     log_path = Path(log_dir)
     log_path.mkdir(parents=True, exist_ok=True)

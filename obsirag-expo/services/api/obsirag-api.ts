@@ -6,6 +6,7 @@ import {
   EntityContext,
   GraphData,
   InsightItem,
+  LogEntry,
   NoteDetail,
   ReindexResult,
   RelatedNote,
@@ -132,6 +133,11 @@ export class ObsiRagApi {
     return this.requestJson<ReindexResult>('/api/v1/system/reindex', {
       method: 'POST',
     });
+  }
+
+  async getLogs(limit = 200): Promise<LogEntry[]> {
+    if (this.config.useMockServer) return [];
+    return this.requestJson<LogEntry[]>(`/api/v1/system/logs?limit=${limit}`);
   }
 
   async getConversations(): Promise<ConversationSummary[]> {

@@ -10,11 +10,17 @@ from __future__ import annotations
 import concurrent.futures
 import json
 import re
+import ssl
 import threading
 import urllib.parse
 import urllib.request
 from datetime import datetime
 from pathlib import Path
+
+# Bypass SSL verification to tolerate self-signed proxy certificates in the network chain.
+_SSL_UNVERIFIED_CTX = ssl.create_default_context()
+_SSL_UNVERIFIED_CTX.check_hostname = False
+_SSL_UNVERIFIED_CTX.verify_mode = ssl.CERT_NONE
 
 from loguru import logger
 
@@ -51,7 +57,7 @@ _QUERY_ASPECT_TERMS = {
     "prix", "date", "sortie", "rumeur", "rumeurs", "review", "avis", "comparatif", "test",
     "specs", "spécifications", "specifications", "version", "versions",
 }
-_DDG_TIMEOUT_SECONDS = 3
+_DDG_TIMEOUT_SECONDS = 8
 _DDG_USER_AGENT = "Mozilla/5.0 (ObsiRAG/1.0; +https://github.com/pat-the-geek/obsirag)"
 _NOT_IN_VAULT_PATTERNS = [
     re.compile(
@@ -72,11 +78,43 @@ _NOT_IN_VAULT_PATTERNS = [
 ]
 
 
+# Patterns détectant une réponse courte du LLM générée depuis ses connaissances
+# d'entraînement (potentiellement obsolètes) pour nier l'existence d'un produit
+# ou d'une entité absente du coffre.  Ces réponses contournent le système prompt
+# et empêchent le fallback web de se déclencher.
+_LLM_NEGATION_PATTERNS = [
+    # Formes "il n'existe pas de modèle/produit/appareil"
+    re.compile(r"il n.existe pas (?:de |d.)(?:mod[eè]le|produit|appareil|ordinateur|laptop|mac)", re.I),
+    # Formes "il n'existe aucun/pas de [catégorie produit]"
+    re.compile(r"il n.existe (?:pas|aucun|aucune) (?:\w+ ){0,4}(?:mod[eè]le|produit|appareil|ordinateur|laptop|mac\b|smartphone|tablette)", re.I),
+    # Formes "il n'y a pas/aucun [catégorie produit]"
+    re.compile(r"il n.y a (?:pas|aucun|aucune) (?:\w+ ){0,4}(?:mod[eè]le|produit|appareil|ordinateur|laptop|smartphone|tablette)", re.I),
+    # "aucun modèle/produit/appareil/ordinateur officiellement nommé/appelé"
+    re.compile(r"aucun (?:mod[eè]le|produit|appareil|ordinateur|laptop) (?:officiellement |)(?:nomm[eé]|appel[eé]|commercialis)", re.I),
+    # "ce modèle/produit n'existe pas"
+    re.compile(r"ce (?:mod[eè]le|produit|appareil|ordinateur) n.existe (?:pas|pas encore)", re.I),
+    # "[gamme/catalogue/lineup] ... ne ... commercialisé/proposé/existant"
+    re.compile(r"(?:gamme|catalogue|lineup).{0,50}(?:ne |n.)(?:.{0,20})(?:exist|propos|commercialis)", re.I),
+    # "commercialisé ... sous le nom de" ou "vendu sous le nom"
+    re.compile(r"(?:commercialis|vendu).{0,40}sous le nom", re.I),
+    # "selon mes connaissances / selon mes informations"
+    re.compile(r"selon (?:mes|les) (?:connaissances|informations)", re.I),
+    # "je n'ai pas/aucune connaissance/information de/sur"
+    re.compile(r"je n.ai (?:pas |aucune )(?:connaissance|information) (?:de |sur )", re.I),
+    # "n'est pas un modèle/produit officiellement référencé/connu/listé"
+    re.compile(r"n.est pas (?:un |une )?(?:mod[eè]le|produit) (?:officiell?e?ment |)(?:r[eé]f[eé]renc[eé]|connu|list[eé])", re.I),
+    # "Apple ne fabrique/propose/vend/commercialise pas"
+    re.compile(r"apple ne (?:fabriqu|propos|vend|commercialis|produit)", re.I),
+]
+
+
 def is_not_in_vault(response: str) -> bool:
     """Retourne True si la réponse est une négation pure du contenu du coffre.
 
-    Une réponse mixte qui commence par une formule négative mais ajoute ensuite
-    une synthèse utile du coffre ne doit pas déclencher la recherche web."""
+    Couvre également les réponses courtes (<=300 c) où le LLM utilise ses
+    connaissances d'entraînement pour nier l'existence d'un produit/entité —
+    ce qui contourne le système prompt et bloque le fallback web.
+    Une réponse mixte (négation + synthèse utile) ne doit pas déclencher la recherche."""
     low = response.strip().lower()
     normalized = re.sub(r"\s+", " ", low).strip(" .!?:;\n\t")
     if normalized in {
@@ -84,7 +122,11 @@ def is_not_in_vault(response: str) -> bool:
         "cette information n'est pas consignée dans ton coffre",
     }:
         return True
-    return any(pattern.fullmatch(normalized) for pattern in _NOT_IN_VAULT_PATTERNS)
+    if any(pattern.fullmatch(normalized) for pattern in _NOT_IN_VAULT_PATTERNS):
+        return True
+    if any(p.search(normalized[:300]) for p in _LLM_NEGATION_PATTERNS):
+        return True
+    return False
 
 
 def _insights_artifacts_dir() -> Path:
@@ -243,7 +285,7 @@ def _ddg_instant_answer_search(query: str, max_results: int = 3) -> list[dict]:
             f"https://api.duckduckgo.com/?{params}",
             headers={"User-Agent": _DDG_USER_AGENT},
         )
-        with urllib.request.urlopen(request, timeout=_DDG_TIMEOUT_SECONDS) as response:
+        with urllib.request.urlopen(request, timeout=_DDG_TIMEOUT_SECONDS, context=_SSL_UNVERIFIED_CTX) as response:
             payload = json.loads(response.read().decode("utf-8"))
         results = _build_instant_answer_results(payload, max_results=max_results)
         logger.info(
@@ -473,7 +515,7 @@ def _ddg_search(query: str, max_results: int = 5) -> list[dict]:
     def _run_one(candidate_query: str) -> tuple[str, list[dict], int]:
         try:
             from ddgs import DDGS
-            with DDGS(timeout=_DDG_TIMEOUT_SECONDS) as ddgs:
+            with DDGS(timeout=_DDG_TIMEOUT_SECONDS, verify=False) as ddgs:
                 raw = list(ddgs.text(
                     candidate_query,
                     region="fr-fr",
@@ -494,7 +536,7 @@ def _ddg_search(query: str, max_results: int = 5) -> list[dict]:
             logger.warning(f"WebSearch DDG error ({candidate_query!r}): {exc}")
             return candidate_query, [], -10**9
 
-    _OUTER_TIMEOUT = _DDG_TIMEOUT_SECONDS + 2  # marge pour DNS + connection
+    _OUTER_TIMEOUT = _DDG_TIMEOUT_SECONDS + 4  # marge pour DNS + connection + proxy
     outcomes: list = []
     executor = concurrent.futures.ThreadPoolExecutor(max_workers=min(len(candidate_queries), 4))
     try:

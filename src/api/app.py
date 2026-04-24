@@ -76,6 +76,7 @@ from src.api.schemas import (
     WebSearchResponseModel,
 )
 from src.config import settings
+from src.logger import get_log_buffer
 from src.graph.builder import GraphBuilder
 from src.learning.runtime_state import load_autolearn_runtime_state
 from src.storage.json_state import JsonStateStore
@@ -513,9 +514,30 @@ def _compose_assistant_web_answer(
         return payload
 
     native_web_answer = _try_euria_native_web_answer(prompt, llm)
+    if native_web_answer and is_not_in_vault(native_web_answer):
+        logger.info("[web] Euria native web: réponse négative détectée — fallback DDG")
+        native_web_answer = None
     search_query, web_results = _lookup_autolearn_web_results(prompt, svc)
     if native_web_answer and not web_results:
         return _apply_native_web_fallback()
+    if not web_results:
+        # AutoLearner vide ou désactivé — tentative DDG directe (bornée à 8 s)
+        import concurrent.futures
+        try:
+            from src.ai.web_search import _ddg_search
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as _exc:
+                _fut = _exc.submit(_ddg_search, prompt, 5)
+                try:
+                    direct = _fut.result(timeout=8)
+                except concurrent.futures.TimeoutError:
+                    logger.warning("[web] DDG direct: timeout après 8 s")
+                    direct = []
+            if direct:
+                logger.info("[web] DDG direct: {} résultats pour {!r}", len(direct), prompt[:60])
+                web_results = direct
+                search_query = prompt
+        except Exception as _ddg_exc:
+            logger.warning("[web] DDG direct échoué: {}", _ddg_exc)
     if not web_results:
         return payload
 
@@ -557,18 +579,42 @@ def _compose_assistant_web_answer(
         compose_sources = list(sources or rag_sources or [])
         if isinstance(llm, EuriaClient):
             if not native_web_answer:
-                return _apply_native_web_fallback(overview=payload["query_overview"], search_query=search_query)
-            enriched_answer = _merge_euria_native_answer_with_ddg(
-                query=prompt,
-                native_answer=native_web_answer,
-                search_query=search_query,
-                web_results=web_results,
-                rag_context=rag_context,
-                llm=llm,
-            )
-            enriched_sources = compose_sources
-            used_web_results = web_results
-            provenance = "Web + Coffre" if compose_sources else "Web"
+                if not snippets:
+                    return _apply_native_web_fallback(overview=payload["query_overview"], search_query=search_query)
+                # Euria native answer was negative — synthesize directly from DDG snippets
+                ddg_only_prompt = (
+                    f"Question : « {prompt} »\n\n"
+                    f"Contexte du coffre :\n{rag_context or 'Aucun contexte pertinent.'}\n\n"
+                    f"Résultats de recherche web (DDG) :\n{_build_web_result_snippets(web_results)}\n\n"
+                    "Réponds à la question en français en te basant UNIQUEMENT sur les sources ci-dessus. "
+                    "Cite les sources entre [crochets]. Si les sources ne contiennent pas l'information, dis-le explicitement."
+                )
+                try:
+                    ddg_answer = llm.chat(
+                        [{"role": "user", "content": ddg_only_prompt}],
+                        temperature=0.2,
+                        max_tokens=900,
+                        operation="euria_ddg_only",
+                        enable_web_search=False,
+                    )
+                    enriched_answer = _sanitize_assistant_answer_text(str(ddg_answer or ""))
+                except Exception:
+                    enriched_answer = None
+                enriched_sources = compose_sources
+                used_web_results = web_results
+                provenance = "Web + Coffre" if compose_sources else "Web"
+            else:
+                enriched_answer = _merge_euria_native_answer_with_ddg(
+                    query=prompt,
+                    native_answer=native_web_answer,
+                    search_query=search_query,
+                    web_results=web_results,
+                    rag_context=rag_context,
+                    llm=llm,
+                )
+                enriched_sources = compose_sources
+                used_web_results = web_results
+                provenance = "Web + Coffre" if compose_sources else "Web"
         else:
             enriched_answer, enriched_sources, used_web_results, provenance = compose_web_answer(
                 prompt,
@@ -1189,6 +1235,12 @@ def system_status(_: None = Depends(require_api_auth)) -> SystemStatusResponse:
     )
 
 
+@app.get("/api/v1/system/logs")
+def system_logs(limit: int = 200, _: None = Depends(require_api_auth)) -> list[dict]:
+    entries = get_log_buffer()
+    return entries[-limit:] if len(entries) > limit else entries
+
+
 @app.post("/api/v1/system/reindex", response_model=ReindexResponseModel)
 def system_reindex(_: None = Depends(require_api_auth)) -> ReindexResponseModel:
     service_manager = get_service_manager()
@@ -1353,15 +1405,15 @@ async def create_message(
     started_at = time.perf_counter()
     if payload.useEuria:
         try:
-            result = (
-                _generate_euria_answer_with_optional_rag(prompt=payload.prompt, history=history, llm=llm, svc=svc)
-                if payload.useRag
-                else _generate_euria_direct_answer_with_options(
-                    prompt=payload.prompt,
-                    history=history,
-                    llm=llm,
-                    enable_web_search=True,
-                )
+            result = await asyncio.to_thread(
+                _generate_euria_answer_with_optional_rag,
+                prompt=payload.prompt, history=history, llm=llm, svc=svc,
+            ) if payload.useRag else await asyncio.to_thread(
+                _generate_euria_direct_answer_with_options,
+                prompt=payload.prompt,
+                history=history,
+                llm=llm,
+                enable_web_search=True,
             )
         except RuntimeError as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
@@ -1453,6 +1505,7 @@ async def stream_message(
     worker_task = None if payload.useEuria else asyncio.create_task(asyncio.to_thread(_run_chat_generation_worker, prompt=payload.prompt, history=history, use_euria=payload.useEuria))
 
     async def _event_stream():
+        logger.info(f"[conv:{conversation_id[:8]}] stream démarré — prompt={payload.prompt[:80]!r} useEuria={payload.useEuria} useRag={getattr(payload,'useRag',False)}")
         timeline: list[str] = []
         yield _sse_event("message_start", {"conversationId": conversation_id, "messageId": user_message.id})
         result: dict[str, Any] | None = None
@@ -1470,8 +1523,7 @@ async def stream_message(
                 yield _euria_status("analysis", "Analyse de votre question et ouverture d'une session Euria avec accès web en temps réel…")
 
             try:
-                stream_plan = await asyncio.to_thread(
-                    _prepare_euria_stream_plan,
+                stream_plan = await _prepare_euria_stream_plan(
                     prompt=payload.prompt,
                     history=history,
                     use_rag=payload.useRag,
@@ -1482,6 +1534,7 @@ async def stream_message(
                 _plan_result = stream_plan.get("result") or {}
                 _enrichment_path = str(_plan_result.get("enrichment_path") or "")
                 _rag_context_used = bool(_plan_result.get("rag_context_used"))
+                logger.info(f"[conv:{conversation_id[:8]}] plan prêt — enrichment_path={_enrichment_path!r} rag_used={_rag_context_used}")
                 if _enrichment_path == "euria-native-web":
                     yield _euria_status(
                         "generation",
@@ -1506,6 +1559,7 @@ async def stream_message(
                 ttft = 0.0
                 current_messages = list(stream_plan["messages"])
 
+                logger.info(f"[conv:{conversation_id[:8]}] streaming Euria ({_enrichment_path})")
                 if _enrichment_path == "euria-native-web":
                     # Native Euria web search: single-pass stream, Euria handles search internally
                     raw_stream = llm.stream(
@@ -1554,6 +1608,7 @@ async def stream_message(
                 return
 
             answer = _sanitize_assistant_answer_text("".join(streamed_parts))
+            logger.info(f"[conv:{conversation_id[:8]}] Euria terminé — {len(answer)} car, ttft={ttft:.2f}s")
             result = dict(stream_plan["result"])
             result["answer"] = answer
             if payload.useRag:
@@ -3428,14 +3483,44 @@ def _build_euria_rag_messages(
     ]
 
 
-def _prepare_euria_stream_plan(*, prompt: str, history: list[dict[str, str]], use_rag: bool, svc) -> dict[str, Any]:
+async def _ddg_fetch_via_subprocess(prompt: str, max_results: int = 5) -> list[dict]:
+    """Run DDG search in a subprocess to avoid GIL contention from primp (Rust/Tokio)."""
+    import json as _json
+    _worker = settings.project_root / "src" / "ai" / "ddg_worker.py"
+    # Use the venv Python so ddgs is available — sys.executable may be the system Python
+    _venv_python = settings.project_root / ".venv" / "bin" / "python"
+    _python = str(_venv_python) if _venv_python.exists() else sys.executable
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            _python, str(_worker), prompt, str(max_results),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=20)
+        if stderr:
+            logger.debug(f"[ddg_subprocess] stderr: {stderr.decode()[:300]}")
+        if proc.returncode == 0 and stdout:
+            results = _json.loads(stdout.decode())
+            logger.info(f"[ddg_subprocess] {len(results)} résultat(s) pour {prompt[:60]!r}")
+            return results
+        logger.warning(f"[ddg_subprocess] returncode={proc.returncode}, stderr={stderr.decode()[:200] if stderr else ''}")
+    except asyncio.TimeoutError:
+        logger.warning("[ddg_subprocess] timeout 20s")
+    except Exception as exc:
+        logger.warning(f"[ddg_subprocess] erreur: {exc}")
+    return []
+
+
+async def _prepare_euria_stream_plan(*, prompt: str, history: list[dict[str, str]], use_rag: bool, svc) -> dict[str, Any]:
     if not use_rag:
-        # Native Euria web search: single-pass stream with enable_web_search=True
-        messages = _build_euria_direct_messages(prompt, history)
-        try:
-            _, vault_sources = _build_local_rag_context(prompt, svc)
-        except Exception:
-            vault_sources = []
+        logger.info(f"[stream_plan] DDG subprocess pré-fetch — prompt={prompt[:60]!r}")
+        web_results = await _ddg_fetch_via_subprocess(prompt, 5)
+        if web_results:
+            messages = _build_euria_web_messages(prompt, history, web_results)
+            logger.info(f"[stream_plan] DDG pré-fetch: {len(web_results)} résultat(s) → web messages")
+        else:
+            messages = _build_euria_direct_messages(prompt, history)
+            logger.info("[stream_plan] DDG pré-fetch vide → messages directs")
         return {
             "messages": messages,
             "temperature": 0.3,
@@ -3443,7 +3528,7 @@ def _prepare_euria_stream_plan(*, prompt: str, history: list[dict[str, str]], us
             "operation": "conversation_euria_web",
             "enable_web_search": True,
             "result": {
-                "sources": list(vault_sources) if vault_sources else [],
+                "sources": [],
                 "provenance": "web",
                 "query_overview": {},
                 "entity_contexts": [],
@@ -3453,7 +3538,43 @@ def _prepare_euria_stream_plan(*, prompt: str, history: list[dict[str, str]], us
             },
         }
 
-    if _should_skip_euria_rag(prompt):
+    # use_rag=True paths — blocking RAG lookup runs in a thread
+    def _build_rag_plan() -> dict[str, Any]:
+        if _should_skip_euria_rag(prompt):
+            return {
+                "messages": _build_euria_direct_messages(prompt, history),
+                "temperature": 0.3,
+                "max_tokens": 1700,
+                "operation": "conversation_euria_fast",
+                "enable_web_search": False,
+                "result": {
+                    "sources": [],
+                    "provenance": "vault",
+                    "query_overview": {},
+                    "entity_contexts": [],
+                    "enrichment_path": "euria-direct",
+                    "rag_lookup_attempted": False,
+                    "rag_context_used": False,
+                },
+            }
+        rag_context, rag_sources = _build_local_rag_context(prompt, svc)
+        if rag_context:
+            return {
+                "messages": _build_euria_rag_messages(prompt, history, rag_context, rag_sources),
+                "temperature": 0.2,
+                "max_tokens": 1700,
+                "operation": "conversation_euria_rag",
+                "enable_web_search": False,
+                "result": {
+                    "sources": list(rag_sources or []),
+                    "provenance": "vault",
+                    "query_overview": {},
+                    "entity_contexts": [],
+                    "enrichment_path": "euria-rag",
+                    "rag_lookup_attempted": True,
+                    "rag_context_used": True,
+                },
+            }
         return {
             "messages": _build_euria_direct_messages(prompt, history),
             "temperature": 0.3,
@@ -3466,46 +3587,12 @@ def _prepare_euria_stream_plan(*, prompt: str, history: list[dict[str, str]], us
                 "query_overview": {},
                 "entity_contexts": [],
                 "enrichment_path": "euria-direct",
-                "rag_lookup_attempted": False,
+                "rag_lookup_attempted": _can_build_local_rag_context(svc),
                 "rag_context_used": False,
             },
         }
 
-    rag_context, rag_sources = _build_local_rag_context(prompt, svc)
-    if rag_context:
-        return {
-            "messages": _build_euria_rag_messages(prompt, history, rag_context, rag_sources),
-            "temperature": 0.2,
-            "max_tokens": 1700,
-            "operation": "conversation_euria_rag",
-            "enable_web_search": False,
-            "result": {
-                "sources": list(rag_sources or []),
-                "provenance": "vault",
-                "query_overview": {},
-                "entity_contexts": [],
-                "enrichment_path": "euria-rag",
-                "rag_lookup_attempted": True,
-                "rag_context_used": True,
-            },
-        }
-
-    return {
-        "messages": _build_euria_direct_messages(prompt, history),
-        "temperature": 0.3,
-        "max_tokens": 1700,
-        "operation": "conversation_euria_fast",
-        "enable_web_search": False,
-        "result": {
-            "sources": [],
-            "provenance": "vault",
-            "query_overview": {},
-            "entity_contexts": [],
-            "enrichment_path": "euria-direct",
-            "rag_lookup_attempted": _can_build_local_rag_context(svc),
-            "rag_context_used": False,
-        },
-    }
+    return await asyncio.to_thread(_build_rag_plan)
 
 
 def _generate_euria_direct_answer(*, prompt: str, history: list[dict[str, str]], llm) -> dict[str, Any]:

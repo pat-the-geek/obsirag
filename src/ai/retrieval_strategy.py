@@ -107,8 +107,16 @@ class RetrievalStrategy:
         if proper_nouns:
             self._emit_progress(progress_callback, "Recherche hybride multi-termes", retrieval_mode="hybrid")
             chunks = self._owner._retrieve_hybrid_chunks(query, proper_nouns)
-            self._emit_progress(progress_callback, f"Recherche hybride terminée ({len(chunks[: cfg.search_top_k])} résultat(s))", chunk_count=len(chunks[: cfg.search_top_k]), retrieval_mode="hybrid")
-            return chunks[: cfg.search_top_k], "hybrid"
+            filtered = self._owner._filter_supported_chunks(
+                query, chunks[: cfg.search_top_k], "hybrid"
+            )
+            self._emit_progress(
+                progress_callback,
+                f"Recherche hybride terminée ({len(filtered)} résultat(s))",
+                chunk_count=len(filtered),
+                retrieval_mode="hybrid",
+            )
+            return filtered, "hybrid"
 
         self._emit_progress(progress_callback, "Recherche sémantique générale", retrieval_mode="general")
         chunks = self._owner._chroma.search(query, top_k=cfg.search_top_k)

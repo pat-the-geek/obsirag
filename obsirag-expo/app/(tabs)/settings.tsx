@@ -1,10 +1,11 @@
 import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 
+import { LogConsole } from '../../components/ui/log-console';
 import { Screen } from '../../components/ui/screen';
 import { SectionCard } from '../../components/ui/section-card';
 import { StatusPill } from '../../components/ui/status-pill';
-import { useReindexData, useSystemStatus } from '../../features/system/use-system-status';
+import { useReindexData, useSystemLogs, useSystemStatus } from '../../features/system/use-system-status';
 import { useAppStore } from '../../store/app-store';
 import { formatFontSizeModeLabel, formatThemeModeLabel, scaleFontSize, scaleLineHeight, useAppFontScale, useAppTheme } from '../../theme/app-theme';
 
@@ -17,6 +18,7 @@ export default function SettingsScreen() {
   const fontScale = useAppFontScale();
   const { data, refetch, isRefetching } = useSystemStatus();
   const reindexData = useReindexData();
+  const { data: logEntries = [] } = useSystemLogs();
 
   const autolearnLabel = data?.autolearn?.running
     ? data.autolearn.managedBy === 'worker'
@@ -145,6 +147,9 @@ export default function SettingsScreen() {
             {reindexData.isPending ? 'Reindexation en cours...' : 'Reindexer les donnees'}
           </Text>
         </Pressable>
+      </SectionCard>
+      <SectionCard title="Console" subtitle="Logs applicatifs en temps réel.">
+        <LogConsole entries={logEntries} />
       </SectionCard>
     </Screen>
   );

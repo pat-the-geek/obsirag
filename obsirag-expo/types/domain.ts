@@ -273,6 +273,14 @@ export type SessionState = {
   mode: 'open' | 'token';
 };
 
+export type LogEntry = {
+  timestamp: string;
+  level: 'DEBUG' | 'INFO' | 'WARNING' | 'ERROR' | 'CRITICAL';
+  name: string;
+  line: number;
+  message: string;
+};
+
 export type WebSearchResponse = {
   content: string;
   llmProvider?: string;
