@@ -6,6 +6,39 @@ import { useAppStore } from '../../store/app-store';
 import { ChatMessage, ConversationDetail, SourceRef } from '../../types/domain';
 import { removeMessageTurn } from './message-turns';
 
+export function useToggleConversationEntity(conversationId: string) {
+  const { api } = useServerConfig();
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ entityValue, action }: { entityValue: string; action: 'add' | 'remove' }) =>
+      api.toggleConversationHiddenEntities(conversationId, [entityValue], action),
+    onMutate: async ({ entityValue, action }) => {
+      await queryClient.cancelQueries({ queryKey: ['conversation', conversationId] });
+      const snapshot = queryClient.getQueryData<ConversationDetail>(['conversation', conversationId]);
+      queryClient.setQueryData<ConversationDetail | undefined>(
+        ['conversation', conversationId],
+        (current) => {
+          if (!current) return current;
+          const existing = new Set(current.hiddenEntityValues ?? []);
+          if (action === 'add') existing.add(entityValue);
+          else existing.delete(entityValue);
+          return { ...current, hiddenEntityValues: [...existing] };
+        },
+      );
+      return { snapshot };
+    },
+    onError: (_err, _vars, context) => {
+      if (context?.snapshot) {
+        queryClient.setQueryData(['conversation', conversationId], context.snapshot);
+      }
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ['conversation', conversationId] });
+    },
+  });
+}
+
 const STREAMING_ASSISTANT_ID = 'streaming-assistant';
 const PENDING_WEB_ASSISTANT_ID = 'pending-web-assistant';
 const WEB_SEARCH_PROGRESS_LABEL = 'Recherche sur le web en cours...';
@@ -483,7 +516,7 @@ export function useStreamMessage(conversationId: string) {
               };
             });
           },
-        }, { useEuria: useEuriaForConversation, useRag: useRagForConversation, signal: activeStreamControllerRef.current.signal });
+        }, { useEuria: useEuriaForConversation, useRag: useEuriaForConversation ? useRagForConversation : true, signal: activeStreamControllerRef.current.signal });
 
         setDraft(conversationId, '');
         await queryClient.invalidateQueries({ queryKey: ['conversation', conversationId] });

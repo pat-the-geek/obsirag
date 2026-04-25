@@ -85,6 +85,7 @@ export type ChatMessage = {
   timeline?: string[];
   queryOverview?: QueryOverview | null;
   entityContexts?: EntityContext[];
+  hiddenEntityValues?: string[];
   enrichmentPath?: string | null;
   provenance?: Provenance;
   sentinel?: boolean;
@@ -98,6 +99,7 @@ export type ConversationDetail = {
   draft: string;
   messages: ChatMessage[];
   lastGenerationStats?: GenerationStats;
+  hiddenEntityValues?: string[];
 };
 
 export type NoteDetail = {

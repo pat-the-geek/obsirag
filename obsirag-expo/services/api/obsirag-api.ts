@@ -221,6 +221,17 @@ export class ObsiRagApi {
     });
   }
 
+  async toggleConversationHiddenEntities(conversationId: string, entityValues: string[], action: 'add' | 'remove'): Promise<{ hiddenEntityValues: string[] }> {
+    if (this.config.useMockServer) {
+      return { hiddenEntityValues: entityValues };
+    }
+
+    return this.requestJson<{ hiddenEntityValues: string[] }>(
+      `/api/v1/conversations/${encodeURIComponent(conversationId)}/hidden-entities`,
+      { method: 'PATCH', body: JSON.stringify({ entityValues, action }), headers: { 'Content-Type': 'application/json' } },
+    );
+  }
+
   async generateConversationReport(conversationId: string): Promise<SaveConversationResult> {
     if (this.config.useMockServer) {
       return { path: 'obsirag/insights/2026-04/web_artemis_ii.md' };

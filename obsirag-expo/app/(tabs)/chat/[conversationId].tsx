@@ -7,7 +7,7 @@ import { aggregateConversationEntityContexts, ConversationEntitySidebar } from '
 import { MessageBubble } from '../../../components/chat/message-bubble';
 import { MessageComposer } from '../../../components/chat/message-composer';
 import { Screen } from '../../../components/ui/screen';
-import { useConversation, useDeleteConversationMessage, useExplicitWebSearch, useGenerateConversationReport, useSaveConversation, useStreamMessage } from '../../../features/chat/use-chat';
+import { useConversation, useDeleteConversationMessage, useExplicitWebSearch, useGenerateConversationReport, useSaveConversation, useStreamMessage, useToggleConversationEntity } from '../../../features/chat/use-chat';
 import { EntityContext, ChatMessage, SourceRef } from '../../../types/domain';
 import { useAppStore } from '../../../store/app-store';
 import { useAppTheme } from '../../../theme/app-theme';
@@ -57,9 +57,14 @@ export default function ConversationDetailScreen() {
     () => DEFAULT_CHAT_SUGGESTIONS.filter((item) => item !== latestUserMessage?.content).slice(0, 4),
     [latestUserMessage?.content],
   );
-  const aggregatedEntityContexts = useMemo(() => aggregateConversationEntityContexts(messages), [messages]);
-  const showEntityAside = Platform.OS === 'web' && width >= 1180 && aggregatedEntityContexts.length > 0;
-  const showEntityCompact = !showEntityAside && aggregatedEntityContexts.length > 0;
+  const toggleConversationEntity = useToggleConversationEntity(conversationId ?? '');
+  const allEntityContexts = useMemo(() => aggregateConversationEntityContexts(messages), [messages]);
+  const conversationHiddenValues = useMemo(() => data?.hiddenEntityValues ?? [], [data?.hiddenEntityValues]);
+  const hiddenValuesSet = useMemo(() => new Set(conversationHiddenValues.map((v) => v.trim().toLocaleLowerCase('fr'))), [conversationHiddenValues]);
+  const aggregatedEntityContexts = useMemo(() => allEntityContexts.filter((e) => !hiddenValuesSet.has(e.value.trim().toLocaleLowerCase('fr'))), [allEntityContexts, hiddenValuesSet]);
+  const hiddenEntityContexts = useMemo(() => allEntityContexts.filter((e) => hiddenValuesSet.has(e.value.trim().toLocaleLowerCase('fr'))), [allEntityContexts, hiddenValuesSet]);
+  const showEntityAside = Platform.OS === 'web' && width >= 1180 && (aggregatedEntityContexts.length > 0 || hiddenEntityContexts.length > 0);
+  const showEntityCompact = !showEntityAside && (aggregatedEntityContexts.length > 0 || hiddenEntityContexts.length > 0);
   const asideEntityMaxHeight = Math.max(360, height - Math.max(24, insets.top + 18) - 18);
   const scrollRef = useRef<ScrollView | null>(null);
   const conversationMetadata = joinMetadataParts([
@@ -155,9 +160,12 @@ export default function ConversationDetailScreen() {
             {showEntityCompact ? (
               <ConversationEntitySidebar
                 entities={aggregatedEntityContexts}
+                hiddenEntities={hiddenEntityContexts}
                 compact
                 onOpenNote={openNoteFromConversation}
                 onOpenTag={(tag) => router.push(`/(tabs)/graph?tag=${encodeURIComponent(tag)}`)}
+                onHideEntity={(v) => toggleConversationEntity.mutate({ entityValue: v, action: 'add' })}
+                onUnhideEntity={(v) => toggleConversationEntity.mutate({ entityValue: v, action: 'remove' })}
               />
             ) : null}
 
@@ -182,6 +190,8 @@ export default function ConversationDetailScreen() {
                   <MessageBubble
                     key={message.id}
                     message={message}
+                    conversationHiddenEntityValues={conversationHiddenValues}
+                    onHideEntity={(v) => toggleConversationEntity.mutate({ entityValue: v, action: 'add' })}
                     highlightEntities={aggregatedEntityContexts}
                     onSuggestWebSearch={(query) => explicitWebSearch.mutate(query)}
                     onOpenNote={openNoteFromConversation}
@@ -260,9 +270,12 @@ export default function ConversationDetailScreen() {
           {showEntityAside ? (
             <ConversationEntitySidebar
               entities={aggregatedEntityContexts}
+              hiddenEntities={hiddenEntityContexts}
               maxHeight={asideEntityMaxHeight}
               onOpenNote={openNoteFromConversation}
               onOpenTag={(tag) => router.push(`/(tabs)/graph?tag=${encodeURIComponent(tag)}`)}
+              onHideEntity={(v) => toggleConversationEntity.mutate({ entityValue: v, action: 'add' })}
+              onUnhideEntity={(v) => toggleConversationEntity.mutate({ entityValue: v, action: 'remove' })}
             />
           ) : null}
         </View>

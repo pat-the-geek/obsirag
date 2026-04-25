@@ -3,15 +3,16 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { scaleFontSize, useAppFontScale, useAppTheme } from '../../theme/app-theme';
 import { EntityContext } from '../../types/domain';
-import { MarkdownNote } from '../notes/markdown-note';
 
-type EntityContextListProps = {
+type Props = {
   entities?: EntityContext[];
+  hiddenEntityValues?: string[];
   isOpen?: boolean;
   onToggleOpen?: () => void;
+  onHideEntity?: (entityValue: string) => void;
 };
 
-export function EntityContextList({ entities, isOpen = false, onToggleOpen }: EntityContextListProps) {
+export function EntityContextList({ entities, hiddenEntityValues = [], isOpen = false, onToggleOpen, onHideEntity }: Props) {
   const theme = useAppTheme();
   const { scale } = useAppFontScale();
   const [isTypeMenuOpen, setIsTypeMenuOpen] = useState(false);
@@ -37,16 +38,26 @@ export function EntityContextList({ entities, isOpen = false, onToggleOpen }: En
     setSelectedTypeValue(preferredTypeValue ?? null);
   }, [preferredTypeValue, selectedTypeValue, typeOptions]);
 
-  if (!entities?.length) {
+  // Entities not hidden
+  const visibleEntities = useMemo(() => {
+    const hiddenSet = new Set(hiddenEntityValues);
+    const base = (entities ?? []).filter((e) => !hiddenSet.has(e.value));
+    const effectiveType = selectedTypeValue === undefined ? preferredTypeValue : selectedTypeValue ?? undefined;
+    return effectiveType ? base.filter((e) => entityTypeKey(e.type, e.typeLabel) === effectiveType) : base;
+  }, [entities, hiddenEntityValues, selectedTypeValue, preferredTypeValue]);
+
+  const totalVisible = useMemo(() => {
+    const hiddenSet = new Set(hiddenEntityValues);
+    return (entities ?? []).filter((e) => !hiddenSet.has(e.value)).length;
+  }, [entities, hiddenEntityValues]);
+
+  if (!entities?.length || totalVisible === 0) {
     return null;
   }
 
   const effectiveSelectedTypeValue = selectedTypeValue === undefined ? preferredTypeValue : selectedTypeValue ?? undefined;
   const selectedTypeOption = typeOptions.find((option) => option.value === effectiveSelectedTypeValue);
   const filterLabel = selectedTypeOption?.label ?? 'Tous les types d\'entités';
-  const visibleEntities = effectiveSelectedTypeValue
-    ? entities.filter((entity) => entityTypeKey(entity.type, entity.typeLabel) === effectiveSelectedTypeValue)
-    : entities;
 
   return (
     <View
@@ -57,8 +68,8 @@ export function EntityContextList({ entities, isOpen = false, onToggleOpen }: En
         <View style={styles.headerCopy}>
           <Text style={[styles.title, { color: theme.colors.text, fontSize: scaleFontSize(13, scale) }]}>Entités détectées</Text>
           <Text style={[styles.caption, { color: theme.colors.textMuted, fontSize: scaleFontSize(12, scale) }]}>
-            {visibleEntities.length} entité{visibleEntities.length > 1 ? 's' : ''}
-            {selectedTypeOption ? ` sur ${entities.length}` : ''}
+            {totalVisible} entité{totalVisible > 1 ? 's' : ''}
+            {selectedTypeOption ? ` sur ${totalVisible}` : ''}
           </Text>
         </View>
         <Text style={[styles.chevron, { color: theme.colors.primary, fontSize: scaleFontSize(12, scale) }]}>{isOpen ? 'Masquer' : 'Afficher'}</Text>
@@ -79,7 +90,39 @@ export function EntityContextList({ entities, isOpen = false, onToggleOpen }: En
               })),
             ]}
           />
-          <MarkdownNote markdown={buildEntityContextsMarkdown(visibleEntities)} tone={theme.isDark ? 'dark' : 'light'} theme={theme} />
+          <View style={styles.entityList}>
+            {visibleEntities.map((entity) => (
+              <View
+                key={entity.value}
+                style={[styles.entityRow, { borderBottomColor: theme.colors.border }]}
+              >
+                <View style={styles.entityContent}>
+                  <Text style={[styles.entityValue, { color: theme.colors.text, fontSize: scaleFontSize(12, scale) }]}>
+                    {entity.value}
+                    {entity.typeLabel ? (
+                      <Text style={[styles.entityType, { color: theme.colors.textMuted, fontSize: scaleFontSize(11, scale) }]}>
+                        {' '}· {entity.typeLabel}
+                      </Text>
+                    ) : null}
+                  </Text>
+                  {buildRelationExplanation(entity) ? (
+                    <Text style={[styles.entityExplanation, { color: theme.colors.textMuted, fontSize: scaleFontSize(11, scale) }]} numberOfLines={3}>
+                      {buildRelationExplanation(entity)}
+                    </Text>
+                  ) : null}
+                </View>
+                {onHideEntity ? (
+                  <Pressable
+                    testID={`entity-hide-${entity.value}`}
+                    onPress={() => onHideEntity(entity.value)}
+                    style={[styles.hideButton, { borderColor: theme.colors.border, backgroundColor: theme.colors.backgroundAlt }]}
+                  >
+                    <Text style={[styles.hideButtonText, { color: theme.colors.textMuted, fontSize: scaleFontSize(11, scale) }]}>Masquer</Text>
+                  </Pressable>
+                ) : null}
+              </View>
+            ))}
+          </View>
         </View>
       ) : null}
     </View>
@@ -96,6 +139,7 @@ type EntityTypeFilterDropdownProps = {
     onSelect: () => void;
     testID?: string;
   }>;
+  compact?: boolean;
 };
 
 function EntityTypeFilterDropdown({ label, isOpen, onToggle, onClose, options }: EntityTypeFilterDropdownProps) {
@@ -139,43 +183,12 @@ function EntityTypeFilterDropdown({ label, isOpen, onToggle, onClose, options }:
   );
 }
 
-function buildEntityContextsMarkdown(entities: EntityContext[]) {
-  const lines = [
-    '| N° | Nom de l\'entité | Explication de pourquoi l\'entité est en relation |',
-    '| --- | --- | --- |',
-  ];
-
-  for (const [index, entity] of entities.entries()) {
-    lines.push(
-      `| ${index + 1} | ${escapeMarkdownTableCell(entity.value)} | ${escapeMarkdownTableCell(buildRelationExplanation(entity))} |`,
-    );
-  }
-
-  return lines.join('\n');
-}
-
-function buildRelationExplanation(entity: EntityContext) {
+function buildRelationExplanation(entity: EntityContext): string {
   const explanation = entity.relationExplanation?.trim();
-  if (explanation) {
-    return explanation;
-  }
-
-  if (entity.ddgKnowledge?.abstractText?.trim()) {
-    return entity.ddgKnowledge.abstractText.trim();
-  }
-
-  if (entity.notes[0]?.title) {
-    return `${entity.value} est reliée à la réponse via ${entity.notes[0].title}.`;
-  }
-
-  return `${entity.value} est reliée au sujet traité dans cette réponse.`;
-}
-
-function escapeMarkdownTableCell(value: string) {
-  return String(value || '')
-    .replace(/\|/g, '\\|')
-    .replace(/\r?\n+/g, ' ')
-    .trim();
+  if (explanation) return explanation;
+  if (entity.ddgKnowledge?.abstractText?.trim()) return entity.ddgKnowledge.abstractText.trim();
+  if (entity.notes[0]?.title) return `${entity.value} est reliée à la réponse via ${entity.notes[0].title}.`;
+  return '';
 }
 
 type EntityTypeOption = {
@@ -205,15 +218,9 @@ function buildEntityTypeOptions(entities: EntityContext[]): EntityTypeOption[] {
   }
 
   return [...optionsByValue.values()].sort((left, right) => {
-    if (left.isPreferred !== right.isPreferred) {
-      return left.isPreferred ? -1 : 1;
-    }
-
+    if (left.isPreferred !== right.isPreferred) return left.isPreferred ? -1 : 1;
     const countDelta = right.count - left.count;
-    if (countDelta !== 0) {
-      return countDelta;
-    }
-
+    if (countDelta !== 0) return countDelta;
     return left.label.localeCompare(right.label, 'fr', { sensitivity: 'base' });
   });
 }
@@ -256,7 +263,44 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   content: {
+    gap: 10,
+  },
+  entityList: {
+    gap: 0,
+  },
+  entityRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
     gap: 8,
+    paddingVertical: 8,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  entityContent: {
+    flex: 1,
+    gap: 3,
+  },
+  entityValue: {
+    fontWeight: '600',
+    fontSize: 12,
+  },
+  entityType: {
+    fontWeight: '400',
+    fontSize: 11,
+  },
+  entityExplanation: {
+    fontSize: 11,
+    lineHeight: 16,
+  },
+  hideButton: {
+    borderRadius: 8,
+    borderWidth: 1,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    alignSelf: 'flex-start',
+    marginTop: 2,
+  },
+  hideButtonText: {
+    fontWeight: '600',
   },
   dropdownWrapper: {
     position: 'relative',

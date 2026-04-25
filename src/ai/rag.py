@@ -259,6 +259,32 @@ _DISALLOWED_USER_VISIBLE_SCRIPT_RE = re.compile(
 )
 
 
+_RETRIEVAL_META_WORDS: frozenset[str] = frozenset({
+    "explication", "explications", "expliquer", "expliquez", "explique",
+    "analyse", "analyses", "analyser", "analysez",
+    "histoire", "historique",
+    "contexte", "contextualisé", "contextualisée",
+    "résumé", "resume", "résumer", "résume",
+    "détails", "détail", "détaillé", "détaillée",
+    "approfondi", "approfondis", "approfondie", "approfondissement",
+    "définition", "définitions",
+    "exemples", "exemple",
+    "présentation", "introduction",
+    "synthèse", "synthese",
+    "overview", "summary", "details", "context", "history", "explanation",
+})
+
+
+def _strip_retrieval_meta_words(query: str) -> str:
+    words = query.split()
+    while words and words[-1].lower().rstrip(".,;:!?«»\"'") in _RETRIEVAL_META_WORDS:
+        words.pop()
+    while words and words[0].lower().rstrip(".,;:!?«»\"'") in _RETRIEVAL_META_WORDS:
+        words.pop(0)
+    cleaned = " ".join(words).strip()
+    return cleaned if len(cleaned) >= 8 else query
+
+
 class RAGPipeline:
     def __init__(self, chroma: ChromaStore, llm, metrics: MetricsRecorder | None = None) -> None:
         self._chroma = chroma
@@ -308,7 +334,8 @@ class RAGPipeline:
         self._emit_progress(progress_callback, phase="resolve", message="Analyse de la requête")
         resolved_query = self._resolve_query_with_history(user_query, history)
         self._emit_progress(progress_callback, phase="retrieval", message="Recherche des passages pertinents")
-        chunks, intent = self._retrieve(resolved_query, progress_callback=progress_callback)
+        retrieval_query = _strip_retrieval_meta_words(resolved_query)
+        chunks, intent = self._retrieve(retrieval_query, progress_callback=progress_callback)
         if exclude_obsirag_generated:
             chunks = self._filter_obsirag_generated_chunks(chunks)
         self._emit_progress(

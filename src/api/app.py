@@ -19,6 +19,7 @@ import frontmatter
 import networkx as nx
 from loguru import logger
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, status
+from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -279,6 +280,84 @@ def _lookup_autolearn_web_results(user_text: str, svc) -> tuple[str, list[dict[s
     return search_query, autolearn_results if isinstance(autolearn_results, list) else []
 
 
+def _split_table_row(row: str) -> list[str]:
+    """Split a table row into cells, stripping leading/trailing pipes."""
+    stripped = row.strip()
+    if stripped.startswith("|"):
+        stripped = stripped[1:]
+    if stripped.endswith("|"):
+        stripped = stripped[:-1]
+    return [c.strip() for c in stripped.split("|")]
+
+
+def _is_separator_row(row: str) -> bool:
+    cells = _split_table_row(row)
+    return bool(cells) and all(bool(re.fullmatch(r":?-{1,}:?", c)) for c in cells if c)
+
+
+def _normalize_table_block(rows: list[str]) -> list[str]:
+    """Rebuild a markdown table with consistent pipes and a separator row."""
+    non_blank = [r for r in rows if r.strip()]
+    if not non_blank:
+        return rows
+
+    # Drop existing separator rows — we'll re-insert one
+    sep_idx = next((i for i, r in enumerate(non_blank) if _is_separator_row(r)), None)
+    data_rows = [r for i, r in enumerate(non_blank) if i != sep_idx] if sep_idx is not None else non_blank
+
+    parsed = [_split_table_row(r) for r in data_rows]
+    if not parsed:
+        return rows
+
+    # Reference column count from the header row
+    ref_cols = len(parsed[0])
+
+    # For data rows, strip spurious leading empty cells to match ref_cols
+    normalized: list[list[str]] = [parsed[0]]
+    for cells in parsed[1:]:
+        while len(cells) > ref_cols and cells[0] == "":
+            cells = cells[1:]
+        # Pad or trim to ref_cols
+        cells = (cells + [""] * ref_cols)[:ref_cols]
+        normalized.append(cells)
+
+    result: list[str] = []
+    for idx, cells in enumerate(normalized):
+        result.append("| " + " | ".join(cells) + " |")
+        if idx == 0:
+            result.append("| " + " | ".join(["---"] * ref_cols) + " |")
+    return result
+
+
+def _repair_markdown_tables(text: str) -> str:
+    """Detect table blocks (consecutive lines with `|`), normalize them."""
+    lines = text.split("\n")
+    out: list[str] = []
+    i = 0
+    while i < len(lines):
+        if "|" not in lines[i]:
+            out.append(lines[i])
+            i += 1
+            continue
+        # Collect the table block: lines with `|`, skip blank lines between them
+        block: list[str] = []
+        j = i
+        while j < len(lines):
+            if "|" in lines[j]:
+                block.append(lines[j])
+                j += 1
+            elif lines[j].strip() == "" and j + 1 < len(lines) and "|" in lines[j + 1]:
+                j += 1  # skip intra-table blank line
+            else:
+                break
+        if len(block) >= 2:
+            out.extend(_normalize_table_block(block))
+        else:
+            out.extend(block)
+        i = j
+    return "\n".join(out)
+
+
 def _sanitize_assistant_answer_text(answer: str) -> str:
     original = str(answer or "")
     cleaned = original.replace("\r\n", "\n")
@@ -299,6 +378,7 @@ def _sanitize_assistant_answer_text(answer: str) -> str:
     cleaned = _SIMPLE_ITALIC_WITH_EXTRA_CLOSING_STARS_RE.sub(r"*\1*", cleaned)
     cleaned = _collapse_repeated_line_blocks(cleaned)
     cleaned = re.sub(r" {2,}", " ", cleaned)
+    cleaned = _repair_markdown_tables(cleaned)
     cleaned = cleaned.strip()
     return cleaned or original.strip()
 
@@ -525,8 +605,9 @@ def _compose_assistant_web_answer(
         import concurrent.futures
         try:
             from src.ai.web_search import _ddg_search
+            _ddg_prompt = _strip_ddg_meta_words(prompt)
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as _exc:
-                _fut = _exc.submit(_ddg_search, prompt, 5)
+                _fut = _exc.submit(_ddg_search, _ddg_prompt, 5)
                 try:
                     direct = _fut.result(timeout=8)
                 except concurrent.futures.TimeoutError:
@@ -727,6 +808,7 @@ def _generate_euria_rag_answer(
                 "Si l'information demandée n'est pas dans le contexte, réponds exactement : "
                 '"Cette information n\'est pas dans ton coffre." '
                 "Quand tu utilises une note du coffre, cite son titre entre crochets. "
+                "Si on te demande un tableau, utilise UNIQUEMENT la syntaxe Markdown avec des pipes `|` — n'utilise JAMAIS de code Mermaid (```mermaid). Dans un tableau Markdown, ne mets JAMAIS de ligne vide entre les lignes. "
                 "Ne répète jamais une ligne, un paragraphe ou une section."
             ),
         },
@@ -922,6 +1004,7 @@ def _generate_euria_rag_answer(
                 "Si l'information demandée n'est pas dans le contexte, réponds exactement : "
                 '"Cette information n\'est pas dans ton coffre." '
                 "Quand tu utilises une note du coffre, cite son titre entre crochets. "
+                "Si on te demande un tableau, utilise UNIQUEMENT la syntaxe Markdown avec des pipes `|` — n'utilise JAMAIS de code Mermaid (```mermaid). Dans un tableau Markdown, ne mets JAMAIS de ligne vide entre les lignes. "
                 "Ne répète jamais une ligne, un paragraphe ou une section."
             ),
         },
@@ -1332,6 +1415,25 @@ def get_conversation(conversation_id: str, _: None = Depends(require_api_auth)) 
     return _with_conversation_size(item)
 
 
+class HideEntityRequest(BaseModel):
+    entityValues: list[str]
+    action: str = "add"
+
+
+@app.patch("/api/v1/conversations/{conversation_id}/hidden-entities")
+def patch_conversation_hidden_entities(
+    conversation_id: str,
+    body: HideEntityRequest,
+    _: None = Depends(require_api_auth),
+) -> dict[str, Any]:
+    conversation = conversation_store.patch_conversation_hidden_entity_values(
+        conversation_id, body.entityValues, body.action
+    )
+    if conversation is None:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    return {"hiddenEntityValues": list(conversation.hiddenEntityValues or [])}
+
+
 @app.delete("/api/v1/conversations/{conversation_id}")
 def delete_conversation(conversation_id: str, _: None = Depends(require_api_auth)) -> dict[str, bool]:
     deleted = conversation_store.delete(conversation_id)
@@ -1494,9 +1596,12 @@ async def stream_message(
     _: None = Depends(require_api_auth),
 ) -> StreamingResponse:
     svc = get_service_manager()
+    svc.signal_ui_active()
+    svc.enter_stream()
     try:
         llm = _conversation_llm(svc, payload.useEuria)
     except RuntimeError as exc:
+        svc.exit_stream()
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     llm_provider = _conversation_llm_provider(payload.useEuria)
     user_message, history = _prepare_user_message(conversation_id, payload.prompt)
@@ -1666,6 +1771,7 @@ async def stream_message(
                 last_generation_stats=assistant_message.stats,
             )
             yield _sse_event("message_complete", assistant_message.model_dump(mode="json"))
+            logger.info(f"[conv:{conversation_id[:8]}] stream terminé — durée totale={time.perf_counter() - started_at:.2f}s sources={len(sources)}")
 
             _ner_msg_id = assistant_message.id
             _prompt_bg, _answer_bg, _src_bg, _psrc_bg, _svc_bg, _llm_bg = (
@@ -1780,6 +1886,7 @@ async def stream_message(
             last_generation_stats=assistant_message.stats,
         )
         yield _sse_event("message_complete", assistant_message.model_dump(mode="json"))
+        logger.info(f"[conv:{conversation_id[:8]}] stream terminé — durée totale={time.perf_counter() - started_at:.2f}s sources={len(sources)}")
 
         _ner_msg_id = assistant_message.id
         _prompt_bg2, _answer_bg2, _src_bg2, _psrc_bg2, _svc_bg2, _llm_bg2 = (
@@ -1794,7 +1901,14 @@ async def stream_message(
         ):
             yield _ner_event
 
-    return StreamingResponse(_event_stream(), media_type="text/event-stream")
+    async def _guarded_stream():
+        try:
+            async for event in _event_stream():
+                yield event
+        finally:
+            svc.exit_stream()
+
+    return StreamingResponse(_guarded_stream(), media_type="text/event-stream")
 
 
 async def _stream_ner_background(
@@ -1811,13 +1925,20 @@ async def _stream_ner_background(
     """Async generator that streams NER enrichment events progressively."""
     _ner_queue: asyncio.Queue[tuple[str, Any]] = asyncio.Queue()
     _loop = asyncio.get_running_loop()
+    _stop_event = threading.Event()
 
     def _on_partial(entity_dict: dict[str, Any]) -> None:
+        if _stop_event.is_set():
+            return
         asyncio.run_coroutine_threadsafe(_ner_queue.put(("partial", entity_dict)), _loop)
 
     def _worker() -> None:
         try:
+            if _stop_event.is_set():
+                return
             raw = _lookup_conversation_entity_contexts(prompt, answer, svc)
+            if _stop_event.is_set():
+                return
             valid_count = sum(1 for e in raw if str(e.get("value") or "").strip())
             asyncio.run_coroutine_threadsafe(_ner_queue.put(("count", valid_count)), _loop)
             result = _enrich_entity_contexts(
@@ -1830,19 +1951,22 @@ async def _stream_ner_background(
                 llm=llm,
                 on_partial=_on_partial,
             )
-            asyncio.run_coroutine_threadsafe(_ner_queue.put(("done", result)), _loop)
+            if not _stop_event.is_set():
+                asyncio.run_coroutine_threadsafe(_ner_queue.put(("done", result)), _loop)
         except Exception as exc:
-            asyncio.run_coroutine_threadsafe(_ner_queue.put(("error", str(exc))), _loop)
+            if not _stop_event.is_set():
+                asyncio.run_coroutine_threadsafe(_ner_queue.put(("error", str(exc))), _loop)
 
     threading.Thread(target=_worker, daemon=True).start()
 
     _ner_total = 0
     _ner_index = 0
-    _deadline = _loop.time() + 65.0
+    _deadline = _loop.time() + 30.0  # réduit de 65→30 s : NER non critique, ne doit pas maintenir le stream trop longtemps
 
     while True:
         remaining = _deadline - _loop.time()
         if remaining <= 0:
+            _stop_event.set()
             logger.warning("[_stream_ner_background] timed out for msg {}", ner_msg_id)
             return
         try:
@@ -1865,6 +1989,7 @@ async def _stream_ner_background(
                     "total": _ner_total,
                 })
         elif kind in ("done", "error"):
+            _stop_event.set()
             if kind == "error":
                 logger.warning("[_stream_ner_background] worker error: {}", data)
                 return
@@ -3101,7 +3226,7 @@ def _generate_entity_relation_explanations(
                 {"role": "user", "content": "\n".join(prompt_lines)},
             ],
             temperature=0.0,
-            max_tokens=1200,
+            max_tokens=4096,  # >= _RETRY_MAX_TOKENS → désactive le retry Euria pour cet appel
             operation="entity_relation_explanations",
         )
     except Exception:
@@ -3257,15 +3382,25 @@ def _conversation_llm_provider(use_euria: bool) -> str:
     return "Euria" if use_euria else "MLX"
 
 
-def _build_euria_direct_messages(prompt: str, history: list[dict[str, str]]) -> list[dict[str, str]]:
+def _build_euria_direct_messages(
+    prompt: str,
+    history: list[dict[str, str]],
+    *,
+    conversation_topic: str | None = None,
+) -> list[dict[str, str]]:
+    topic_instruction = (
+        f"Sujet principal de la conversation : « {conversation_topic} ». "
+        f"Utilise EXACTEMENT cette orthographe dans toute ta réponse — ne sépare pas les mots composés. "
+    ) if conversation_topic else ""
     return [
         {
             "role": "system",
             "content": (
-                "Tu réponds UNIQUEMENT et EXCLUSIVEMENT en français, quelle que soit la langue de la question. "
+                topic_instruction
+                + "Tu réponds UNIQUEMENT et EXCLUSIVEMENT en français, quelle que soit la langue de la question. "
                 "Utilise du Markdown valide et propre. "
                 "N'écris pas de balisage incomplet. "
-                "Si tu produis un tableau, utilise un vrai tableau Markdown avec des pipes. "
+                "Si on te demande un tableau, utilise UNIQUEMENT la syntaxe Markdown avec des pipes `|` — n'utilise JAMAIS de code Mermaid (```mermaid). Dans un tableau Markdown, ne mets JAMAIS de ligne vide entre les lignes. "
                 "Ne répète jamais une ligne, une ligne de tableau, un paragraphe ou une section. "
                 "Termine toujours proprement la réponse, sans couper un mot ni une emphase Markdown."
             ),
@@ -3321,7 +3456,7 @@ def _build_euria_final_answer_messages(
                 "Tu réponds UNIQUEMENT et EXCLUSIVEMENT en français, quelle que soit la langue des sources. "
                 "Utilise du Markdown valide et propre. "
                 "N'écris pas de balisage incomplet. "
-                "Si tu produis un tableau, utilise un vrai tableau Markdown avec des pipes. "
+                "Si on te demande un tableau, utilise UNIQUEMENT la syntaxe Markdown avec des pipes `|` — n'utilise JAMAIS de code Mermaid (```mermaid). Dans un tableau Markdown, ne mets JAMAIS de ligne vide entre les lignes. "
                 "Ne répète jamais une ligne, une ligne de tableau, un paragraphe ou une section. "
                 "Termine toujours proprement la réponse, sans couper un mot ni une emphase Markdown. "
                 "Des résultats de recherche web récents te sont fournis. "
@@ -3409,6 +3544,8 @@ def _build_euria_web_messages(
     prompt: str,
     history: list[dict[str, str]],
     web_results: list[dict],
+    *,
+    conversation_topic: str | None = None,
 ) -> list[dict[str, str]]:
     snippets = "\n\n".join(
         f"**{r.get('title', '')}** ({r.get('href', '')})\n{r.get('body', '')}"
@@ -3419,16 +3556,21 @@ def _build_euria_web_messages(
         f"Résultats de recherche web récents :\n\n{snippets}\n\n"
         f"Question : {prompt}"
     ) if snippets else prompt
+    topic_instruction = (
+        f"Sujet principal de la conversation : « {conversation_topic} ». "
+        f"Utilise EXACTEMENT cette orthographe dans toute ta réponse — ne sépare pas les mots composés. "
+    ) if conversation_topic else ""
     return [
         {
             "role": "system",
             "content": (
                 "/no_think\n"
-                "Tu réponds UNIQUEMENT et EXCLUSIVEMENT en français, quelle que soit la langue des sources ou de la question. "
+                + topic_instruction
+                + "Tu réponds UNIQUEMENT et EXCLUSIVEMENT en français, quelle que soit la langue des sources ou de la question. "
                 "Même si les résultats de recherche web sont en anglais, ta réponse doit être entièrement rédigée en français. "
                 "Utilise du Markdown valide et propre. "
                 "N'écris pas de balisage incomplet. "
-                "Si tu produis un tableau, utilise un vrai tableau Markdown avec des pipes. "
+                "Si on te demande un tableau, utilise UNIQUEMENT la syntaxe Markdown avec des pipes `|` — n'utilise JAMAIS de code Mermaid (```mermaid). Dans un tableau Markdown, ne mets JAMAIS de ligne vide entre les lignes. "
                 "Ne répète jamais une ligne, une ligne de tableau, un paragraphe ou une section. "
                 "Termine toujours proprement la réponse, sans couper un mot ni une emphase Markdown. "
                 "Des résultats de recherche web récents te sont fournis comme contexte. "
@@ -3450,19 +3592,27 @@ def _build_euria_rag_messages(
     history: list[dict[str, str]],
     rag_context: str,
     rag_sources: list[dict[str, Any]],
+    *,
+    conversation_topic: str | None = None,
 ) -> list[dict[str, str]]:
+    topic_instruction = (
+        f"Sujet principal de la conversation : « {conversation_topic} ». "
+        f"Utilise EXACTEMENT cette orthographe dans toute ta réponse — ne sépare pas les mots composés. "
+    ) if conversation_topic else ""
     source_titles = _build_rag_source_titles(rag_sources)
     return [
         {
             "role": "system",
             "content": (
-                "/no_think\n"
+                topic_instruction
+                + "/no_think\n"
                 "Tu réponds UNIQUEMENT en français, avec du Markdown valide et propre. "
                 "Appuie-toi d'abord sur le contexte du coffre fourni. "
                 "N'invente aucune information absente du contexte. "
                 "Si l'information demandée n'est pas dans le contexte, réponds exactement : "
                 '"Cette information n\'est pas dans ton coffre." '
                 "Quand tu utilises une note du coffre, cite son titre entre crochets. "
+                "Si on te demande un tableau, utilise UNIQUEMENT la syntaxe Markdown avec des pipes `|` — n'utilise JAMAIS de code Mermaid (```mermaid). Dans un tableau Markdown, ne mets JAMAIS de ligne vide entre les lignes. "
                 "Ne répète jamais une ligne, un paragraphe ou une section."
             ),
         },
@@ -3511,15 +3661,126 @@ async def _ddg_fetch_via_subprocess(prompt: str, max_results: int = 5) -> list[d
     return []
 
 
+# Mots qui démarrent une phrase mais ne sont pas des sujets de conversation
+_TOPIC_STOPWORDS: set[str] = {
+    "que", "qui", "quoi", "quels", "quelles", "quel", "quelle",
+    "quand", "comment", "pourquoi", "combien",
+    "est", "sont", "était", "sera", "serait", "être", "avoir",
+    "les", "des", "une", "aux", "sur", "par", "pour",
+    "dans", "avec", "vers", "la", "le", "du", "de", "un", "en", "et",
+    "ou", "ne", "pas", "plus", "se", "sa", "son", "ses", "me", "ce",
+    "a", "ont", "été", "faire",
+    "what", "which", "where", "when", "who", "how",
+    "the", "is", "are", "was", "were",
+    "of", "in", "on", "at", "to", "for", "and", "or",
+}
+
+
+def _extract_conversation_topic(history: list[dict[str, str]]) -> str | None:
+    """Extrait le sujet principal du premier message utilisateur substantiel.
+
+    Règle : un sujet est une séquence maximale de tokens où chaque token commence
+    par une majuscule (capte les noms composés : 'MacBook Neo', 'Apple Silicon',
+    'iPhone 15 Pro Max', mots CamelCase inclus). La séquence la plus longue gagne.
+    """
+    for item in history:
+        if str(item.get("role") or "") == "user":
+            content = str(item.get("content") or "").strip()
+            if len(content) < 15:
+                continue
+            # Séquences de mots débutant chacun par une majuscule
+            candidates = re.findall(
+                r'\b([A-ZÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÑÒÓÔÕÖÙÚÛÜÝ][A-Za-zÀ-ÿ0-9]*'
+                r'(?:\s+[A-ZÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÑÒÓÔÕÖÙÚÛÜÝ][A-Za-zÀ-ÿ0-9]*)*)\b',
+                content,
+            )
+            # Filtrer les stopwords et conserver les candidats d'au moins 2 tokens ou ≥ 5 chars
+            filtered = [
+                c for c in candidates
+                if c.lower() not in _TOPIC_STOPWORDS and (len(c) >= 5 or " " in c)
+            ]
+            if filtered:
+                return max(filtered, key=len)
+            # Repli : mots-clés significatifs (préserve la casse d'origine)
+            tokens = [
+                t for t in re.findall(r"[A-Za-zÀ-ÿ0-9-]+", content)
+                if len(t) >= 3 and t.lower() not in _TOPIC_STOPWORDS
+            ]
+            if tokens:
+                return " ".join(tokens[:4])
+    return None
+
+
+def _build_contextual_prompt(prompt: str, history: list[dict[str, str]]) -> str:
+    """Pour les questions courtes (< 80 car), réancre sur le sujet principal de la conversation."""
+    stripped = prompt.strip()
+    if len(stripped) >= 80 or not history:
+        return stripped
+    topic = _extract_conversation_topic(history)
+    if not topic or topic.lower() == stripped.lower():
+        return stripped
+    return f"{stripped}\n\n(Contexte : {topic})"
+
+
+_DDG_META_WORDS: frozenset[str] = frozenset({
+    "explication", "explications", "expliquer",
+    "analyse", "analyses",
+    "histoire", "historique",
+    "contexte",
+    "résumé", "resume",
+    "détails", "détail",
+    "approfondi", "approfondis",
+    "définition", "définitions",
+    "exemples", "exemple",
+    "présentation", "introduction",
+    "synthèse", "synthese",
+    "overview", "summary", "details", "context", "history", "explanation",
+})
+
+
+def _strip_ddg_meta_words(query: str) -> str:
+    words = query.split()
+    while words and words[-1].lower().rstrip(".,;:!?«»\"'") in _DDG_META_WORDS:
+        words.pop()
+    while words and words[0].lower().rstrip(".,;:!?«»\"'") in _DDG_META_WORDS:
+        words.pop(0)
+    cleaned = " ".join(words).strip()
+    return cleaned if len(cleaned) >= 8 else query
+
+
+def _build_ddg_context_query(prompt: str, history: list[dict[str, str]]) -> str:
+    """Enrich the DDG query with the last user turns so short follow-up questions keep context."""
+    recent_user_turns = [
+        str(item.get("content") or "").strip()
+        for item in history
+        if str(item.get("role") or "") == "user" and str(item.get("content") or "").strip()
+    ][-2:]  # last 2 user messages at most
+    parts = recent_user_turns + [prompt.strip()]
+    # Deduplicate while preserving order
+    seen: set[str] = set()
+    unique: list[str] = []
+    for p in parts:
+        if p not in seen:
+            seen.add(p)
+            unique.append(p)
+    return _strip_ddg_meta_words(" ".join(unique))
+
+
 async def _prepare_euria_stream_plan(*, prompt: str, history: list[dict[str, str]], use_rag: bool, svc) -> dict[str, Any]:
+    topic = _extract_conversation_topic(history)
     if not use_rag:
-        logger.info(f"[stream_plan] DDG subprocess pré-fetch — prompt={prompt[:60]!r}")
-        web_results = await _ddg_fetch_via_subprocess(prompt, 5)
+        ddg_query = _build_ddg_context_query(prompt, history)
+        # Enrichit les messages LLM pour les questions courtes sans contexte explicite
+        effective_prompt = _build_contextual_prompt(prompt, history)
+        if effective_prompt != prompt:
+            logger.info(f"[stream_plan] contexte injecté — prompt enrichi ({len(prompt)}→{len(effective_prompt)} car), topic={topic!r}")
+        logger.info(f"[stream_plan] DDG subprocess pré-fetch — query={ddg_query[:80]!r}")
+        web_results = await _ddg_fetch_via_subprocess(ddg_query, 5)
         if web_results:
-            messages = _build_euria_web_messages(prompt, history, web_results)
+            messages = _build_euria_web_messages(effective_prompt, history, web_results, conversation_topic=topic)
             logger.info(f"[stream_plan] DDG pré-fetch: {len(web_results)} résultat(s) → web messages")
         else:
-            messages = _build_euria_direct_messages(prompt, history)
+            messages = _build_euria_direct_messages(effective_prompt, history, conversation_topic=topic)
             logger.info("[stream_plan] DDG pré-fetch vide → messages directs")
         return {
             "messages": messages,
@@ -3542,7 +3803,7 @@ async def _prepare_euria_stream_plan(*, prompt: str, history: list[dict[str, str
     def _build_rag_plan() -> dict[str, Any]:
         if _should_skip_euria_rag(prompt):
             return {
-                "messages": _build_euria_direct_messages(prompt, history),
+                "messages": _build_euria_direct_messages(prompt, history, conversation_topic=topic),
                 "temperature": 0.3,
                 "max_tokens": 1700,
                 "operation": "conversation_euria_fast",
@@ -3560,7 +3821,7 @@ async def _prepare_euria_stream_plan(*, prompt: str, history: list[dict[str, str
         rag_context, rag_sources = _build_local_rag_context(prompt, svc)
         if rag_context:
             return {
-                "messages": _build_euria_rag_messages(prompt, history, rag_context, rag_sources),
+                "messages": _build_euria_rag_messages(prompt, history, rag_context, rag_sources, conversation_topic=topic),
                 "temperature": 0.2,
                 "max_tokens": 1700,
                 "operation": "conversation_euria_rag",
@@ -3576,7 +3837,7 @@ async def _prepare_euria_stream_plan(*, prompt: str, history: list[dict[str, str
                 },
             }
         return {
-            "messages": _build_euria_direct_messages(prompt, history),
+            "messages": _build_euria_direct_messages(prompt, history, conversation_topic=topic),
             "temperature": 0.3,
             "max_tokens": 1700,
             "operation": "conversation_euria_fast",
@@ -3606,15 +3867,16 @@ def _generate_euria_direct_answer_with_options(
     llm,
     enable_web_search: bool,
 ) -> dict[str, Any]:
+    topic = _extract_conversation_topic(history)
     if enable_web_search:
         web_results = _fetch_ddg_snippets(prompt)
         messages = (
-            _build_euria_web_messages(prompt, history, web_results)
+            _build_euria_web_messages(prompt, history, web_results, conversation_topic=topic)
             if web_results
-            else _build_euria_direct_messages(prompt, history)
+            else _build_euria_direct_messages(prompt, history, conversation_topic=topic)
         )
     else:
-        messages = _build_euria_direct_messages(prompt, history)
+        messages = _build_euria_direct_messages(prompt, history, conversation_topic=topic)
     answer = llm.chat(
         messages,
         temperature=0.3,

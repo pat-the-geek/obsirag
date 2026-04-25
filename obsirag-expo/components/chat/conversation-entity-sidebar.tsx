@@ -10,16 +10,20 @@ const ENTITY_IMAGE_SIZE = 112;
 
 type ConversationEntitySidebarProps = {
   entities: EntityContext[];
+  hiddenEntities?: EntityContext[];
   onOpenNote?: (notePath: string) => void;
   onOpenTag?: (tag: string) => void;
+  onHideEntity?: (entityValue: string) => void;
+  onUnhideEntity?: (entityValue: string) => void;
   compact?: boolean;
   maxHeight?: number;
 };
 
-export function ConversationEntitySidebar({ entities, onOpenNote, onOpenTag, compact = false, maxHeight }: ConversationEntitySidebarProps) {
+export function ConversationEntitySidebar({ entities, hiddenEntities = [], onOpenNote, onOpenTag, onHideEntity, onUnhideEntity, compact = false, maxHeight }: ConversationEntitySidebarProps) {
   const theme = useAppTheme();
   const { scale } = useAppFontScale();
   const [isTypeMenuOpen, setIsTypeMenuOpen] = useState(false);
+  const [showHidden, setShowHidden] = useState(false);
   const typeOptions = useMemo(() => buildEntityTypeOptions(entities), [entities]);
   const preferredTypeValue = useMemo(() => typeOptions.find((option) => option.isPreferred)?.value, [typeOptions]);
   const [selectedTypeValue, setSelectedTypeValue] = useState<string | null | undefined>(undefined);
@@ -140,6 +144,15 @@ export function ConversationEntitySidebar({ entities, onOpenNote, onOpenTag, com
                   </View>
                 </View>
               ) : null}
+              {onHideEntity ? (
+                <Pressable
+                  testID={`sidebar-entity-hide-${entity.value}`}
+                  style={[styles.hideButton, { borderColor: theme.colors.border, backgroundColor: theme.colors.backgroundAlt }]}
+                  onPress={() => onHideEntity(entity.value)}
+                >
+                  <Text style={[styles.hideButtonText, { color: theme.colors.textMuted, fontSize: scaleFontSize(11, scale) }]}>Masquer</Text>
+                </Pressable>
+              ) : null}
             </View>
           );
         }) : (
@@ -148,6 +161,38 @@ export function ConversationEntitySidebar({ entities, onOpenNote, onOpenTag, com
             <Text style={[styles.emptyStateBody, { color: theme.colors.textMuted, fontSize: scaleFontSize(12, scale), lineHeight: scaleLineHeight(18, scale) }]}>Choisissez un autre type d'entite ou revenez a Tous les types d'entites.</Text>
           </View>
         )}
+        {hiddenEntities.length > 0 ? (
+          <View style={styles.hiddenSection}>
+            <Pressable
+              testID="sidebar-toggle-hidden"
+              style={[styles.hiddenToggle, { borderColor: theme.colors.border }]}
+              onPress={() => setShowHidden((v) => !v)}
+            >
+              <Text style={[styles.hiddenToggleText, { color: theme.colors.textMuted, fontSize: scaleFontSize(12, scale) }]}>
+                {showHidden ? 'Masquer les entités cachées' : `Afficher les entités masquées (${hiddenEntities.length})`}
+              </Text>
+            </Pressable>
+            {showHidden ? hiddenEntities.map((entity) => (
+              <View key={entityKey(entity)} style={[styles.hiddenCard, { backgroundColor: theme.colors.surfaceMuted, borderColor: theme.colors.border }]}>
+                <View style={styles.hiddenCardRow}>
+                  <View style={styles.hiddenCardCopy}>
+                    <Text style={[styles.hiddenEntityTitle, { color: theme.colors.textMuted, fontSize: scaleFontSize(14, scale) }]}>{entity.value}</Text>
+                    {entity.typeLabel ? <Text style={[styles.hiddenEntityType, { color: theme.colors.textSubtle, fontSize: scaleFontSize(12, scale) }]}>{entity.typeLabel}</Text> : null}
+                  </View>
+                  {onUnhideEntity ? (
+                    <Pressable
+                      testID={`sidebar-entity-unhide-${entity.value}`}
+                      style={[styles.unhideButton, { borderColor: theme.colors.primary, backgroundColor: theme.colors.primaryMuted }]}
+                      onPress={() => onUnhideEntity(entity.value)}
+                    >
+                      <Text style={[styles.unhideButtonText, { color: theme.colors.primary, fontSize: scaleFontSize(11, scale) }]}>Reprendre</Text>
+                    </Pressable>
+                  ) : null}
+                </View>
+              </View>
+            )) : null}
+          </View>
+        ) : null}
       </ScrollView>
     </View>
   );
@@ -546,5 +591,62 @@ const styles = StyleSheet.create({
   },
   notePillMeta: {
     fontSize: 11,
+  },
+  hideButton: {
+    alignSelf: 'flex-start',
+    borderRadius: 8,
+    borderWidth: 1,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+  },
+  hideButtonText: {
+    fontWeight: '600',
+  },
+  hiddenSection: {
+    gap: 8,
+    marginTop: 4,
+  },
+  hiddenToggle: {
+    borderRadius: 8,
+    borderWidth: 1,
+    borderStyle: 'dashed',
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    alignSelf: 'stretch',
+  },
+  hiddenToggleText: {
+    fontWeight: '600',
+    textAlign: 'center',
+  },
+  hiddenCard: {
+    borderRadius: 12,
+    borderWidth: 1,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  hiddenCardRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  hiddenCardCopy: {
+    flex: 1,
+    gap: 2,
+  },
+  hiddenEntityTitle: {
+    fontWeight: '600',
+  },
+  hiddenEntityType: {
+    fontWeight: '400',
+  },
+  unhideButton: {
+    borderRadius: 8,
+    borderWidth: 1,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    flexShrink: 0,
+  },
+  unhideButtonText: {
+    fontWeight: '700',
   },
 });

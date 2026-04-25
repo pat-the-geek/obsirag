@@ -127,6 +127,41 @@ class ApiConversationStore:
             conversation.title = self._derive_title(conversation.messages)
         return self.upsert(conversation)
 
+    def patch_message_hidden_entity_values(
+        self,
+        conversation_id: str,
+        message_id: str,
+        hidden_values: list[str],
+    ) -> bool:
+        conversation = self.get(conversation_id)
+        if conversation is None:
+            return False
+        for msg in conversation.messages:
+            if msg.id == message_id:
+                existing = set(getattr(msg, "hiddenEntityValues", None) or [])
+                existing.update(hidden_values)
+                msg.hiddenEntityValues = sorted(existing)
+                self.upsert(conversation)
+                return True
+        return False
+
+    def patch_conversation_hidden_entity_values(
+        self,
+        conversation_id: str,
+        entity_values: list[str],
+        action: str,
+    ) -> "ConversationDetailModel | None":
+        conversation = self.get(conversation_id)
+        if conversation is None:
+            return None
+        existing = set(conversation.hiddenEntityValues or [])
+        if action == "remove":
+            existing -= set(entity_values)
+        else:
+            existing.update(entity_values)
+        conversation.hiddenEntityValues = sorted(existing)
+        return self.upsert(conversation)
+
     def patch_message_entity_contexts(
         self,
         conversation_id: str,

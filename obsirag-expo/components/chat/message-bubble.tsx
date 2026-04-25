@@ -9,6 +9,8 @@ import { SourceList } from './source-list';
 
 type MessageBubbleProps = {
   message: ChatMessage;
+  conversationHiddenEntityValues?: string[];
+  onHideEntity?: (entityValue: string) => void;
   highlightEntities?: EntityHighlightDefinition[];
   onOpenNote?: (notePath: string) => void;
   onOpenTag?: (tag: string) => void;
@@ -25,6 +27,8 @@ type EntityHighlightDefinition = Pick<EntityContext, 'value' | 'type'>;
 
 export function MessageBubble({
   message,
+  conversationHiddenEntityValues,
+  onHideEntity,
   highlightEntities,
   onOpenNote,
   onOpenTag,
@@ -41,7 +45,7 @@ export function MessageBubble({
   const isUser = message.role === 'user';
   const revealProgress = useRef(new Animated.Value(isUser || process.env.NODE_ENV === 'test' ? 1 : 0)).current;
   const [sourcesOpen, setSourcesOpen] = useState(false);
-  const [entityContextsOpen, setEntityContextsOpen] = useState(true);
+  const [entityContextsOpen, setEntityContextsOpen] = useState(false);
   const hasRenderableQueryOverview = isRenderableQueryOverview(message);
   const hasMermaidContent = containsMermaidFence(message.content);
   const shouldHideAssistantMainBubble = Boolean(
@@ -178,8 +182,10 @@ export function MessageBubble({
             {!isUser && message.entityContexts?.length ? (
               <EntityContextList
                 entities={message.entityContexts}
+                hiddenEntityValues={conversationHiddenEntityValues ?? []}
                 isOpen={entityContextsOpen}
                 onToggleOpen={() => setEntityContextsOpen((current) => !current)}
+                {...(onHideEntity ? { onHideEntity } : {})}
               />
             ) : null}
           </View>

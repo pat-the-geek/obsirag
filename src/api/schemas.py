@@ -170,6 +170,7 @@ class ChatMessageModel(BaseModel):
     timeline: list[str] = Field(default_factory=list)
     queryOverview: QueryOverviewModel | None = None
     entityContexts: list[EntityContextModel] = Field(default_factory=list)
+    hiddenEntityValues: list[str] = Field(default_factory=list)
     enrichmentPath: str | None = None
     provenance: Literal["vault", "web", "hybrid", "unknown"] = "unknown"
     sentinel: bool = False
@@ -194,6 +195,7 @@ class ConversationDetailModel(BaseModel):
     draft: str = ""
     messages: list[ChatMessageModel] = Field(default_factory=list)
     lastGenerationStats: GenerationStatsModel | None = None
+    hiddenEntityValues: list[str] = Field(default_factory=list)
 
 
 class CreateConversationRequest(BaseModel):
