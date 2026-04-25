@@ -1,4 +1,4 @@
-import { startTransition, useDeferredValue, useMemo, useState } from 'react';
+import { startTransition, useDeferredValue, useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, Alert, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useLocalSearchParams, usePathname, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -76,6 +76,13 @@ export default function GraphScreen() {
       .slice(0, 8);
   }, [graphData?.noteOptions, noteSearchText]);
   const isGraphRouteActive = pathname === '/graph' || pathname.endsWith('/graph');
+
+  // Sync tag filter when navigating here from another screen (tab already mounted)
+  useEffect(() => {
+    if (initialTag !== undefined) {
+      setSelectedTag(initialTag);
+    }
+  }, [initialTag]);
 
   const switchToLiveBackend = async () => {
     setUseMockServer(false);
