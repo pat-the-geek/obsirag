@@ -251,20 +251,33 @@ export function useDeleteConversationMessage(conversationId: string) {
   const { api } = useServerConfig();
   const queryClient = useQueryClient();
 
+  let pendingIsWebMessage = false;
+
   return useMutation({
+    onMutate: async (messageId: string) => {
+      await queryClient.cancelQueries({ queryKey: ['conversation', conversationId] });
+      const snapshot = queryClient.getQueryData<ConversationDetail>(['conversation', conversationId]);
+      const targetMessage = snapshot?.messages.find((message) => message.id === messageId);
+      pendingIsWebMessage = targetMessage?.provenance === 'web';
+      queryClient.setQueryData<ConversationDetail | undefined>(['conversation', conversationId], (current) => {
+        if (!current) {
+          return current;
+        }
+        return { ...current, messages: removeMessageTurn(current.messages, messageId) };
+      });
+      return { snapshot };
+    },
     mutationFn: async (messageId: string) => {
-      const current = queryClient.getQueryData<ConversationDetail>(['conversation', conversationId]);
-      const targetMessage = current?.messages.find((message) => message.id === messageId);
-
-      if (current && targetMessage?.provenance === 'web') {
-        return {
-          ...current,
-          messages: removeMessageTurn(current.messages, messageId),
-          updatedAt: new Date().toISOString(),
-        };
+      if (pendingIsWebMessage) {
+        const current = queryClient.getQueryData<ConversationDetail>(['conversation', conversationId]);
+        return { ...(current!), updatedAt: new Date().toISOString() };
       }
-
       return api.deleteConversationMessage(conversationId, messageId);
+    },
+    onError: (_error, _messageId, context) => {
+      if (context?.snapshot) {
+        queryClient.setQueryData(['conversation', conversationId], context.snapshot);
+      }
     },
     onSuccess: async (conversation) => {
       queryClient.setQueryData(['conversation', conversationId], conversation);
