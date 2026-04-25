@@ -647,7 +647,7 @@ describe('MessageBubble', () => {
     );
   });
 
-  it('keeps detected entities collapsed by default and renders the markdown table on demand', () => {
+  it('keeps detected entities collapsed by default and renders the entity list on demand', () => {
     const message: ChatMessage = {
       id: 'assistant-6',
       role: 'assistant',
@@ -696,13 +696,10 @@ describe('MessageBubble', () => {
     });
 
     expect(tree.root.findByProps({ testID: 'entity-contexts-panel-content' })).toBeTruthy();
-    const markdownTable = tree.root.findByProps({ testID: 'markdown-table' });
-    const joined = markdownTable.findAllByType(Text).flatMap((node) => collectText(node.props.children)).join(' ');
+    const panelContent = tree.root.findByProps({ testID: 'entity-contexts-panel-content' });
+    const joined = panelContent.findAllByType(Text).flatMap((node) => collectText(node.props.children)).join(' ');
 
-    expect(joined).toContain('N°');
-    expect(joined).toContain("Nom de l'entité");
     expect(joined).toContain('Napoleon Bonaparte');
-    expect(joined).toContain('1');
     expect(joined).toContain('comme sujet central de ce passage');
   });
 
@@ -740,17 +737,12 @@ describe('MessageBubble', () => {
 
       const panel = tree!.root.findByProps({ testID: 'entity-contexts-panel' });
       const panelStyle = flattenStyle(panel.props.style);
-      const tableSurface = tree!.root.findByProps({ testID: 'markdown-table-surface' });
-      const tableStyle = flattenStyle(tableSurface.props.style);
 
       expect(panelStyle).toEqual(
         expect.arrayContaining([expect.objectContaining({ backgroundColor: '#f0f3f6', borderColor: '#d4dbe3' })]),
       );
-      expect(tableStyle).toEqual(
-        expect.arrayContaining([expect.objectContaining({ backgroundColor: '#f8fafc', borderColor: '#d4dbe3' })]),
-      );
     } finally {
-      tree?.unmount();
+      act(() => { tree?.unmount(); });
       act(() => {
         useAppStore.setState({ themeMode: previousThemeMode });
       });
@@ -791,17 +783,12 @@ describe('MessageBubble', () => {
 
       const panel = tree!.root.findByProps({ testID: 'entity-contexts-panel' });
       const panelStyle = flattenStyle(panel.props.style);
-      const tableSurface = tree!.root.findByProps({ testID: 'markdown-table-surface' });
-      const tableStyle = flattenStyle(tableSurface.props.style);
 
       expect(panelStyle).toEqual(
         expect.arrayContaining([expect.objectContaining({ backgroundColor: '#0b2235', borderColor: '#163956' })]),
       );
-      expect(tableStyle).toEqual(
-        expect.arrayContaining([expect.objectContaining({ backgroundColor: '#061a2b', borderColor: '#163956' })]),
-      );
     } finally {
-      tree?.unmount();
+      act(() => { tree?.unmount(); });
       act(() => {
         useAppStore.setState({ themeMode: previousThemeMode });
       });
@@ -844,8 +831,8 @@ describe('MessageBubble', () => {
     expect(panelText).toContain('1 entité sur 2');
     expect(panelText).toContain('Personne');
 
-    const markdownTable = tree.root.findByProps({ testID: 'markdown-table' });
-    const joined = normalizeInlineText(markdownTable.findAllByType(Text).flatMap((node) => collectText(node.props.children)).join(' '));
+    const panelContent = tree.root.findByProps({ testID: 'entity-contexts-panel-content' });
+    const joined = normalizeInlineText(panelContent.findAllByType(Text).flatMap((node) => collectText(node.props.children)).join(' '));
 
     expect(joined).toContain('Napoleon Bonaparte');
     expect(joined).not.toContain('Arrakis');
@@ -902,8 +889,8 @@ describe('MessageBubble', () => {
     expect(panelText).toMatch(/2 entité ?s/);
     expect(panelText).toContain("Tous les types d'entités");
 
-    const markdownTable = tree.root.findByProps({ testID: 'markdown-table' });
-    const joined = normalizeInlineText(markdownTable.findAllByType(Text).flatMap((node) => collectText(node.props.children)).join(' '));
+    const panelContent = tree.root.findByProps({ testID: 'entity-contexts-panel-content' });
+    const joined = normalizeInlineText(panelContent.findAllByType(Text).flatMap((node) => collectText(node.props.children)).join(' '));
 
     expect(joined).toContain('Napoleon Bonaparte');
     expect(joined).toContain('Arrakis');

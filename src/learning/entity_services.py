@@ -37,9 +37,16 @@ _FALLBACK_ENTITY_LABELS = {
     "PRODUCT": "PRODUCT",
 }
 _PRODUCT_HINT_TOKENS = {
-    "airpods", "airtag", "apple", "galaxy", "iphone", "ipad", "ipod", "macbook",
-    "mac", "nintendo", "pixel", "playstation", "surface", "switch", "vision",
-    "watch", "xbox",
+    "airpods", "airtag", "apple", "chromebook", "galaxy", "iphone", "ipad",
+    "ipod", "macbook", "mac", "nintendo", "pixel", "playstation", "surface",
+    "switch", "vision", "watch", "xbox",
+}
+_KNOWN_TECH_ORGS = {
+    "adobe", "amd", "apple", "amazon", "alibaba", "asus", "acer",
+    "baidu", "bytedance", "dell", "google", "hp", "huawei", "ibm",
+    "intel", "lenovo", "lg", "meta", "microsoft", "motorola", "netflix",
+    "nvidia", "oneplus", "oppo", "oracle", "qualcomm", "samsung", "sap",
+    "salesforce", "sony", "tencent", "tiktok", "twitter", "x", "xiaomi",
 }
 
 
@@ -374,12 +381,70 @@ class AutoLearnEntityServices:
         return fallback_entities
 
     def _map_fallback_label(self, label: str, value: str) -> str | None:
+        # 1. Wudd.ai authoritative type takes priority
+        wuddai_type = self._wuddai_type_for(value)
+        if wuddai_type:
+            return wuddai_type
+
         mapped = _FALLBACK_ENTITY_LABELS.get((label or "").upper())
         if mapped:
+            lowered = unicodedata.normalize("NFD", (value or "").strip().lower())
+            lowered = "".join(c for c in lowered if unicodedata.category(c) != "Mn")
+            # Single-word known tech company: always ORG regardless of spaCy label
+            if lowered in _KNOWN_TECH_ORGS and " " not in (value or "").strip():
+                return "ORG"
+            # Override ORG/GPE/LOC → PRODUCT only when lead token is an explicit product keyword
+            if mapped in ("ORG", "GPE", "LOC"):
+                words = [w for w in re.split(r"\s+", (value or "").strip()) if w]
+                if words:
+                    lead = unicodedata.normalize("NFD", words[0].lower())
+                    lead = "".join(c for c in lead if unicodedata.category(c) != "Mn")
+                    lead_singular = lead[:-1] if lead.endswith("s") else lead
+                    if lead in _PRODUCT_HINT_TOKENS or lead_singular in _PRODUCT_HINT_TOKENS:
+                        return "PRODUCT"
             return mapped
         if self._looks_like_product_name(value):
             return "PRODUCT"
         return None
+
+    def _wuddai_type_for(self, value: str) -> str | None:
+        # Years are always EVENT regardless of wudd.ai classification
+        if re.fullmatch(r"\d{4}", (value or "").strip()):
+            return "EVENT"
+
+        index = getattr(self, "_wuddai_type_index_cache", None)
+        if index is None:
+            index = self._build_wuddai_type_index()
+            self._wuddai_type_index_cache = index  # type: ignore[attr-defined]
+
+        normalized = self._owner._normalize_entity_name(value)
+        entry = index.get(normalized)
+        if entry:
+            return entry[0]
+
+        # Lead-token match for multi-word values
+        words = normalized.split()
+        if len(words) > 1:
+            entry = index.get(words[0])
+            if entry:
+                return entry[0]
+
+        return None
+
+    def _build_wuddai_type_index(self) -> dict[str, tuple[str, int]]:
+        """Build {normalized_value: (type, mentions)} from wudd.ai; highest-mention type wins."""
+        entities = self._owner._load_wuddai_entities()
+        best: dict[str, tuple[str, int]] = {}
+        for e in entities:
+            value_norm = (e.get("value_normalized") or "").strip()
+            entity_type = e.get("type") or ""
+            if not value_norm or not entity_type:
+                continue
+            mentions = int(e.get("mentions") or 0)
+            existing = best.get(value_norm)
+            if existing is None or mentions > existing[1]:
+                best[value_norm] = (entity_type, mentions)
+        return best
 
     @classmethod
     def _extract_product_candidates(cls, text: str) -> list[str]:

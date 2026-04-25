@@ -68,8 +68,9 @@ export function EntityContextList({ entities, hiddenEntityValues = [], isOpen = 
         <View style={styles.headerCopy}>
           <Text style={[styles.title, { color: theme.colors.text, fontSize: scaleFontSize(13, scale) }]}>Entités détectées</Text>
           <Text style={[styles.caption, { color: theme.colors.textMuted, fontSize: scaleFontSize(12, scale) }]}>
-            {totalVisible} entité{totalVisible > 1 ? 's' : ''}
-            {selectedTypeOption ? ` sur ${totalVisible}` : ''}
+            {selectedTypeOption
+              ? `${visibleEntities.length} entité${visibleEntities.length > 1 ? 's' : ''} sur ${totalVisible}`
+              : `${totalVisible} entité${totalVisible > 1 ? 's' : ''}`}
           </Text>
         </View>
         <Text style={[styles.chevron, { color: theme.colors.primary, fontSize: scaleFontSize(12, scale) }]}>{isOpen ? 'Masquer' : 'Afficher'}</Text>
