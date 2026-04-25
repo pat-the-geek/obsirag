@@ -339,7 +339,11 @@ function parseMarkdownBlocks(markdown: string): MarkdownBlock[] {
 
 function isMarkdownTableRow(line: string): boolean {
   const trimmed = line.trim();
-  return trimmed.length >= 3 && trimmed.includes('|') && /^\|?.+\|.+\|?$/.test(trimmed);
+  if (trimmed.length < 3 || !trimmed.includes('|')) {
+    return false;
+  }
+  const cells = trimmed.replace(/^\|/, '').replace(/\|$/, '').split('|');
+  return cells.some((cell) => cell.trim().length > 0);
 }
 
 function normalizeMarkdownTableBlocks(markdown: string): string {
@@ -376,7 +380,7 @@ function normalizeMarkdownTableBlocks(markdown: string): string {
 
 function isMarkdownTableSeparator(line: string): boolean {
   const trimmed = line.trim();
-  return /^\|?(?:\s*:?-{3,}:?\s*\|)+\s*:?-{3,}:?\s*\|?$/.test(trimmed);
+  return /^\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)*\|?$/.test(trimmed);
 }
 
 function splitMarkdownTableRow(line: string): string[] {
