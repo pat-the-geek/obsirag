@@ -51,7 +51,7 @@ export default function GraphScreen() {
     ...(deferredSearchText.trim() ? { searchText: deferredSearchText.trim() } : {}),
     ...(recencyDays ? { recencyDays } : {}),
   }), [deferredSearchText, recencyDays, selectedGroup, selectedTag, selectedType]);
-  const { data, isLoading, isRefetching, refetch } = useGraph(graphFilters);
+  const { data, isLoading, isRefetching, isPlaceholderData, refetch } = useGraph(graphFilters);
   const subgraph = useGraphSubgraph(focusedNodeId, 1, graphFilters);
   const graphData = focusedNodeId ? (subgraph.data ?? data) : data;
   const graphLoading = !graphData && (focusedNodeId ? subgraph.isLoading : isLoading);
@@ -98,7 +98,7 @@ export default function GraphScreen() {
   useEffect(() => {
     if (!initialTagSlug || autoFocusedForTag.current === initialTagSlug) return;
     if (selectedTag !== initialTagSlug) return; // wait for selectedTag to sync
-    if (!data?.nodes.length) return;
+    if (!data?.nodes.length || isPlaceholderData) return; // wait for actual filtered data
     const tagLower = initialTagSlug.toLowerCase();
     const best = [...data.nodes]
       .filter((n) => n.tags.some((t) => t.toLowerCase() === tagLower))
@@ -107,7 +107,7 @@ export default function GraphScreen() {
       autoFocusedForTag.current = initialTagSlug;
       startTransition(() => setFocusedNodeId(best.id));
     }
-  }, [initialTagSlug, selectedTag, data]);
+  }, [initialTagSlug, selectedTag, data, isPlaceholderData]);
 
   const switchToLiveBackend = async () => {
     setUseMockServer(false);
