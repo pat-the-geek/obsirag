@@ -796,37 +796,8 @@ def _generate_euria_rag_answer(
     rag_context: str,
     rag_sources: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    source_titles = _build_rag_source_titles(rag_sources)
-    messages = [
-        {
-            "role": "system",
-            "content": (
-                "/no_think\n"
-                "Tu réponds UNIQUEMENT en français, avec du Markdown valide et propre. "
-                "Appuie-toi d'abord sur le contexte du coffre fourni. "
-                "N'invente aucune information absente du contexte. "
-                "Si l'information demandée n'est pas dans le contexte, réponds exactement : "
-                '"Cette information n\'est pas dans ton coffre." '
-                "Quand tu utilises une note du coffre, cite son titre entre crochets. "
-                "Si on te demande un tableau, utilise UNIQUEMENT la syntaxe Markdown avec des pipes `|` — n'utilise JAMAIS de code Mermaid (```mermaid). Dans un tableau Markdown, ne mets JAMAIS de ligne vide entre les lignes. "
-                "Ne répète jamais une ligne, un paragraphe ou une section."
-            ),
-        },
-        *[
-            {"role": str(item.get("role") or "user"), "content": str(item.get("content") or "")}
-            for item in history
-            if str(item.get("content") or "").strip()
-        ],
-        {
-            "role": "user",
-            "content": (
-                "Contexte du coffre :\n"
-                f"{rag_context}\n\n"
-                f"Notes disponibles : {source_titles or 'non precisees'}\n\n"
-                f"Question : {prompt}"
-            ),
-        },
-    ]
+    topic = _extract_conversation_topic(history)
+    messages = _build_euria_rag_messages(prompt, history, rag_context, rag_sources, conversation_topic=topic)
     answer = llm.chat(
         messages,
         temperature=0.2,
@@ -992,37 +963,8 @@ def _generate_euria_rag_answer(
     rag_context: str,
     rag_sources: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    source_titles = _build_rag_source_titles(rag_sources)
-    messages = [
-        {
-            "role": "system",
-            "content": (
-                "/no_think\n"
-                "Tu réponds UNIQUEMENT en français, avec du Markdown valide et propre. "
-                "Appuie-toi d'abord sur le contexte du coffre fourni. "
-                "N'invente aucune information absente du contexte. "
-                "Si l'information demandée n'est pas dans le contexte, réponds exactement : "
-                '"Cette information n\'est pas dans ton coffre." '
-                "Quand tu utilises une note du coffre, cite son titre entre crochets. "
-                "Si on te demande un tableau, utilise UNIQUEMENT la syntaxe Markdown avec des pipes `|` — n'utilise JAMAIS de code Mermaid (```mermaid). Dans un tableau Markdown, ne mets JAMAIS de ligne vide entre les lignes. "
-                "Ne répète jamais une ligne, un paragraphe ou une section."
-            ),
-        },
-        *[
-            {"role": str(item.get("role") or "user"), "content": str(item.get("content") or "")}
-            for item in history
-            if str(item.get("content") or "").strip()
-        ],
-        {
-            "role": "user",
-            "content": (
-                "Contexte du coffre :\n"
-                f"{rag_context}\n\n"
-                f"Notes disponibles : {source_titles or 'non precisees'}\n\n"
-                f"Question : {prompt}"
-            ),
-        },
-    ]
+    topic = _extract_conversation_topic(history)
+    messages = _build_euria_rag_messages(prompt, history, rag_context, rag_sources, conversation_topic=topic)
     answer = llm.chat(
         messages,
         temperature=0.2,
