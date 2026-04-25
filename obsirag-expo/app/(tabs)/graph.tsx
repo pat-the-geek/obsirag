@@ -27,10 +27,17 @@ export default function GraphScreen() {
     const rawValue = Array.isArray(params.tag) ? params.tag[0] : params.tag;
     return rawValue?.trim() || undefined;
   }, [params.tag]);
+  // Entity tags have format "type/slug" (e.g. "produit/macbook-neo").
+  // Graph note tags use only the slug part — strip the prefix for filtering.
+  const initialTagSlug = useMemo(() => {
+    if (!initialTag) return initialTag;
+    const slash = initialTag.indexOf('/');
+    return slash >= 0 ? initialTag.slice(slash + 1) : initialTag;
+  }, [initialTag]);
   const [focusedNodeId, setFocusedNodeId] = useState<string | undefined>(undefined);
   const [zoom, setZoom] = useState(1);
   const [selectedGroup, setSelectedGroup] = useState<string | undefined>(undefined);
-  const [selectedTag, setSelectedTag] = useState<string | undefined>(initialTag);
+  const [selectedTag, setSelectedTag] = useState<string | undefined>(initialTagSlug);
   const [selectedType, setSelectedType] = useState<string | undefined>(undefined);
   const [openFilter, setOpenFilter] = useState<'group' | 'tag' | 'type' | 'date' | null>(null);
   const [searchText, setSearchText] = useState('');
@@ -80,26 +87,27 @@ export default function GraphScreen() {
   // Sync tag filter when navigating here from another screen (tab already mounted)
   const autoFocusedForTag = useRef<string | undefined>(undefined);
   useEffect(() => {
-    if (initialTag !== undefined) {
-      setSelectedTag(initialTag);
+    if (initialTagSlug !== undefined) {
+      setSelectedTag(initialTagSlug);
       setFocusedNodeId(undefined);
       autoFocusedForTag.current = undefined; // allow auto-focus for this tag
     }
-  }, [initialTag]);
+  }, [initialTagSlug]);
 
   // Auto-focus the most-connected node carrying the entity tag once data is ready
   useEffect(() => {
-    if (!initialTag || autoFocusedForTag.current === initialTag) return;
-    if (selectedTag !== initialTag) return; // wait for selectedTag to sync
+    if (!initialTagSlug || autoFocusedForTag.current === initialTagSlug) return;
+    if (selectedTag !== initialTagSlug) return; // wait for selectedTag to sync
     if (!data?.nodes.length) return;
+    const tagLower = initialTagSlug.toLowerCase();
     const best = [...data.nodes]
-      .filter((n) => n.tags.includes(initialTag))
+      .filter((n) => n.tags.some((t) => t.toLowerCase() === tagLower))
       .sort((a, b) => b.degree - a.degree)[0];
     if (best) {
-      autoFocusedForTag.current = initialTag;
+      autoFocusedForTag.current = initialTagSlug;
       startTransition(() => setFocusedNodeId(best.id));
     }
-  }, [initialTag, selectedTag, data]);
+  }, [initialTagSlug, selectedTag, data]);
 
   const switchToLiveBackend = async () => {
     setUseMockServer(false);
