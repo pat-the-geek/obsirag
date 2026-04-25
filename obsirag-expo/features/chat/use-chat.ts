@@ -5,6 +5,7 @@ import { useServerConfig } from '../auth/use-server-config';
 import { useAppStore } from '../../store/app-store';
 import { ChatMessage, ConversationDetail, SourceRef } from '../../types/domain';
 import { removeMessageTurn } from './message-turns';
+import { isLocalOnlyMessageForDeletion } from './delete-message-policy';
 
 export function useToggleConversationEntity(conversationId: string) {
   const { api } = useServerConfig();
@@ -250,15 +251,14 @@ export function useGenerateConversationReport() {
 export function useDeleteConversationMessage(conversationId: string) {
   const { api } = useServerConfig();
   const queryClient = useQueryClient();
-
-  let pendingIsWebMessage = false;
+  const pendingDeleteLocalOnlyRef = useRef(false);
 
   return useMutation({
     onMutate: async (messageId: string) => {
       await queryClient.cancelQueries({ queryKey: ['conversation', conversationId] });
       const snapshot = queryClient.getQueryData<ConversationDetail>(['conversation', conversationId]);
       const targetMessage = snapshot?.messages.find((message) => message.id === messageId);
-      pendingIsWebMessage = targetMessage?.provenance === 'web';
+      pendingDeleteLocalOnlyRef.current = isLocalOnlyMessageForDeletion(targetMessage);
       queryClient.setQueryData<ConversationDetail | undefined>(['conversation', conversationId], (current) => {
         if (!current) {
           return current;
@@ -268,9 +268,11 @@ export function useDeleteConversationMessage(conversationId: string) {
       return { snapshot };
     },
     mutationFn: async (messageId: string) => {
-      if (pendingIsWebMessage) {
+      if (pendingDeleteLocalOnlyRef.current) {
         const current = queryClient.getQueryData<ConversationDetail>(['conversation', conversationId]);
-        return { ...(current!), updatedAt: new Date().toISOString() };
+        if (current) {
+          return { ...current, updatedAt: new Date().toISOString() };
+        }
       }
       return api.deleteConversationMessage(conversationId, messageId);
     },
@@ -282,6 +284,9 @@ export function useDeleteConversationMessage(conversationId: string) {
     onSuccess: async (conversation) => {
       queryClient.setQueryData(['conversation', conversationId], conversation);
       await queryClient.invalidateQueries({ queryKey: ['conversations'] });
+    },
+    onSettled: () => {
+      pendingDeleteLocalOnlyRef.current = false;
     },
   });
 }
