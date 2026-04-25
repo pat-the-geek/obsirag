@@ -69,7 +69,11 @@ class AutoLearnEntityServices:
         if not wuddai_entities:
             return self._owner._entities_to_tags_spacy(text), []
 
-        wuddai_index: dict[str, dict] = {entity["value_normalized"]: entity for entity in wuddai_entities}
+        wuddai_index: dict[str, dict] = {}
+        for _e in wuddai_entities:
+            _key = _e.get("value_normalized") or ""
+            if _key and ((_key not in wuddai_index) or (int(_e.get("mentions") or 0) > int(wuddai_index[_key].get("mentions") or 0))):
+                wuddai_index[_key] = _e
         candidates = self._extract_spacy_candidates(text)
 
         tags: list[str] = []
@@ -256,11 +260,11 @@ class AutoLearnEntityServices:
         *,
         max_entities: int,
     ) -> list[dict]:
-        index = {
-            entity.get("value_normalized", ""): entity
-            for entity in entities
-            if entity.get("value_normalized")
-        }
+        index: dict[str, dict] = {}
+        for _e2 in entities:
+            _k2 = _e2.get("value_normalized") or ""
+            if _k2 and ((_k2 not in index) or (int(_e2.get("mentions") or 0) > int(index[_k2].get("mentions") or 0))):
+                index[_k2] = _e2
         if not index:
             return []
 
