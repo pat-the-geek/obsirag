@@ -78,17 +78,19 @@ export default function GraphScreen() {
   const isGraphRouteActive = pathname === '/graph' || pathname.endsWith('/graph');
 
   // Sync tag filter when navigating here from another screen (tab already mounted)
+  const autoFocusedForTag = useRef<string | undefined>(undefined);
   useEffect(() => {
     if (initialTag !== undefined) {
       setSelectedTag(initialTag);
-      setFocusedNodeId(undefined); // reset so auto-focus can run for new tag
+      setFocusedNodeId(undefined);
+      autoFocusedForTag.current = undefined; // allow auto-focus for this tag
     }
   }, [initialTag]);
 
-  // Auto-focus the most-connected node carrying the entity tag
-  const autoFocusedForTag = useRef<string | undefined>(undefined);
+  // Auto-focus the most-connected node carrying the entity tag once data is ready
   useEffect(() => {
     if (!initialTag || autoFocusedForTag.current === initialTag) return;
+    if (selectedTag !== initialTag) return; // wait for selectedTag to sync
     if (!data?.nodes.length) return;
     const best = [...data.nodes]
       .filter((n) => n.tags.includes(initialTag))
@@ -97,7 +99,7 @@ export default function GraphScreen() {
       autoFocusedForTag.current = initialTag;
       startTransition(() => setFocusedNodeId(best.id));
     }
-  }, [initialTag, data]);
+  }, [initialTag, selectedTag, data]);
 
   const switchToLiveBackend = async () => {
     setUseMockServer(false);
