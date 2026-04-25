@@ -11,7 +11,7 @@ from src.config import settings
 
 
 class EuriaClient:
-    DEFAULT_MODEL = "Qwen/Qwen3.5-122B-A10B-FP8"
+    DEFAULT_MODEL = "openai/gpt-oss-120b"
     _RETRY_MAX_TOKENS = 4096
     _WEB_SEARCH_MAX_TOKENS = 12000
 
