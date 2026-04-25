@@ -1,4 +1,4 @@
-import { startTransition, useDeferredValue, useEffect, useMemo, useState } from 'react';
+import { startTransition, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useLocalSearchParams, usePathname, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -81,8 +81,23 @@ export default function GraphScreen() {
   useEffect(() => {
     if (initialTag !== undefined) {
       setSelectedTag(initialTag);
+      setFocusedNodeId(undefined); // reset so auto-focus can run for new tag
     }
   }, [initialTag]);
+
+  // Auto-focus the most-connected node carrying the entity tag
+  const autoFocusedForTag = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    if (!initialTag || autoFocusedForTag.current === initialTag) return;
+    if (!data?.nodes.length) return;
+    const best = [...data.nodes]
+      .filter((n) => n.tags.includes(initialTag))
+      .sort((a, b) => b.degree - a.degree)[0];
+    if (best) {
+      autoFocusedForTag.current = initialTag;
+      startTransition(() => setFocusedNodeId(best.id));
+    }
+  }, [initialTag, data]);
 
   const switchToLiveBackend = async () => {
     setUseMockServer(false);
