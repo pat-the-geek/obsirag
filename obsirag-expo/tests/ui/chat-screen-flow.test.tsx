@@ -33,6 +33,7 @@ const mockGenerateConversationReportMutate = jest.fn();
 const mockDeleteConversationMessageMutate = jest.fn();
 const mockExplicitWebSearchMutate = jest.fn();
 const mockStreamMessageMutate = jest.fn();
+const mockToggleConversationEntityMutate = jest.fn();
 const mockCancelStream = jest.fn();
 const mockSetDraft = jest.fn();
 const mockSetUseEuriaForConversation = jest.fn();
@@ -108,6 +109,7 @@ jest.mock('../../features/chat/use-chat', () => ({
   useGenerateConversationReport: () => ({ mutate: mockGenerateConversationReportMutate, isPending: false }),
   useSaveConversation: () => ({ mutate: mockSaveConversationMutate }),
   useStreamMessage: () => mockStreamMessageState,
+  useToggleConversationEntity: () => ({ mutate: mockToggleConversationEntityMutate, isPending: false }),
 }));
 
 jest.mock('../../store/app-store', () => ({
@@ -243,6 +245,7 @@ describe('ConversationDetailScreen', () => {
     mockDeleteConversationMessageMutate.mockReset();
     mockExplicitWebSearchMutate.mockReset();
     mockStreamMessageMutate.mockReset();
+    mockToggleConversationEntityMutate.mockReset();
     mockCancelStream.mockReset();
     mockSetDraft.mockReset();
     mockSetUseEuriaForConversation.mockReset();
@@ -734,9 +737,9 @@ describe('ConversationDetailScreen', () => {
 
     const tree = renderer.create(<ConversationDetailScreen />);
 
-    expect(textTreeContains(tree, 'Progression du traitement')).toBe(true);
-    expect(textTreeContains(tree, 'Analyse de la requete')).toBe(true);
-    expect(textTreeContains(tree, 'Recherche dans le coffre')).toBe(true);
+    expect(textTreeContains(tree, 'Réponse en préparation')).toBe(true);
+    expect(textTreeContains(tree, 'Analyse de la requete')).toBe(false);
+    expect(textTreeContains(tree, 'Recherche dans le coffre')).toBe(false);
     expect(textTreeContains(tree, 'Generation MLX')).toBe(true);
     expect(textTreeContains(tree, 'Generation en cours...')).toBe(false);
   });
@@ -768,7 +771,7 @@ describe('ConversationDetailScreen', () => {
 
     const tree = renderer.create(<ConversationDetailScreen />);
 
-    expect(textTreeContains(tree, 'Progression du traitement')).toBe(true);
+    expect(textTreeContains(tree, 'Réponse en préparation')).toBe(true);
     expect(textTreeContains(tree, 'Réponse en préparation')).toBe(true);
     expect(textTreeContains(tree, 'Recherche sur le web en cours...')).toBe(true);
   });

@@ -7,6 +7,7 @@ const mockReplace = jest.fn();
 const mockInvalidateQueries = jest.fn();
 const mockUseServerConfig = jest.fn();
 const mockUseSystemStatus = jest.fn();
+const mockUseSystemLogs = jest.fn();
 const mockUseReindexData = jest.fn();
 const mockSetThemeMode = jest.fn();
 const mockIncreaseFontSize = jest.fn();
@@ -43,6 +44,7 @@ jest.mock('../../features/auth/use-server-config', () => ({
 
 jest.mock('../../features/system/use-system-status', () => ({
   useSystemStatus: () => mockUseSystemStatus(),
+  useSystemLogs: () => mockUseSystemLogs(),
   useReindexData: () => mockUseReindexData(),
 }));
 
@@ -113,6 +115,9 @@ describe('settings screen', () => {
     mockUseReindexData.mockReturnValue({
       mutate: jest.fn(),
       isPending: false,
+    });
+    mockUseSystemLogs.mockReturnValue({
+      data: [],
     });
     mockSetThemeMode.mockReset();
     mockIncreaseFontSize.mockReset();
