@@ -20,6 +20,7 @@ import networkx as nx
 from loguru import logger
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import RedirectResponse
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -158,13 +159,29 @@ def _collapse_repeated_line_blocks(text: str, *, max_block_size: int = 4) -> str
 
 
 class _SinglePageAppFiles(StaticFiles):
+    @staticmethod
+    def _apply_html_no_cache_headers(response) -> None:
+        content_type = str(response.headers.get("content-type") or "")
+        if not content_type.startswith("text/html"):
+            return
+        response.headers["Cache-Control"] = "no-store, max-age=0, must-revalidate"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+
     async def get_response(self, path: str, scope):
+        normalized = (path or "").strip("/")
+        if normalized == "index":
+            return RedirectResponse(url="/", status_code=307)
+
         try:
-            return await super().get_response(path, scope)
+            response = await super().get_response(path, scope)
         except StarletteHTTPException as exc:
             if exc.status_code != 404:
                 raise
-        return await super().get_response("index.html", scope)
+            response = await super().get_response("index.html", scope)
+
+        self._apply_html_no_cache_headers(response)
+        return response
 
 
 def _slugify_note_candidate(value: str) -> str:
@@ -4151,6 +4168,12 @@ def _mount_expo_web_if_available() -> None:
     dist_dir = settings.expo_web_dist_dir
     if not dist_dir.exists():
         return
+
+    @app.head("/index", include_in_schema=False)
+    @app.head("/index/", include_in_schema=False)
+    async def _redirect_index_head_to_root() -> RedirectResponse:
+        return RedirectResponse(url="/", status_code=307)
+
     app.mount("/", _SinglePageAppFiles(directory=str(dist_dir), html=True), name="expo-web")
 
 
