@@ -18,7 +18,7 @@ type ConversationEntitySidebarProps = {
 };
 
 export function ConversationEntitySidebar({ entities, hiddenEntities, onOpenNote, onOpenTag, onHideEntity, onUnhideEntity, compact = false, maxHeight }: ConversationEntitySidebarProps) {
-  if (!entities.length) {
+  if (!entities.length && !hiddenEntities?.length) {
     return null;
   }
 

@@ -131,4 +131,32 @@ describe('ConversationEntitySidebar', () => {
 
     expect(tree.root.findByProps({ testID: 'conversation-entity-sidebar-scroll' })).toBeTruthy();
   });
+
+  it('remains visible when all entities are hidden so the user can unhide them', () => {
+    const tree = renderer.create(
+      <ConversationEntitySidebar
+        entities={[]}
+        hiddenEntities={[
+          {
+            type: 'person',
+            typeLabel: 'Personne',
+            value: 'Alpha',
+            notes: [],
+          },
+        ]}
+        onUnhideEntity={() => {}}
+      />,
+    );
+
+    expect(tree.root.findByProps({ testID: 'conversation-entity-sidebar' })).toBeTruthy();
+    expect(tree.root.findByProps({ testID: 'entity-unhide-action' })).toBeTruthy();
+  });
+
+  it('returns null when both entities and hiddenEntities are empty', () => {
+    const tree = renderer.create(
+      <ConversationEntitySidebar entities={[]} hiddenEntities={[]} />,
+    );
+
+    expect(tree.toJSON()).toBeNull();
+  });
 });
