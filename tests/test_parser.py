@@ -171,6 +171,20 @@ class TestNoteParserBasic:
         result = parser.parse(note_with_frontmatter)
         assert result.metadata.file_path == "note.md"
 
+    def test_parse_sanitizes_invalid_yaml_control_characters(self, parser, configure_vault, tmp_path):
+        configure_vault.vault_path = str(tmp_path)
+        note = tmp_path / "invalid_control.md"
+        note.write_text(
+            "---\ntitle: Mon\x9ctitre\ntags: [ia]\n---\n\nContenu avec caractère de contrôle.\n",
+            encoding="utf-8",
+        )
+
+        result = parser.parse(note)
+
+        assert result is not None
+        assert result.metadata.title == "Montitre"
+        assert "ia" in result.metadata.tags
+
 
 # ---------------------------------------------------------------------------
 # Tests NoteParser — wikilinks

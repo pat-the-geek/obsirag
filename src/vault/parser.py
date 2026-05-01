@@ -21,6 +21,11 @@ from src.config import settings
 # ---------------------------------------------------------------------------
 _nlp: Optional[spacy.language.Language] = None
 
+_DISALLOWED_CONTROL_TRANSLATION = {
+    **{code: None for code in range(0x00, 0x20) if code not in (0x09, 0x0A, 0x0D)},
+    **{code: None for code in range(0x7F, 0xA0)},
+}
+
 
 def get_nlp() -> spacy.language.Language:
     global _nlp
@@ -105,9 +110,10 @@ class NoteParser:
             raw_bytes = file_path.read_bytes()
             file_hash = hashlib.md5(raw_bytes).hexdigest()
             raw = raw_bytes.decode("utf-8", errors="replace")
+            sanitized_raw = self._strip_disallowed_control_chars(raw)
             stat = file_path.stat()
 
-            post = frontmatter.loads(raw)
+            post = frontmatter.loads(sanitized_raw)
             fm: dict = dict(post.metadata)
             body: str = post.content
 
@@ -212,3 +218,7 @@ class NoteParser:
                 except ValueError:
                     continue
         return None
+
+    @staticmethod
+    def _strip_disallowed_control_chars(value: str) -> str:
+        return value.translate(_DISALLOWED_CONTROL_TRANSLATION)

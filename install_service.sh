@@ -89,6 +89,17 @@ AUTOLEARN_INTERVAL_MINUTES="$(_env_val AUTOLEARN_INTERVAL_MINUTES)"
 AUTOLEARN_INTERVAL_MINUTES="${AUTOLEARN_INTERVAL_MINUTES:-60}"
 API_PORT="$(_env_val OBSIRAG_API_PORT)"
 API_PORT="${API_PORT:-8000}"
+SSL_CERT_FILE="$(_env_val SSL_CERT_FILE)"
+REQUESTS_CA_BUNDLE="$(_env_val REQUESTS_CA_BUNDLE)"
+CURL_CA_BUNDLE="$(_env_val CURL_CA_BUNDLE)"
+PIP_CERT="$(_env_val PIP_CERT)"
+
+if [ -z "$SSL_CERT_FILE" ] && [ -f "$PROJECT_DIR/.certs/ca-bundle.pem" ]; then
+  SSL_CERT_FILE="$PROJECT_DIR/.certs/ca-bundle.pem"
+fi
+REQUESTS_CA_BUNDLE="${REQUESTS_CA_BUNDLE:-$SSL_CERT_FILE}"
+CURL_CA_BUNDLE="${CURL_CA_BUNDLE:-$SSL_CERT_FILE}"
+PIP_CERT="${PIP_CERT:-$SSL_CERT_FILE}"
 # APP_DATA_DIR par défaut
 APP_DATA_DIR="${APP_DATA_DIR:-$HOME/Library/Application Support/ObsiRAG}"
 mkdir -p "$APP_DATA_DIR"
@@ -151,6 +162,14 @@ cat > "$API_PLIST_DST" <<PLIST
     <string>${HOME}/.cache/huggingface</string>
     <key>TZ</key>
     <string>Europe/Zurich</string>
+    <key>SSL_CERT_FILE</key>
+    <string>${SSL_CERT_FILE}</string>
+    <key>REQUESTS_CA_BUNDLE</key>
+    <string>${REQUESTS_CA_BUNDLE}</string>
+    <key>CURL_CA_BUNDLE</key>
+    <string>${CURL_CA_BUNDLE}</string>
+    <key>PIP_CERT</key>
+    <string>${PIP_CERT}</string>
   </dict>
 
   <key>RunAtLoad</key>
@@ -227,6 +246,14 @@ cat > "$AUTOLEARN_PLIST_DST" <<PLIST
         <string>${HOME}/.cache/huggingface</string>
         <key>TZ</key>
         <string>Europe/Zurich</string>
+        <key>SSL_CERT_FILE</key>
+        <string>${SSL_CERT_FILE}</string>
+        <key>REQUESTS_CA_BUNDLE</key>
+        <string>${REQUESTS_CA_BUNDLE}</string>
+        <key>CURL_CA_BUNDLE</key>
+        <string>${CURL_CA_BUNDLE}</string>
+        <key>PIP_CERT</key>
+        <string>${PIP_CERT}</string>
     </dict>
 
     <key>RunAtLoad</key>
