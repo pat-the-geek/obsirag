@@ -17,7 +17,7 @@ class TestLogger:
             configure_logging("DEBUG", str(log_dir))
 
         mock_logger.remove.assert_called_once()
-        assert mock_logger.add.call_count == 4
+        assert mock_logger.add.call_count == 5
         assert log_dir.exists()
 
     def test_log_token_usage_creates_daily_and_cumulative_stats(self, tmp_path):

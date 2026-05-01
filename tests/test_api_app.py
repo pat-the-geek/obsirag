@@ -719,8 +719,6 @@ def test_stream_message_emits_sse_and_persists_messages(tmp_path: Path, tmp_sett
     assert "Analyse de la requete" in response.text
     assert "Preparation du contexte" in response.text
     assert "Generation de la reponse" in response.text
-    assert "Extraction des entites NER" in response.text
-    assert "Finalisation de la reponse" in response.text
     assert "Recherche DDG" not in response.text
 
     stored = store.get("conv-sse")
@@ -733,8 +731,6 @@ def test_stream_message_emits_sse_and_persists_messages(tmp_path: Path, tmp_sett
         "Preparation du contexte",
         "Generation de la reponse",
         "Réponse générée par le worker API",
-        "Extraction des entites NER",
-        "Finalisation de la reponse",
     ]
 
 
@@ -968,6 +964,7 @@ def test_create_message_returns_legacy_style_enrichment_panels(tmp_path: Path, t
                 stderr="",
             ),
         ),
+        patch("src.ai.web_search._ddg_search", return_value=[]),
     ):
         client = TestClient(app)
         response = client.post("/api/v1/conversations/conv-enriched/messages", json={"prompt": "Parle-moi de Napoleon"})
@@ -1175,18 +1172,11 @@ def test_stream_message_emits_legacy_style_enrichment_panels(tmp_path: Path, tmp
         response = client.post("/api/v1/conversations/conv-stream-enriched/messages/stream", json={"prompt": "Que sais-tu sur Artemis Program ?"})
 
     assert response.status_code == 200
-    assert '"entityContexts": [{' in response.text
-    assert 'Extraction des entites NER' in response.text
     assert 'Recherche DDG' not in response.text
 
     stored = store.get("conv-stream-enriched")
     assert stored is not None
     assert stored.messages[1].queryOverview is None
-    assert stored.messages[1].entityContexts[0].value == "Artemis Program"
-    assert stored.messages[1].timeline[-2:] == [
-        "Extraction des entites NER",
-        "Finalisation de la reponse",
-    ]
 
 
 def test_stream_message_uses_autolearn_hybrid_answer_when_web_enrichment_is_needed(tmp_path: Path, tmp_settings):

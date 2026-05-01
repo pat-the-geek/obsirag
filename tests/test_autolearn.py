@@ -473,7 +473,7 @@ class TestAutoLearner:
         ):
             learner._save_knowledge_artifact("Note Test", note_meta, qa_pairs)
 
-        created = list((tmp_settings.insights_dir / "2026-04").glob("Note_Test_*.md"))
+        created = list((tmp_settings.insights_dir / datetime.now().strftime("%Y-%m")).glob("Note_Test_*.md"))
         assert len(created) == 1
         content = created[0].read_text(encoding="utf-8")
         assert "**Provenance :** Coffre et Web" in content
@@ -1191,6 +1191,9 @@ class TestAutoLearner:
         learner = AutoLearner(MagicMock(), MagicMock(), MagicMock())
 
         class _FakeDDGS:
+            def __init__(self, *args, **kwargs):
+                pass
+
             def __enter__(self):
                 return self
 

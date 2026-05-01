@@ -16,7 +16,7 @@ class TestAutoLearnQuestionAnswering:
         owner._snippets_relevant.return_value = True
         owner._fit_context.return_value = ("ctx rag", "ctx web")
         owner._rag.query.return_value = ("Réponse RAG", [{"text": "Source", "metadata": {"file_path": "note.md"}}])
-        owner._rag._llm.chat.return_value = "Réponse enrichie suffisamment longue pour être conservée comme réponse solide dans ce test."
+        owner._chat_user_visible_french.return_value = "Réponse enrichie suffisamment longue pour être conservée comme réponse solide dans ce test."
         owner._is_weak_answer.return_value = False
         qa = AutoLearnQuestionAnswering(owner)
 
@@ -109,7 +109,7 @@ class TestAutoLearnQuestionAnswering:
             ("Réponse RAG fiable et suffisamment longue pour être conservée.", [{"text": "Source", "metadata": {"file_path": "note.md"}}]),
             ("Réponse RAG fiable et suffisamment longue pour être conservée.", [{"text": "Source", "metadata": {"file_path": "note.md"}}]),
         ]
-        owner._rag._llm.chat.return_value = "Le marché a progressé de 37% en 2025 puis de 42% en 2026 selon plusieurs études."
+        owner._chat_user_visible_french.return_value = "Le marché a progressé de 37% en 2025 puis de 42% en 2026 selon plusieurs études."
         owner._is_weak_answer.return_value = False
         qa = AutoLearnQuestionAnswering(owner)
 
