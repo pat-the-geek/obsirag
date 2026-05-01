@@ -6,6 +6,7 @@ Les fichiers dans obsirag/data sont ignorés (écrits par ObsiRAG lui-même).
 """
 import threading
 import time
+import hashlib
 from pathlib import Path
 
 from loguru import logger
@@ -24,6 +25,7 @@ class _DebouncedHandler(FileSystemEventHandler):
         super().__init__()
         self._indexer = indexer
         self._pending: dict[str, str] = {}  # path → event_type
+        self._last_indexed_hash: dict[str, str] = {}
         self._lock = threading.Lock()
         self._timer: threading.Timer | None = None
 
@@ -65,11 +67,27 @@ class _DebouncedHandler(FileSystemEventHandler):
             try:
                 p = Path(path)
                 if evt_type == "deleted":
+                    self._last_indexed_hash.pop(path, None)
                     self._indexer.remove_note(p)
                 else:
+                    current_hash = self._content_hash(p)
+                    if current_hash and self._last_indexed_hash.get(path) == current_hash:
+                        logger.debug(f"Watcher : aucun changement de contenu pour {p.name}, indexation ignorée")
+                        continue
                     self._indexer.index_note(p)
+                    if current_hash:
+                        self._last_indexed_hash[path] = current_hash
             except Exception as exc:
                 logger.error(f"Erreur lors du traitement de {path} : {exc}")
+
+    @staticmethod
+    def _content_hash(path: Path) -> str | None:
+        try:
+            if not path.exists() or not path.is_file():
+                return None
+            return hashlib.md5(path.read_bytes()).hexdigest()
+        except Exception:
+            return None
 
 
 class VaultWatcher:

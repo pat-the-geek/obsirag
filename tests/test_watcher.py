@@ -112,6 +112,37 @@ class TestDebouncedHandler:
         queue.assert_any_call("/tmp/old.md", "deleted")
         queue.assert_any_call("/tmp/new.md", "created")
 
+    def test_flush_skips_reindex_when_content_hash_unchanged(self, tmp_path):
+        indexer = MagicMock()
+        handler = _DebouncedHandler(indexer)
+        note = tmp_path / "note.md"
+        note.write_text("same content", encoding="utf-8")
+
+        handler._pending = {str(note): "modified"}
+        handler._flush()
+
+        handler._pending = {str(note): "modified"}
+        handler._flush()
+
+        indexer.index_note.assert_called_once_with(note)
+
+    def test_flush_deleted_event_clears_cached_hash(self, tmp_path):
+        indexer = MagicMock()
+        handler = _DebouncedHandler(indexer)
+        note = tmp_path / "note.md"
+        note.write_text("content", encoding="utf-8")
+        path = str(note)
+
+        handler._pending = {path: "modified"}
+        handler._flush()
+        assert path in handler._last_indexed_hash
+
+        handler._pending = {path: "deleted"}
+        handler._flush()
+
+        assert path not in handler._last_indexed_hash
+        indexer.remove_note.assert_called_once_with(note)
+
 
 @pytest.mark.unit
 class TestVaultWatcher:

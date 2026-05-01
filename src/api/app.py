@@ -1481,7 +1481,7 @@ async def create_message(
                     timeout=20.0,
                 )
             except (asyncio.TimeoutError, Exception) as web_exc:
-                logger.warning("[create_message] web enrichment skipped: {}", web_exc)
+                logger.warning("[create_message] web enrichment skipped: {}", _exception_details(web_exc))
                 enriched_result = {}
             answer = str(enriched_result.get("answer") or answer)
             sources = list(enriched_result.get("sources") or sources)
@@ -1508,7 +1508,7 @@ async def create_message(
                     timeout=20.0,
                 )
             except (asyncio.TimeoutError, Exception) as overview_exc:
-                logger.warning("[create_message] query overview skipped: {}", overview_exc)
+                logger.warning("[create_message] query overview skipped: {}", _exception_details(overview_exc))
                 query_overview = {}
     assistant_message = _build_assistant_message(
         answer=answer,
@@ -1788,7 +1788,7 @@ async def stream_message(
                     timeout=20.0,
                 )
             except (asyncio.TimeoutError, Exception) as _web_exc:
-                logger.warning("[_event_stream] web enrichment skipped: {}", _web_exc)
+                logger.warning("[_event_stream] web enrichment skipped: {}", _exception_details(_web_exc))
                 enriched_result = {}
             answer = str(enriched_result.get("answer") or answer)
             sources = list(enriched_result.get("sources") or sources)
@@ -1806,7 +1806,7 @@ async def stream_message(
                     timeout=20.0,
                 )
             except (asyncio.TimeoutError, Exception) as _ov_exc:
-                logger.warning("[_event_stream] query overview skipped: {}", _ov_exc)
+                logger.warning("[_event_stream] query overview skipped: {}", _exception_details(_ov_exc))
                 query_overview = {}
 
         yield _sse_event("sources_ready", {"sources": [item.model_dump(mode="json") for item in source_models]})
@@ -1939,6 +1939,14 @@ def _append_timeline_step(timeline: list[str], value: str) -> None:
     if timeline and timeline[-1] == value:
         return
     timeline.append(value)
+
+
+def _exception_details(exc: Exception) -> str:
+    exc_type = type(exc).__name__
+    exc_text = str(exc).strip()
+    if exc_text:
+        return f"{exc_type}: {exc_text}"
+    return f"{exc_type}: {repr(exc)}"
 
 
 @app.get("/api/v1/notes", response_model=list[RelatedNoteModel])
