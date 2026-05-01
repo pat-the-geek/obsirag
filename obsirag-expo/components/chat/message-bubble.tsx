@@ -9,6 +9,8 @@ import { SourceList } from './source-list';
 
 type MessageBubbleProps = {
   message: ChatMessage;
+  conversationHiddenEntityValues?: string[];
+  onHideEntity?: (value: string) => void;
   highlightEntities?: EntityHighlightDefinition[];
   onOpenNote?: (notePath: string) => void;
   onOpenTag?: (tag: string) => void;
@@ -25,6 +27,8 @@ type EntityHighlightDefinition = Pick<EntityContext, 'value' | 'type'>;
 
 export function MessageBubble({
   message,
+  conversationHiddenEntityValues: _conversationHiddenEntityValues,
+  onHideEntity: _onHideEntity,
   highlightEntities,
   onOpenNote,
   onOpenTag,

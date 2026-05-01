@@ -106,6 +106,55 @@ describe('ObsiRagApi.streamConversationResponse', () => {
     expect(result).toEqual(fallbackMessage);
   });
 
+  it('falls back to the non-streaming endpoint when streaming returns a non-auth HTTP error', async () => {
+    const api = new ObsiRagApi({
+      backendUrl: 'http://localhost:8000',
+      useMockServer: false,
+    });
+    const onComplete = jest.fn();
+
+    (global.fetch as jest.Mock)
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 502,
+        json: async () => ({ detail: 'Bad gateway' }),
+      } as Response)
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => fallbackMessage,
+      } as Response);
+
+    const result = await api.streamConversationResponse('conv-1', 'bonjour', { onComplete });
+
+    expect(global.fetch).toHaveBeenCalledTimes(2);
+    expect(global.fetch).toHaveBeenNthCalledWith(
+      2,
+      'http://localhost:8000/api/v1/conversations/conv-1/messages',
+      expect.objectContaining({ method: 'POST' }),
+    );
+    expect(onComplete).toHaveBeenCalledWith(fallbackMessage);
+    expect(result).toEqual(fallbackMessage);
+  });
+
+  it('normalizes the backend English stream error message when fallback also fails', async () => {
+    const api = new ObsiRagApi({
+      backendUrl: 'http://localhost:8000',
+      useMockServer: false,
+    });
+
+    (global.fetch as jest.Mock)
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 502,
+        json: async () => ({ detail: 'Unable to stream conversation response.' }),
+      } as Response)
+      .mockRejectedValueOnce(new Error('Load failed'));
+
+    await expect(api.streamConversationResponse('conv-1', 'bonjour', {})).rejects.toThrow(
+      'Impossible de diffuser la reponse de conversation.',
+    );
+  });
+
   it('returns the completion payload even when token frames were emitted before it', async () => {
     const api = new ObsiRagApi({
       backendUrl: 'http://localhost:8000',

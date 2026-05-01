@@ -16,17 +16,22 @@ export function formatSizeBytes(value?: number | null): string {
     return '';
   }
 
+  const formatCompact = (numberValue: number) => {
+    const rounded = Number(numberValue.toFixed(1));
+    return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1);
+  };
+
   if (value < 1024) {
     return `${Math.round(value)} B`;
   }
 
   const kib = value / 1024;
   if (kib < 1024) {
-    return `${kib.toFixed(1)} KB`;
+    return `${formatCompact(kib)} ko`;
   }
 
   const mib = kib / 1024;
-  return `${mib.toFixed(1)} MB`;
+  return `${formatCompact(mib)} Mo`;
 }
 
 export function joinMetadataParts(parts: Array<string | null | undefined>): string {

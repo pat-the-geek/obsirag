@@ -10,6 +10,7 @@ import { StatusPill } from '../../components/ui/status-pill';
 import { useServerConfig } from '../../features/auth/use-server-config';
 import { useNoteSearch } from '../../features/notes/use-notes';
 import { useSystemStatus } from '../../features/system/use-system-status';
+import { formatMetadataDate, formatSizeBytes, joinMetadataParts } from '../../utils/format-display';
 
 const appIcon = require('../../assets/app-icon.png');
 
@@ -127,6 +128,13 @@ export default function DashboardScreen() {
           <Pressable key={item.filePath} style={styles.quickResult} onPress={() => router.push(`/(tabs)/note/${encodeURIComponent(item.filePath)}`)}>
             <Text style={styles.quickTitle}>{item.title}</Text>
             <Text style={styles.quickMeta}>{item.filePath}</Text>
+            {joinMetadataParts([
+              item.dateModified ? `Modifie le ${formatMetadataDate(item.dateModified)}` : null,
+              formatSizeBytes(item.sizeBytes),
+            ]) ? <Text style={styles.quickMeta}>{joinMetadataParts([
+              item.dateModified ? `Modifie le ${formatMetadataDate(item.dateModified)}` : null,
+              formatSizeBytes(item.sizeBytes),
+            ])}</Text> : null}
           </Pressable>
         ))}
       </SectionCard>
@@ -151,14 +159,14 @@ function buildDashboardBadges(data: NonNullable<ReturnType<typeof useSystemStatu
   const runtime = data.runtime;
   const llmName = formatModelName(runtime?.llmModel ?? 'LLM local');
   return [
-    { icon: 'UI', label: 'React 18.3', tone: 'frontend' },
-    { icon: 'EX', label: 'Expo 52', tone: 'frontend' },
+    { icon: 'UI', label: 'React 19.1', tone: 'frontend' },
+    { icon: 'EX', label: 'Expo 54', tone: 'frontend' },
     { icon: 'AI', label: `${runtime?.llmProvider ?? 'MLX'} local`, tone: 'ai' },
     { icon: 'LLM', label: llmName, tone: 'ai' },
     { icon: 'EMB', label: shortModelLabel(runtime?.embeddingModel, 'MiniLM'), tone: 'ai' },
     { icon: 'NER', label: shortModelLabel(runtime?.nerModel, 'xx_ent_wiki_sm'), tone: 'ai' },
     { icon: 'API', label: data.backendReachable ? 'FastAPI online' : 'FastAPI offline', tone: 'backend' },
-    { icon: 'DB', label: `${runtime?.vectorStore ?? 'ChromaDB'} 1.5`, tone: 'backend' },
+    { icon: 'DB', label: runtime?.vectorStore ?? 'ChromaDB', tone: 'backend' },
     { icon: 'RUN', label: data.autolearn?.managedBy === 'worker' || runtime?.autolearnMode === 'worker' ? 'Auto-learn worker' : 'Auto-learn intégré', tone: 'runtime' },
     { icon: 'OK', label: data.llmAvailable ? 'LLM prêt' : 'LLM en attente', tone: 'runtime' },
   ];

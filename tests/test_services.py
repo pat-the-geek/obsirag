@@ -80,6 +80,22 @@ class TestServiceManager:
         assert manager._last_ui_activity == 123.4
         manager.llm.load.assert_not_called()
 
+    def test_stream_activity_marks_manager_active(self):
+        manager = ServiceManager.__new__(ServiceManager)
+        manager._last_ui_activity = 0.0
+        manager._active_stream_count = 0
+        manager._stream_lock = MagicMock()
+        manager._stream_lock.__enter__ = MagicMock(return_value=manager._stream_lock)
+        manager._stream_lock.__exit__ = MagicMock(return_value=False)
+
+        with patch("src.services.time.monotonic", side_effect=[123.4, 125.0]):
+            ServiceManager.enter_stream(manager)
+            assert ServiceManager.is_ui_active(manager) is True
+            ServiceManager.exit_stream(manager)
+
+        assert manager._active_stream_count == 0
+        assert manager._last_ui_activity == 125.0
+
     def test_is_ui_active_depends_on_idle_timeout(self):
         manager = ServiceManager.__new__(ServiceManager)
         manager._last_ui_activity = 50.0

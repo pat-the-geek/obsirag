@@ -8,13 +8,16 @@ const ENTITY_IMAGE_SIZE = 112;
 
 type ConversationEntitySidebarProps = {
   entities: EntityContext[];
+  hiddenEntities?: EntityContext[];
   onOpenNote?: (notePath: string) => void;
   onOpenTag?: (tag: string) => void;
+  onHideEntity?: (value: string) => void;
+  onUnhideEntity?: (value: string) => void;
   compact?: boolean;
   maxHeight?: number;
 };
 
-export function ConversationEntitySidebar({ entities, onOpenNote, onOpenTag, compact = false, maxHeight }: ConversationEntitySidebarProps) {
+export function ConversationEntitySidebar({ entities, hiddenEntities, onOpenNote, onOpenTag, onHideEntity, onUnhideEntity, compact = false, maxHeight }: ConversationEntitySidebarProps) {
   if (!entities.length) {
     return null;
   }
@@ -56,6 +59,13 @@ export function ConversationEntitySidebar({ entities, onOpenNote, onOpenTag, com
                 </View>
               </View>
               {summary ? <Text style={styles.entitySummary} numberOfLines={compact ? 3 : 4}>{summary}</Text> : null}
+              {onHideEntity ? (
+                <View style={styles.entityActions}>
+                  <Pressable testID="entity-hide-action" style={styles.entityActionButton} onPress={() => onHideEntity(entity.value)}>
+                    <Text style={styles.entityActionText}>Masquer</Text>
+                  </Pressable>
+                </View>
+              ) : null}
               {entity.notes.length ? (
                 <View style={styles.notesSection}>
                   <Text style={styles.sectionLabel}>Notes liees</Text>
@@ -84,6 +94,23 @@ export function ConversationEntitySidebar({ entities, onOpenNote, onOpenTag, com
             </View>
           );
         })}
+        {hiddenEntities?.length ? (
+          <View style={styles.hiddenSection}>
+            <Text style={styles.sectionLabel}>Entites masquees</Text>
+            <View style={styles.hiddenActions}>
+              {hiddenEntities.map((entity) => (
+                <Pressable
+                  key={`hidden-${entityKey(entity)}`}
+                  testID="entity-unhide-action"
+                  style={styles.hiddenPill}
+                  onPress={() => onUnhideEntity?.(entity.value)}
+                >
+                  <Text style={styles.hiddenPillText}>{entity.value}</Text>
+                </Pressable>
+              ))}
+            </View>
+          </View>
+        ) : null}
       </ScrollView>
     </View>
   );
@@ -273,6 +300,24 @@ const styles = StyleSheet.create({
   notesSection: {
     gap: 6,
   },
+  entityActions: {
+    flexDirection: 'row',
+  },
+  entityActionButton: {
+    borderRadius: 999,
+    backgroundColor: '#efe5d8',
+    borderWidth: 1,
+    borderColor: '#dbcdb8',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+  },
+  entityActionText: {
+    color: '#4b3c2b',
+    fontSize: 11,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    letterSpacing: 0.2,
+  },
   sectionLabel: {
     color: '#5d4b38',
     fontSize: 12,
@@ -302,5 +347,27 @@ const styles = StyleSheet.create({
   notePillMeta: {
     color: '#7a6855',
     fontSize: 11,
+  },
+  hiddenSection: {
+    gap: 6,
+    paddingTop: 2,
+  },
+  hiddenActions: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  hiddenPill: {
+    borderRadius: 999,
+    backgroundColor: '#fff7ec',
+    borderWidth: 1,
+    borderColor: '#dbcdb8',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+  },
+  hiddenPillText: {
+    color: '#5d4b38',
+    fontSize: 11,
+    fontWeight: '700',
   },
 });

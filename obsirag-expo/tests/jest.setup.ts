@@ -90,6 +90,20 @@ jest.mock('react-native-safe-area-context', () => {
   };
 });
 
+jest.mock('@expo/vector-icons', () => {
+  const React = require('react');
+  const { Text } = require('react-native');
+
+  function MockIcon(props: Record<string, unknown> & { name?: string }) {
+    return React.createElement(Text, props, props.name ?? 'icon');
+  }
+
+  return {
+    __esModule: true,
+    Feather: MockIcon,
+  };
+});
+
 jest.mock('d3-force', () => {
   const createChainableForce = () => {
     const force = {

@@ -98,10 +98,10 @@ const lightColors: AppThemeColors = {
   tagText: '#5a4024',
   mediaSurface: '#f7f1e7',
   mediaCanvas: '#fffaf3',
-  entityPersonSurface: '#e7f0ff',
-  entityPersonText: '#1e4f9e',
-  entityOrganizationSurface: '#ece8ff',
-  entityOrganizationText: '#4d3f9a',
+  entityPersonSurface: '#cfe8ff',
+  entityPersonText: '#163a56',
+  entityOrganizationSurface: '#ffe4b8',
+  entityOrganizationText: '#5c3900',
   entityLocationSurface: '#e3f7f3',
   entityLocationText: '#1e7368',
   entityTemporalSurface: '#fff1de',
@@ -151,8 +151,8 @@ const darkColors: AppThemeColors = {
   entityPersonText: '#afd4ff',
   entityOrganizationSurface: '#392e5c',
   entityOrganizationText: '#d2c2ff',
-  entityLocationSurface: '#1f4d49',
-  entityLocationText: '#a7ece2',
+  entityLocationSurface: '#38684a',
+  entityLocationText: '#eefbe8',
   entityTemporalSurface: '#4b3821',
   entityTemporalText: '#ffd8a3',
   entityConceptSurface: '#3a2f4f',
@@ -235,7 +235,7 @@ const FONT_SCALE: Record<FontSizeMode, number> = {
 export function formatFontSizeModeLabel(mode: FontSizeMode): string {
   if (mode === 'compact') return 'Compacte';
   if (mode === 'large') return 'Confort';
-  return 'Normale';
+  return 'Standard';
 }
 
 export function useAppFontScale(): {

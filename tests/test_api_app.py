@@ -55,6 +55,12 @@ class _StubServiceManager:
     def signal_ui_active(self) -> None:
         return None
 
+    def enter_stream(self) -> None:
+        return None
+
+    def exit_stream(self) -> None:
+        return None
+
     def _query_stream(self, prompt: str, chat_history=None, progress_callback=None):
         if callable(progress_callback):
             progress_callback({"phase": "retrieval", "message": "Recherche dans le coffre"})
@@ -1250,6 +1256,7 @@ def test_stream_message_uses_autolearn_hybrid_answer_when_web_enrichment_is_need
         response = client.post("/api/v1/conversations/conv-stream-hybrid/messages/stream", json={"prompt": "Ada Lovelace"})
 
     assert response.status_code == 200
+    assert response.text.find("Je ne peux pas répondre de manière exhaustive") < response.text.find("Recherche DDG")
     assert "Recherche DDG" in response.text
     assert "Ada Lovelace a lie le coffre et le web" in response.text
 

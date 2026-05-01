@@ -1,7 +1,7 @@
 import type { CSSProperties } from 'react';
 import { useEffect, useMemo, useRef } from 'react';
 import { useWindowDimensions } from 'react-native';
-import { DataSet, Network } from 'vis-network/dist/vis-network';
+import { DataSet, Network } from 'vis-network';
 
 import { GraphData } from '../../types/domain';
 
@@ -70,6 +70,12 @@ type GraphEdgeRecord = GraphData['edges'][number] & {
   width: number;
   selectionWidth: number;
   hidden?: boolean;
+};
+
+type GraphInteractionEvent = {
+  nodes: string[];
+  node?: string;
+  event?: unknown;
 };
 
 const GROUP_COLORS = ['#2a5f95', '#c46a2f', '#4b7f52', '#875f9a', '#5a768d', '#9b4f46'];
@@ -505,7 +511,7 @@ export function KnowledgeGraph({ data, isActive = true, focusedNodeId, onSelectN
     applyNeighborhoodFocusRef.current = applyNeighborhoodFocus;
     fitOverviewRef.current = fitOverview;
 
-    network.on('click', (params) => {
+    network.on('click', (params: GraphInteractionEvent) => {
       const nodes = params.nodes as string[];
       if (!nodes.length) {
         hoveredNodeId = null;
@@ -522,7 +528,7 @@ export function KnowledgeGraph({ data, isActive = true, focusedNodeId, onSelectN
       onSelectNode?.(nodeId);
     });
 
-    network.on('doubleClick', (params) => {
+    network.on('doubleClick', (params: GraphInteractionEvent) => {
       const nodes = params.nodes as string[];
       const nodeId = nodes[0];
       if (!nodeId) {
@@ -534,7 +540,7 @@ export function KnowledgeGraph({ data, isActive = true, focusedNodeId, onSelectN
     });
 
     if (hoverEnabled) {
-      network.on('hoverNode', (params) => {
+      network.on('hoverNode', (params: GraphInteractionEvent) => {
         hoveredNodeId = params.node as string;
         showTooltip(hoveredNodeId, params.event);
         if (performanceProfile.enableHover) {

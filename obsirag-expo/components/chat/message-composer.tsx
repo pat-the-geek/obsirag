@@ -38,6 +38,7 @@ export function MessageComposer({
 }: MessageComposerProps) {
   const theme = useAppTheme();
   const latestValueRef = useRef(value);
+  const webSearchEnabled = !withRag;
 
   useEffect(() => {
     latestValueRef.current = value;
@@ -87,36 +88,46 @@ export function MessageComposer({
               disabled={disabled}
               onPress={() => onToggleWithEuria(!withEuria)}
               style={[
-                styles.toggleButton,
-                {
-                  backgroundColor: withEuria ? theme.colors.primaryMuted : theme.colors.surfaceMuted,
-                  borderColor: withEuria ? theme.colors.primary : theme.colors.border,
-                },
+                styles.checkboxAction,
                 disabled && styles.buttonDisabled,
               ]}
             >
-              <Text style={[styles.toggleLabel, { color: withEuria ? theme.colors.primaryText : theme.colors.textMuted }]}>
-                {withEuria ? 'Euria ON' : 'Euria OFF'}
-              </Text>
+              <View
+                style={[
+                  styles.checkboxBox,
+                  {
+                    backgroundColor: withEuria ? theme.colors.primaryMuted : theme.colors.surface,
+                    borderColor: withEuria ? theme.colors.primary : theme.colors.border,
+                  },
+                ]}
+              >
+                {withEuria ? <Text style={[styles.checkboxMark, { color: theme.colors.primary }]}>X</Text> : null}
+              </View>
+              <Text style={[styles.checkboxLabel, { color: withEuria ? theme.colors.text : theme.colors.textMuted }]}>Avec Euria</Text>
             </Pressable>
           ) : null}
           {withEuria && onToggleWithRag ? (
             <Pressable
               testID="message-composer-rag-toggle"
               disabled={disabled}
-              onPress={() => onToggleWithRag(!withRag)}
+              onPress={() => onToggleWithRag(webSearchEnabled)}
               style={[
-                styles.toggleButton,
-                {
-                  backgroundColor: withRag ? theme.colors.successSurface : theme.colors.surfaceMuted,
-                  borderColor: withRag ? theme.colors.successText : theme.colors.border,
-                },
+                styles.checkboxAction,
                 disabled && styles.buttonDisabled,
               ]}
             >
-              <Text style={[styles.toggleLabel, { color: withRag ? theme.colors.successText : theme.colors.textMuted }]}>
-                {withRag ? 'RAG ON' : 'RAG OFF'}
-              </Text>
+              <View
+                style={[
+                  styles.checkboxBox,
+                  {
+                    backgroundColor: webSearchEnabled ? theme.colors.successSurface : theme.colors.surface,
+                    borderColor: webSearchEnabled ? theme.colors.successText : theme.colors.border,
+                  },
+                ]}
+              >
+                {webSearchEnabled ? <Text style={[styles.checkboxMark, { color: theme.colors.successText }]}>X</Text> : null}
+              </View>
+              <Text style={[styles.checkboxLabel, { color: webSearchEnabled ? theme.colors.text : theme.colors.textMuted }]}>Recherche web</Text>
             </Pressable>
           ) : null}
           {secondaryActionLabel && onSecondaryAction ? (
@@ -178,16 +189,28 @@ const styles = StyleSheet.create({
   spacer: {
     flex: 1,
   },
-  toggleButton: {
-    alignSelf: 'flex-end',
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    borderRadius: 999,
-    borderWidth: 1,
+  checkboxAction: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 6,
   },
-  toggleLabel: {
-    fontWeight: '700',
-    fontSize: 12,
+  checkboxBox: {
+    width: 18,
+    height: 18,
+    borderRadius: 4,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  checkboxMark: {
+    fontSize: 11,
+    fontWeight: '800',
+    lineHeight: 12,
+  },
+  checkboxLabel: {
+    fontWeight: '600',
+    fontSize: 13,
   },
   secondaryButton: {
     alignSelf: 'flex-end',

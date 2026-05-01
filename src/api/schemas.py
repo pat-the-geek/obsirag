@@ -206,6 +206,7 @@ class MessageCreateRequest(BaseModel):
     prompt: str = Field(min_length=1)
     useEuria: bool = False
     useRag: bool = True
+    fastFallback: bool = False
 
 
 class PatchConversationEntityRequest(BaseModel):

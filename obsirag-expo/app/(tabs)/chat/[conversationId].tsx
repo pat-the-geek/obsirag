@@ -164,8 +164,8 @@ export default function ConversationDetailScreen() {
                 compact
                 onOpenNote={openNoteFromConversation}
                 onOpenTag={(tag) => router.push(`/(tabs)/graph?tag=${encodeURIComponent(tag)}`)}
-                onHideEntity={(v) => toggleConversationEntity.mutate({ entityValue: v, action: 'add' })}
-                onUnhideEntity={(v) => toggleConversationEntity.mutate({ entityValue: v, action: 'remove' })}
+                onHideEntity={(v: string) => toggleConversationEntity.mutate({ entityValue: v, action: 'add' })}
+                onUnhideEntity={(v: string) => toggleConversationEntity.mutate({ entityValue: v, action: 'remove' })}
               />
             ) : null}
 
@@ -191,7 +191,7 @@ export default function ConversationDetailScreen() {
                     key={message.id}
                     message={message}
                     conversationHiddenEntityValues={conversationHiddenValues}
-                    onHideEntity={(v) => toggleConversationEntity.mutate({ entityValue: v, action: 'add' })}
+                    onHideEntity={(v: string) => toggleConversationEntity.mutate({ entityValue: v, action: 'add' })}
                     highlightEntities={aggregatedEntityContexts}
                     onSuggestWebSearch={(query) => explicitWebSearch.mutate(query)}
                     onOpenNote={openNoteFromConversation}
@@ -275,8 +275,8 @@ export default function ConversationDetailScreen() {
               maxHeight={asideEntityMaxHeight}
               onOpenNote={openNoteFromConversation}
               onOpenTag={(tag) => router.push(`/(tabs)/graph?tag=${encodeURIComponent(tag)}`)}
-              onHideEntity={(v) => toggleConversationEntity.mutate({ entityValue: v, action: 'add' })}
-              onUnhideEntity={(v) => toggleConversationEntity.mutate({ entityValue: v, action: 'remove' })}
+              onHideEntity={(v: string) => toggleConversationEntity.mutate({ entityValue: v, action: 'add' })}
+              onUnhideEntity={(v: string) => toggleConversationEntity.mutate({ entityValue: v, action: 'remove' })}
             />
           ) : null}
         </View>

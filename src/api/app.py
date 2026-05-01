@@ -1461,21 +1461,38 @@ async def create_message(
 
         answer = str(result.get("answer") or "")
         sources = list(result.get("sources") or [])
-        enriched_result = _compose_assistant_web_answer(
-            prompt=payload.prompt,
-            answer=answer,
-            sources=sources,
-            svc=svc,
-            llm=llm,
-        )
-        answer = str(enriched_result.get("answer") or answer)
-        sources = list(enriched_result.get("sources") or sources)
-        provenance = str(enriched_result.get("provenance") or "vault")
-        enrichment_path = str(enriched_result.get("enrichment_path") or "") or None
+        provenance = "vault"
+        enrichment_path: str | None = None
+        query_overview: dict[str, Any] = {}
+        fast_fallback = bool(payload.fastFallback)
+        should_attempt_web = not fast_fallback and _should_attempt_web_answer(answer, svc)
+        if should_attempt_web:
+            try:
+                enriched_result = await asyncio.wait_for(
+                    asyncio.to_thread(
+                        _compose_assistant_web_answer,
+                        prompt=payload.prompt,
+                        answer=answer,
+                        sources=sources,
+                        svc=svc,
+                        force=should_attempt_web,
+                        llm=llm,
+                    ),
+                    timeout=20.0,
+                )
+            except (asyncio.TimeoutError, Exception) as web_exc:
+                logger.warning("[create_message] web enrichment skipped: {}", web_exc)
+                enriched_result = {}
+            answer = str(enriched_result.get("answer") or answer)
+            sources = list(enriched_result.get("sources") or sources)
+            provenance = str(enriched_result.get("provenance") or "vault")
+            enrichment_path = str(enriched_result.get("enrichment_path") or "") or None
+            query_overview = enriched_result.get("query_overview") or query_overview
+
         sentinel = is_not_in_vault(answer)
         source_models = _build_source_models(sources)
         primary_source = next((item for item in source_models if item.isPrimary), None)
-        entity_contexts = _enrich_entity_contexts(
+        entity_contexts = [] if fast_fallback else _enrich_entity_contexts(
             user_text=payload.prompt,
             answer=answer,
             entity_contexts=_lookup_conversation_entity_contexts(payload.prompt, answer, svc),
@@ -1484,7 +1501,15 @@ async def create_message(
             svc=svc,
             llm=llm,
         )
-        query_overview = enriched_result.get("query_overview") or (_lookup_query_overview(payload.prompt, svc, llm=llm) if sentinel else {})
+        if sentinel and not query_overview and not fast_fallback:
+            try:
+                query_overview = await asyncio.wait_for(
+                    asyncio.to_thread(_lookup_query_overview, payload.prompt, svc, llm=llm),
+                    timeout=20.0,
+                )
+            except (asyncio.TimeoutError, Exception) as overview_exc:
+                logger.warning("[create_message] query overview skipped: {}", overview_exc)
+                query_overview = {}
     assistant_message = _build_assistant_message(
         answer=answer,
         sources=sources,
@@ -1739,6 +1764,11 @@ async def stream_message(
         _append_timeline_step(timeline, "Réponse générée par le worker API")
         yield _sse_event("retrieval_status", {"phase": "generation", "message": "Réponse générée par le worker API"})
 
+        # Stream the worker answer immediately so the UI shows content before optional
+        # DDG/query-overview enrichment finishes.
+        for token in _iter_answer_tokens(answer):
+            yield _sse_event("token", {"token": token})
+
         query_overview: dict[str, Any] = {}
         should_attempt_web = _should_attempt_web_answer(answer, svc)
         if should_attempt_web:
@@ -1778,9 +1808,6 @@ async def stream_message(
             except (asyncio.TimeoutError, Exception) as _ov_exc:
                 logger.warning("[_event_stream] query overview skipped: {}", _ov_exc)
                 query_overview = {}
-
-        for token in _iter_answer_tokens(answer):
-            yield _sse_event("token", {"token": token})
 
         yield _sse_event("sources_ready", {"sources": [item.model_dump(mode="json") for item in source_models]})
 

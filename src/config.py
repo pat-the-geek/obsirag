@@ -105,6 +105,11 @@ class Settings(BaseSettings):
     # ---- Propriétés dérivées ----
 
     @property
+    def project_root(self) -> Path:
+        """Racine du projet ObsiRAG (dossier contenant src/)."""
+        return Path(__file__).resolve().parent.parent
+
+    @property
     def vault(self) -> Path:
         return Path(self.vault_path)
 

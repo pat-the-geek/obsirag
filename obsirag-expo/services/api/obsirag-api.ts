@@ -464,7 +464,7 @@ export class ObsiRagApi {
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ prompt, useEuria: options?.useEuria ?? false, useRag: options?.useRag ?? true }),
+          body: JSON.stringify({ prompt, useEuria: options?.useEuria ?? false, useRag: options?.useRag ?? true, fastFallback: true }),
         },
       );
       handlers.onComplete?.(fallbackMessage);
@@ -492,7 +492,14 @@ export class ObsiRagApi {
     }
 
     if (!response.ok) {
-      throw await this.toRequestError(response, 'Unable to stream conversation response.');
+      if (response.status !== 401 && response.status !== 403) {
+        try {
+          return await fallbackToStandardMessage();
+        } catch {
+          // Keep the original stream HTTP error as the primary diagnostic.
+        }
+      }
+      throw await this.toRequestError(response, 'Impossible de diffuser la reponse de conversation.');
     }
 
     if (!response.body || typeof response.body.getReader !== 'function') {
@@ -712,17 +719,35 @@ export class ObsiRagApi {
     try {
       const payload = (await response.json()) as { detail?: string };
       const detail = payload.detail?.trim();
+      const normalizedDetail = this.normalizeRequestErrorDetail(detail, fallbackMessage);
       if (response.status === 404) {
         return new Error(
           detail === 'Not Found'
             ? 'Endpoint introuvable (404). Verifiez l\'URL backend: utilisez uniquement la base, par ex. http://127.0.0.1:8000, sans /server-config ni /api/v1.'
-            : detail ?? fallbackMessage,
+            : normalizedDetail,
         );
       }
-      return new Error(detail ?? fallbackMessage);
+      return new Error(normalizedDetail);
     } catch {
       return new Error(fallbackMessage);
     }
+  }
+
+  private normalizeRequestErrorDetail(detail: string | undefined, fallbackMessage: string): string {
+    const normalized = detail?.trim();
+    if (!normalized) {
+      return fallbackMessage;
+    }
+
+    if (normalized === 'Unable to stream conversation response.') {
+      return 'Impossible de diffuser la reponse de conversation.';
+    }
+
+    if (normalized === 'Streaming failed.') {
+      return 'La diffusion de la reponse a echoue.';
+    }
+
+    return normalized;
   }
 
   private encodePath(path: string): string {

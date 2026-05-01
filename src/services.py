@@ -34,6 +34,8 @@ class ServiceManager:
 
         self.indexing_status = {"running": False, "processed": 0, "total": 0, "current": ""}
         self._last_ui_activity: float = 0.0
+        self._active_stream_count = 0
+        self._stream_lock = threading.Lock()
         self.metrics = MetricsRecorder(lambda: settings.data_dir / "stats" / "metrics.json")
         self._persist_startup_status(ready=False)
         self._persist_indexing_status()
@@ -128,8 +130,22 @@ class ServiceManager:
         """
         self._last_ui_activity = time.monotonic()
 
+    def enter_stream(self) -> None:
+        """Marque un stream API comme actif pour bloquer l'unload du modèle."""
+        self.signal_ui_active()
+        with self._stream_lock:
+            self._active_stream_count += 1
+
+    def exit_stream(self) -> None:
+        """Libère un stream API actif sans laisser le compteur devenir négatif."""
+        self.signal_ui_active()
+        with self._stream_lock:
+            self._active_stream_count = max(0, self._active_stream_count - 1)
+
     def is_ui_active(self) -> bool:
         """Retourne True si une session UI a été active dans la fenêtre d'inactivité."""
+        if getattr(self, "_active_stream_count", 0) > 0:
+            return True
         return (time.monotonic() - self._last_ui_activity) < _UI_IDLE_TIMEOUT
 
     def is_scheduler_active(self) -> bool:
