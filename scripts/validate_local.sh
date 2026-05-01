@@ -36,7 +36,7 @@ while [ $# -gt 0 ]; do
       echo "  (default) lance la validation rapide UI"
       echo "  --full         lance la suite complete pytest --no-cov"
       echo "  --smoke        lance un sous-ensemble critique en boucle rapide"
-      echo "  --nrt          lance la suite ultra-courte de non-regression UI heritee (< 10 tests)"
+      echo "  --nrt          lance la suite ultra-courte de non-regression Streamlit (< 10 tests)"
       echo "  --no-restart   saute le redemarrage controle"
       echo "  --report-dir   dossier de sortie des rapports JUnit/JSON"
       exit 0

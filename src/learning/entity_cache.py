@@ -6,7 +6,6 @@ dépendances (répertoire, fonctions utilitaires, URL) explicitement à la const
 from __future__ import annotations
 
 import json
-import ssl
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Callable
@@ -14,10 +13,6 @@ from typing import Callable
 from loguru import logger
 
 from src.storage.safe_read import read_json_file
-
-_SSL_UNVERIFIED_CTX = ssl.create_default_context()
-_SSL_UNVERIFIED_CTX.check_hostname = False
-_SSL_UNVERIFIED_CTX.verify_mode = ssl.CERT_NONE
 
 
 class WuddaiCache:
@@ -57,7 +52,7 @@ class WuddaiCache:
 
             url = f"{self._wuddai_url}/api/entities/export?limit=5000&images=true"
             req = urllib.request.Request(url, headers={"User-Agent": "ObsiRAG/1.0"})
-            with urllib.request.urlopen(req, timeout=10, context=_SSL_UNVERIFIED_CTX) as resp:
+            with urllib.request.urlopen(req, timeout=10) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
 
             entities = [
@@ -138,7 +133,7 @@ class GeocodeCache:
                 })
                 url = f"https://{lang}.wikipedia.org/w/api.php?{params}"
                 req = urllib.request.Request(url, headers={"User-Agent": "ObsiRAG/1.0"})
-                with urllib.request.urlopen(req, timeout=5, context=_SSL_UNVERIFIED_CTX) as resp:
+                with urllib.request.urlopen(req, timeout=5) as resp:
                     data = json.loads(resp.read().decode("utf-8"))
                 pages = data.get("query", {}).get("pages", {})
                 for page in pages.values():

@@ -203,13 +203,6 @@ RÈGLE ABSOLUE : tu t'appuies UNIQUEMENT sur les extraits de notes fournis dans 
 - N'utilise JAMAIS tes connaissances d'entraînement pour répondre à des questions factuelles.
 - N'invente rien, même sous insistance ou relance de l'utilisateur.
 
-RÈGLE PRIORITAIRE — les notes peuvent être plus récentes que tes données d'entraînement :
-Si les extraits fournis mentionnent explicitement un produit, une personne, un service ou une entité nommée dans la question, tu DOIS impérativement :
-1. Accepter son existence comme un fait établi, même si tes données d'entraînement l'ignorent ou la contredisent.
-2. Répondre en te basant UNIQUEMENT sur ce que les extraits en disent.
-3. Ne JAMAIS écrire que ce produit/entité "n'existe pas", "n'est pas officiel" ou "n'est pas reconnu" si les extraits le mentionnent.
-Cette règle s'applique en priorité absolue sur toute connaissance antérieure.
-
 Si le sujet de la question n'apparaît PAS DU TOUT dans les extraits, réponds EXACTEMENT : "Cette information n'est pas dans ton coffre."
 
 Si les extraits partagent un mot-clé avec la question mais traitent d'un domaine totalement différent (exemple : la question porte sur une mission spatiale mais les extraits parlent de mythologie ; ou la question porte sur une personne mais les extraits parlent d'un autre homonyme) — réponds EXACTEMENT : "Cette information n'est pas dans ton coffre."
@@ -257,32 +250,6 @@ _HARD_SENTINEL = "cette information n'est pas dans ton coffre."
 _DISALLOWED_USER_VISIBLE_SCRIPT_RE = re.compile(
     r"[\u0400-\u04FF\u0600-\u06FF\u4E00-\u9FFF\u3040-\u30FF\uAC00-\uD7AF]"
 )
-
-
-_RETRIEVAL_META_WORDS: frozenset[str] = frozenset({
-    "explication", "explications", "expliquer", "expliquez", "explique",
-    "analyse", "analyses", "analyser", "analysez",
-    "histoire", "historique",
-    "contexte", "contextualisé", "contextualisée",
-    "résumé", "resume", "résumer", "résume",
-    "détails", "détail", "détaillé", "détaillée",
-    "approfondi", "approfondis", "approfondie", "approfondissement",
-    "définition", "définitions",
-    "exemples", "exemple",
-    "présentation", "introduction",
-    "synthèse", "synthese",
-    "overview", "summary", "details", "context", "history", "explanation",
-})
-
-
-def _strip_retrieval_meta_words(query: str) -> str:
-    words = query.split()
-    while words and words[-1].lower().rstrip(".,;:!?«»\"'") in _RETRIEVAL_META_WORDS:
-        words.pop()
-    while words and words[0].lower().rstrip(".,;:!?«»\"'") in _RETRIEVAL_META_WORDS:
-        words.pop(0)
-    cleaned = " ".join(words).strip()
-    return cleaned if len(cleaned) >= 8 else query
 
 
 class RAGPipeline:
@@ -334,8 +301,7 @@ class RAGPipeline:
         self._emit_progress(progress_callback, phase="resolve", message="Analyse de la requête")
         resolved_query = self._resolve_query_with_history(user_query, history)
         self._emit_progress(progress_callback, phase="retrieval", message="Recherche des passages pertinents")
-        retrieval_query = _strip_retrieval_meta_words(resolved_query)
-        chunks, intent = self._retrieve(retrieval_query, progress_callback=progress_callback)
+        chunks, intent = self._retrieve(resolved_query, progress_callback=progress_callback)
         if exclude_obsirag_generated:
             chunks = self._filter_obsirag_generated_chunks(chunks)
         self._emit_progress(
@@ -1376,78 +1342,9 @@ class RAGPipeline:
         score = float(chunk.get("score") or 0.0)
         return (title_hits + entity_hits, text_hits, score)
 
-    # Prépositions/articles à ignorer lors de l'extension des noms propres
-    _NOUN_EXTENSION_SKIP = frozenset({
-        "de", "du", "des", "les", "une", "par", "sur", "dans",
-        "avec", "pour", "et", "ou", "la", "le", "un", "au", "aux",
-        "qui", "que", "quoi", "dont", "est", "son", "ses", "leur",
-    })
-
-    def _extend_proper_noun_tokens(self, query: str, noun: str) -> set[str]:
-        """Retourne les tokens du nom propre + les qualificatifs adjacents en minuscule.
-
-        Ex. 'MacBook' dans 'du MacBook neo de Apple' → {'macbook', 'neo'}.
-        Permet de détecter 'MacBook neo' même si 'neo' est en minuscule dans la requête."""
-        words = re.findall(r"\w+", query)
-        noun_last = noun.split()[-1]
-
-        base = {t.lower() for t in noun.split() if len(t) >= 3}
-
-        for i, w in enumerate(words):
-            if w != noun_last:
-                continue
-            extension: list[str] = []
-            for j in range(i + 1, min(i + 3, len(words))):
-                nw = words[j]
-                nw_low = nw.lower()
-                if nw_low in self._NOUN_EXTENSION_SKIP or len(nw_low) < 3:
-                    break
-                if nw[0].isupper():
-                    break
-                extension.append(nw_low)
-            return base | set(extension)
-
-        return base
-
-    def _filter_hybrid_chunks(self, query: str, chunks: list[dict]) -> list[dict]:
-        """Vide le contexte hybride si le nom de l'entité principale (nom propre +
-        qualificatif adjacent éventuel) est totalement absent de tous les chunks.
-
-        Gère les cas mixtes majuscule/minuscule comme 'MacBook neo' : 'neo' n'est
-        pas capturé par _extract_proper_nouns (minuscule) mais est reconnu ici
-        comme qualificatif adjacent, formant le token discriminant manquant.
-
-        Important : la vérification utilise le texte brut + word-boundary regex
-        (pas _normalize_match_text) pour éviter que 'néo-industriel' soit confondu
-        avec le qualificatif 'neo' après normalisation des accents."""
-        proper_nouns = self._extract_proper_nouns(query)
-        if not proper_nouns:
-            return chunks
-
-        for noun in proper_nouns:
-            tokens = self._extend_proper_noun_tokens(query, noun)
-            if len(tokens) < 2:
-                continue
-            compound_found = any(
-                all(
-                    re.search(r"\b" + re.escape(t) + r"\b",
-                              (c.get("metadata") or {}).get("note_title", "") + " " +
-                              (c.get("text") or "")[:400],
-                              re.IGNORECASE)
-                    for t in tokens
-                )
-                for c in chunks
-            )
-            if not compound_found:
-                logger.info(f"RAG hybrid filter: {tokens} absents de tous les chunks — contexte vidé")
-                return []
-        return chunks
-
     def _filter_supported_chunks(self, query: str, chunks: list[dict], intent: str) -> list[dict]:
         if not chunks:
             return chunks
-        if intent == "hybrid":
-            return self._filter_hybrid_chunks(query, chunks)
         if intent not in {"general", "general_kw_fallback", "entity"}:
             return chunks
         if not self._should_use_single_subject_prompt(intent, query):

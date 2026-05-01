@@ -13,17 +13,6 @@ function replaceAsciiVariants(value: string) {
   return value.replace(/[’‘“”–—…\u00a0]/g, (character) => ASCII_REPLACEMENTS[character] ?? ' ');
 }
 
-function normalizeDirectiveSpacing(value: string) {
-  return value
-    .replace(/^(\s*)date\s+format\b/i, '$1dateFormat')
-    .replace(/^(\s*)axis\s+format\b/i, '$1axisFormat')
-    .replace(/^(\s*)tick\s+interval\b/i, '$1tickInterval')
-    .replace(/^(\s*)today\s+marker\b/i, '$1todayMarker')
-    .replace(/^(\s*)weekend\s+fill\b/i, '$1weekendFill')
-    .replace(/^(\s*)acc\s+title\b/i, '$1accTitle')
-    .replace(/^(\s*)acc\s+descr\b/i, '$1accDescr');
-}
-
 export function sanitizeMermaidCode(code: string) {
   const normalized = replaceAsciiVariants((code || '').replace(/\r\n/g, '\n'));
 
@@ -46,7 +35,7 @@ export function sanitizeMermaidCode(code: string) {
         .replace(/- {2,}/g, '- ')
         .trimEnd();
 
-      return normalizeDirectiveSpacing(`${indent}${asciiBody}`);
+      return `${indent}${asciiBody}`;
     })
     .join('\n')
     .trim();

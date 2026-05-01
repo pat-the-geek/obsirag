@@ -34,8 +34,6 @@ class ServiceManager:
 
         self.indexing_status = {"running": False, "processed": 0, "total": 0, "current": ""}
         self._last_ui_activity: float = 0.0
-        self._active_stream_count: int = 0
-        self._active_stream_lock = threading.Lock()
         self.metrics = MetricsRecorder(lambda: settings.data_dir / "stats" / "metrics.json")
         self._persist_startup_status(ready=False)
         self._persist_indexing_status()
@@ -130,21 +128,6 @@ class ServiceManager:
         """
         self._last_ui_activity = time.monotonic()
 
-    def enter_stream(self) -> None:
-        """Indique qu'un stream SSE est actif — le watchdog ne décharge pas pendant ce temps."""
-        with self._active_stream_lock:
-            self._active_stream_count += 1
-        self._last_ui_activity = time.monotonic()
-
-    def exit_stream(self) -> None:
-        """Libère le verrou de stream SSE."""
-        with self._active_stream_lock:
-            self._active_stream_count = max(0, self._active_stream_count - 1)
-
-    def has_active_streams(self) -> bool:
-        with self._active_stream_lock:
-            return self._active_stream_count > 0
-
     def is_ui_active(self) -> bool:
         """Retourne True si une session UI a été active dans la fenêtre d'inactivité."""
         return (time.monotonic() - self._last_ui_activity) < _UI_IDLE_TIMEOUT
@@ -167,7 +150,6 @@ class ServiceManager:
                         self.llm.is_loaded()
                         and not self.is_ui_active()
                         and not self.is_scheduler_active()
-                        and not self.has_active_streams()
                     ):
                         logger.info(
                             "Watchdog : UI inactif + aucun scheduler actif — déchargement du modèle MLX"

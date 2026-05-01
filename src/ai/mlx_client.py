@@ -19,18 +19,15 @@ from src.logger import log_token_usage
 
 
 def clear_mlx_cache() -> None:
+    """Libère au mieux le cache MLX/Metal global sans dépendre d'une instance client."""
+    try:
+        gc.collect()
+    except Exception:
+        pass
+
     try:
         import mlx.core as mx
-
-        clear_cache = getattr(mx, "clear_cache", None)
-        if callable(clear_cache):
-            clear_cache()
-            return
-
-        metal = getattr(mx, "metal", None)
-        metal_clear_cache = getattr(metal, "clear_cache", None)
-        if callable(metal_clear_cache):
-            metal_clear_cache()
+        mx.metal.clear_cache()
     except Exception:
         pass
 
@@ -74,7 +71,8 @@ class MlxClient:
             self._prefix_warm_offset = 0
             try:
                 gc.collect()
-                clear_mlx_cache()
+                import mlx.core as mx
+                mx.metal.clear_cache()
             except Exception:
                 pass
             logger.info(f"Modèle MLX déchargé : {self._model_name}")

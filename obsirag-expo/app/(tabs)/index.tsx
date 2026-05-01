@@ -10,14 +10,8 @@ import { StatusPill } from '../../components/ui/status-pill';
 import { useServerConfig } from '../../features/auth/use-server-config';
 import { useNoteSearch } from '../../features/notes/use-notes';
 import { useSystemStatus } from '../../features/system/use-system-status';
-import { useAppTheme } from '../../theme/app-theme';
-import { formatMetadataDate, formatSizeBytes, joinMetadataParts } from '../../utils/format-display';
-import { buildNoteRoute } from '../../utils/note-route';
 
 const appIcon = require('../../assets/app-icon.png');
-const appPackage = require('../../package.json') as {
-  dependencies?: Record<string, string>;
-};
 
 type HeroBadgeTone = 'frontend' | 'ai' | 'backend' | 'runtime';
 
@@ -29,7 +23,6 @@ type HeroBadge = {
 
 export default function DashboardScreen() {
   const router = useRouter();
-  const theme = useAppTheme();
   const [noteQuery, setNoteQuery] = useState('');
   const { backendUrl, useMockServer } = useServerConfig();
   const { data, isLoading, isRefetching, refetch, isError, error } = useSystemStatus({ refetchIntervalMs: 1200 });
@@ -45,7 +38,7 @@ export default function DashboardScreen() {
 
   if (isError) {
     return (
-      <Screen backgroundColor={theme.colors.background} refreshing={isRefetching} onRefresh={refetch}>
+      <Screen backgroundColor="#f4f1ea" refreshing={isRefetching} onRefresh={refetch}>
         <SystemStartupView
           startup={{
             ready: false,
@@ -63,7 +56,7 @@ export default function DashboardScreen() {
 
   if (!data.startup?.ready) {
     return (
-      <Screen backgroundColor={theme.colors.background} refreshing={isRefetching} onRefresh={refetch}>
+      <Screen backgroundColor="#f4f1ea" refreshing={isRefetching} onRefresh={refetch}>
         <SystemStartupView
           {...(data.startup ? { startup: data.startup } : {})}
           backendReachable={data.backendReachable}
@@ -81,33 +74,22 @@ export default function DashboardScreen() {
   const autolearnStatus = formatStatusValue(data.autolearn?.step, 'Inactif');
   const stackBadges = buildDashboardBadges(data);
   const activeLlmModel = formatActiveModelValue(data.runtime?.llmModel);
-  const euriaProvider = formatEuriaProviderValue(data.runtime?.euriaProvider);
-  const euriaModel = formatEuriaModelValue(data.runtime?.euriaModel);
-  const euriaStatus = data.runtime?.euriaEnabled ? 'Disponible' : 'Non configure';
   const runtimeSourceLabel = useMockServer ? 'Donnees mock locales' : 'API FastAPI live';
   const connectionModeLabel = useMockServer ? 'Mode mock' : 'Mode live';
 
   return (
     <Screen refreshing={isRefetching} onRefresh={refetch}>
-      <View style={[styles.heroCard, { borderColor: theme.colors.border, backgroundColor: theme.colors.surface }]}>
+      <View style={styles.heroCard}>
         <Image source={appIcon} style={styles.heroImage} resizeMode="contain" />
         <View style={styles.heroCopy}>
-          <Text style={[styles.heroEyebrow, { color: theme.colors.primary }]}>ObsiRAG</Text>
-          <Text style={[styles.heroTitle, { color: theme.colors.text }]}>Dashboard</Text>
-          <Text style={[styles.heroSubtitle, { color: theme.colors.textMuted }]}>Vue d’ensemble du runtime, des recherches rapides et de l’activité de l’auto-learner.</Text>
-          <View style={styles.modelCardsRow}>
-            <View style={[styles.activeModelCard, styles.heroInfoCard, { borderColor: theme.colors.border, backgroundColor: theme.colors.surfaceMuted }] }>
-              <Text style={[styles.activeModelLabel, { color: theme.colors.primary }]}>LLM actif ObsiRAG</Text>
-              <Text selectable style={[styles.activeModelValue, { color: theme.colors.text }]}>{activeLlmModel}</Text>
-              <Text style={[styles.activeModelMeta, { color: theme.colors.textMuted }]}>Source runtime: {runtimeSourceLabel}</Text>
-              <Text selectable style={[styles.activeModelMeta, { color: theme.colors.textMuted }]}>Backend: {backendUrl}</Text>
-            </View>
-            <View style={[styles.activeModelCard, styles.heroInfoCard, { borderColor: theme.colors.border, backgroundColor: theme.colors.surfaceMuted }] }>
-              <Text style={[styles.activeModelLabel, { color: theme.colors.primary }]}>Euria Infomaniak</Text>
-              <Text selectable style={[styles.activeModelValue, { color: theme.colors.text }]}>{euriaModel}</Text>
-              <Text style={[styles.activeModelMeta, { color: theme.colors.textMuted }]}>Provider: {euriaProvider}</Text>
-              <Text style={[styles.activeModelMeta, { color: theme.colors.textMuted }]}>Statut: {euriaStatus}</Text>
-            </View>
+          <Text style={styles.heroEyebrow}>ObsiRAG</Text>
+          <Text style={styles.heroTitle}>Dashboard</Text>
+          <Text style={styles.heroSubtitle}>Vue d’ensemble du runtime, des recherches rapides et de l’activité de l’auto-learner.</Text>
+          <View style={styles.activeModelCard}>
+            <Text style={styles.activeModelLabel}>LLM actif ObsiRAG</Text>
+            <Text selectable style={styles.activeModelValue}>{activeLlmModel}</Text>
+            <Text style={styles.activeModelMeta}>Source runtime: {runtimeSourceLabel}</Text>
+            <Text selectable style={styles.activeModelMeta}>Backend: {backendUrl}</Text>
           </View>
           <View style={styles.badgeRow}>
             {stackBadges.map((badge) => (
@@ -121,9 +103,9 @@ export default function DashboardScreen() {
       <SectionCard title="Etat du systeme" subtitle="Synthese rapide du runtime ObsiRAG expose par le backend.">
         <StatusPill label={data.backendReachable ? 'Backend joignable' : 'Backend indisponible'} tone={data.backendReachable ? 'success' : 'danger'} />
         <StatusPill label={connectionModeLabel} tone={useMockServer ? 'warning' : 'success'} />
-        <Text style={{ color: theme.colors.text }}>Indexation: {indexingStatus}</Text>
-        <Text style={{ color: theme.colors.text }}>Auto-learn: {autolearnStatus}</Text>
-        <Text style={{ color: theme.colors.text }}>Source runtime: {runtimeSourceLabel}</Text>
+        <Text>Indexation: {indexingStatus}</Text>
+        <Text>Auto-learn: {autolearnStatus}</Text>
+        <Text>Source runtime: {runtimeSourceLabel}</Text>
         <SystemStartupView
           {...(data.startup ? { startup: data.startup } : {})}
           backendReachable={data.backendReachable}
@@ -138,24 +120,13 @@ export default function DashboardScreen() {
           value={noteQuery}
           onChangeText={setNoteQuery}
           placeholder="Rechercher une note"
-          placeholderTextColor={theme.colors.textSubtle}
-          style={[styles.input, { borderColor: theme.colors.border, backgroundColor: theme.colors.surface, color: theme.colors.text }]}
+          placeholderTextColor="#8a7760"
+          style={styles.input}
         />
         {(noteSearch.data ?? []).slice(0, 6).map((item) => (
-          <Pressable key={item.filePath} style={[styles.quickResult, { borderColor: theme.colors.border, backgroundColor: theme.colors.surfaceMuted }]} onPress={() => router.push(buildNoteRoute(item.filePath))}>
-            <Text style={[styles.quickTitle, { color: theme.colors.text }]}>{item.title}</Text>
-            <Text style={[styles.quickMeta, { color: theme.colors.textMuted }]}>{item.filePath}</Text>
-            {joinMetadataParts([
-              item.dateModified ? `Modifie le ${formatMetadataDate(item.dateModified)}` : null,
-              formatSizeBytes(item.sizeBytes),
-            ]) ? (
-              <Text style={[styles.quickMeta, { color: theme.colors.textSubtle }]}>
-                {joinMetadataParts([
-                  item.dateModified ? `Modifie le ${formatMetadataDate(item.dateModified)}` : null,
-                  formatSizeBytes(item.sizeBytes),
-                ])}
-              </Text>
-            ) : null}
+          <Pressable key={item.filePath} style={styles.quickResult} onPress={() => router.push(`/(tabs)/note/${encodeURIComponent(item.filePath)}`)}>
+            <Text style={styles.quickTitle}>{item.title}</Text>
+            <Text style={styles.quickMeta}>{item.filePath}</Text>
           </Pressable>
         ))}
       </SectionCard>
@@ -180,14 +151,14 @@ function buildDashboardBadges(data: NonNullable<ReturnType<typeof useSystemStatu
   const runtime = data.runtime;
   const llmName = formatModelName(runtime?.llmModel ?? 'LLM local');
   return [
-    { icon: 'UI', label: `React ${formatReactBadgeVersion(appPackage.dependencies?.react)}`, tone: 'frontend' },
-    { icon: 'EX', label: `Expo ${formatExpoBadgeVersion(appPackage.dependencies?.expo)}`, tone: 'frontend' },
+    { icon: 'UI', label: 'React 18.3', tone: 'frontend' },
+    { icon: 'EX', label: 'Expo 52', tone: 'frontend' },
     { icon: 'AI', label: `${runtime?.llmProvider ?? 'MLX'} local`, tone: 'ai' },
     { icon: 'LLM', label: llmName, tone: 'ai' },
     { icon: 'EMB', label: shortModelLabel(runtime?.embeddingModel, 'MiniLM'), tone: 'ai' },
     { icon: 'NER', label: shortModelLabel(runtime?.nerModel, 'xx_ent_wiki_sm'), tone: 'ai' },
     { icon: 'API', label: data.backendReachable ? 'FastAPI online' : 'FastAPI offline', tone: 'backend' },
-    { icon: 'DB', label: formatVectorStoreLabel(runtime?.vectorStore), tone: 'backend' },
+    { icon: 'DB', label: `${runtime?.vectorStore ?? 'ChromaDB'} 1.5`, tone: 'backend' },
     { icon: 'RUN', label: data.autolearn?.managedBy === 'worker' || runtime?.autolearnMode === 'worker' ? 'Auto-learn worker' : 'Auto-learn intégré', tone: 'runtime' },
     { icon: 'OK', label: data.llmAvailable ? 'LLM prêt' : 'LLM en attente', tone: 'runtime' },
   ];
@@ -200,40 +171,6 @@ function formatModelName(model: string) {
   }
   const compact = trimmed.split('/').pop() ?? trimmed;
   return compact.replace(/-4bit$/i, ' 4bit');
-}
-
-function formatReactBadgeVersion(version: string | undefined) {
-  const normalized = normalizeSemver(version);
-  if (!normalized) {
-    return 'React';
-  }
-
-  const [major = normalized, minor] = normalized.split('.');
-  return minor ? `${major}.${minor}` : major;
-}
-
-function formatExpoBadgeVersion(version: string | undefined) {
-  const normalized = normalizeSemver(version);
-  if (!normalized) {
-    return 'SDK';
-  }
-
-  return normalized.split('.')[0] ?? normalized;
-}
-
-function normalizeSemver(version: string | undefined) {
-  const trimmed = version?.trim();
-  if (!trimmed) {
-    return '';
-  }
-
-  const match = trimmed.match(/(\d+\.\d+\.\d+|\d+\.\d+|\d+)/);
-  return match?.[0] ?? '';
-}
-
-function formatVectorStoreLabel(value: string | undefined) {
-  const trimmed = value?.trim();
-  return trimmed || 'ChromaDB';
 }
 
 function shortModelLabel(model: string | undefined, fallback: string) {
@@ -252,20 +189,12 @@ function formatActiveModelValue(model: string | undefined) {
   return trimmed;
 }
 
-function formatEuriaProviderValue(provider: string | undefined) {
-  const trimmed = provider?.trim();
-  return trimmed || 'Infomaniak';
-}
-
-function formatEuriaModelValue(model: string | undefined) {
-  const trimmed = model?.trim();
-  return trimmed || 'Modele non expose';
-}
-
 const styles = StyleSheet.create({
   heroCard: {
     borderRadius: 28,
     borderWidth: 1,
+    borderColor: '#decdb8',
+    backgroundColor: '#fbf5ea',
     paddingHorizontal: 18,
     paddingVertical: 20,
     flexDirection: 'row',
@@ -282,48 +211,46 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   heroEyebrow: {
+    color: '#8a562b',
     fontSize: 12,
     fontWeight: '800',
     letterSpacing: 0.9,
     textTransform: 'uppercase',
   },
   heroTitle: {
+    color: '#1f160c',
     fontSize: 28,
     fontWeight: '800',
   },
   heroSubtitle: {
+    color: '#6f5d49',
     fontSize: 14,
     lineHeight: 20,
   },
   activeModelCard: {
     borderRadius: 16,
     borderWidth: 1,
+    borderColor: '#e4cfb1',
+    backgroundColor: '#fffaf2',
     paddingHorizontal: 12,
     paddingVertical: 10,
     gap: 4,
   },
-  modelCardsRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 10,
-  },
-  heroInfoCard: {
-    flexGrow: 1,
-    flexShrink: 1,
-    minWidth: 240,
-  },
   activeModelLabel: {
+    color: '#8a562b',
     fontSize: 11,
     fontWeight: '800',
     letterSpacing: 0.6,
     textTransform: 'uppercase',
   },
   activeModelValue: {
+    color: '#1f160c',
     fontSize: 14,
     lineHeight: 20,
     fontWeight: '700',
   },
   activeModelMeta: {
+    color: '#6f5d49',
     fontSize: 12,
     lineHeight: 18,
     fontWeight: '600',
@@ -374,20 +301,27 @@ const styles = StyleSheet.create({
   },
   input: {
     borderWidth: 1,
+    borderColor: '#d8cfc0',
     borderRadius: 14,
+    backgroundColor: '#ffffff',
     paddingHorizontal: 14,
     paddingVertical: 12,
+    color: '#1f160c',
   },
   quickResult: {
     borderRadius: 14,
     borderWidth: 1,
+    borderColor: '#e0d5c7',
+    backgroundColor: '#f8f3eb',
     padding: 12,
     gap: 4,
   },
   quickTitle: {
+    color: '#1f160c',
     fontWeight: '700',
   },
   quickMeta: {
+    color: '#6f5d49',
     fontSize: 12,
   },
 });

@@ -188,8 +188,7 @@ API_PUBLIC_BASE_URL=http://tailscale-host.example.ts.net:8000
 
 ### URLs a utiliser depuis une autre machine
 
-- Interface Expo web en mode developpement : `http://tailscale-host.example.ts.net:8081`
-- Interface Expo web exportee et servie par FastAPI : `http://tailscale-host.example.ts.net:8000`
+- Interface Expo web : `http://tailscale-host.example.ts.net:8081`
 - Backend API : `http://tailscale-host.example.ts.net:8000`
 
 Dans l'ecran de configuration Expo, les saisies suivantes sont supportees :
@@ -225,7 +224,7 @@ Ce script ne remplace pas un test depuis la machine distante, mais il permet de 
 
 ### Chat avec le coffre
 
-Interface conversationnelle connectée à **MLX-LM** (inférence locale Apple Silicon, sans serveur externe) ou à **Euria** selon le provider choisi dans la conversation. Les requêtes sont traitées en combinant récupération sémantique, synthèse par l'IA, enrichissement NER et, quand nécessaire, une recherche web explicite.
+Interface conversationnelle connectée à **MLX-LM** (inférence locale Apple Silicon, sans serveur externe) et au moteur de recherche du coffre. Les requêtes sont traitées en combinant récupération sémantique, synthèse par l'IA, enrichissement NER et, quand nécessaire, une recherche web explicite.
 
 #### Comportement conversationnel
 
@@ -234,8 +233,6 @@ Le chat conserve maintenant un **contexte conversationnel exploitable pour la r�
 - **Relances résolues dans le fil** : une question courte comme *"tu as plus de détail sur les objectifs"* ou *"et la durée de la mission ?"* est rattachée automatiquement au sujet précédent si ce sujet est identifiable dans l'échange
 - **Note principale** : pour les questions mono-sujet, ObsiRAG identifie la note la plus dominante sur le thème et la fait remonter en priorité dans le contexte envoyé au modèle
 - **Sources plus lisibles** : la réponse affiche désormais la **note principale** au-dessus des sources, et cette note est marquée comme *Principale* dans la liste détaillée
-- **Provider par conversation** : le composeur Expo permet d'activer `Avec Euria` fil par fil sans changer la configuration globale du backend
-- **Badges lisibles** : chaque réponse assistant peut afficher son provider effectif (`via MLX` ou `via Euria`) et sa provenance (`coffre`, `web`, `web + coffre`)
 - **Garde-fou anti hors-sujet** : si une requête mono-sujet ne retrouve aucun chunk lexicalement fiable, ObsiRAG répond directement *"Cette information n'est pas dans ton coffre."* au lieu de laisser partir le modèle sur un faux contexte
 
 #### Recherche web et contextes d'entités
@@ -244,7 +241,6 @@ Quand le coffre ne suffit pas, le backend peut enrichir la réponse avec une **r
 
 - **Aperçu de requête** : la réponse conserve la requête reformulée, un résumé et la liste des sources web retenues
 - **Provenance visible** : les artefacts et messages distinguent les contenus venant du coffre, du web ou d'un mode hybride
-- **Fallback Euria documenté** : quand Euria est sélectionné, le backend peut d'abord produire une réponse directe ou ancrée dans le coffre, puis basculer vers une recherche web native Euria et une consolidation DDG si le coffre ne suffit pas
 - **Entités détectées dans la conversation** : le backend retourne des `entityContexts` enrichis (type, relation avec la réponse, notes liées, image éventuelle, connaissances DDG si disponibles)
 - **Usage côté Expo** : ces informations sont exploitées par l'interface mobile/web pour afficher les sources, les entités clés et relancer une recherche ciblée sans quitter la conversation
 
@@ -774,7 +770,6 @@ cd obsirag
 # Configurer l'environnement
 cp .env.example .env
 # Éditer .env : renseigner VAULT_PATH, MLX_CHAT_MODEL, etc.
-# Si vous activez Euria pour le chat : EURIA_URL et EURIA_BEARER
 # Pour exposer l'interface legacy optionnelle sur le reseau : STREAMLIT_SERVER_ADDRESS=0.0.0.0
 
 # Installer les dépendances Python et configurer le service
@@ -789,15 +784,6 @@ Les surfaces suivantes sont alors disponibles :
 - auto-learner ObsiRAG via `launchd` (verifie et maintenu actif)
 - API backend Expo : [http://localhost:8000](http://localhost:8000)
 - interface Expo web : [http://localhost:8081](http://localhost:8081)
-
-Variables utiles pour Euria dans `.env` :
-
-```env
-EURIA_URL=https://votre-endpoint-euria.example/api/chat
-EURIA_BEARER=secret-token
-```
-
-Compatibilite installation macOS : `install_service.sh` accepte aussi les alias `URL` et `bearer` et les propage au service API et au worker auto-learner.
 
 > Le modèle MLX est téléchargé automatiquement depuis HuggingFace au premier démarrage (~4 Go pour `Qwen2.5-7B-Instruct-4bit`).
 

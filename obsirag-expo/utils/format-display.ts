@@ -1,33 +1,37 @@
-export function formatMetadataDate(value?: string): string | null {
+export function formatMetadataDate(value?: string | null): string {
   if (!value) {
-    return null;
+    return '';
   }
 
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) {
-    return null;
+    return value;
   }
 
-  return new Intl.DateTimeFormat('fr-CH', {
-    day: '2-digit',
-    month: 'short',
-    year: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  }).format(parsed);
+  return parsed.toLocaleString('fr-FR');
 }
 
-export function formatSizeBytes(sizeBytes?: number): string | null {
-  if (!Number.isFinite(sizeBytes) || sizeBytes === undefined || sizeBytes < 0) {
-    return null;
+export function formatSizeBytes(value?: number | null): string {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
+    return '';
   }
 
-  const kiloBytes = sizeBytes / 1024;
-  const rounded = Math.round(kiloBytes * 10) / 10;
-  const displayValue = sizeBytes > 0 ? Math.max(0.1, rounded) : 0;
-  return `${Number.isInteger(displayValue) ? displayValue : displayValue.toFixed(1)} ko`;
+  if (value < 1024) {
+    return `${Math.round(value)} B`;
+  }
+
+  const kib = value / 1024;
+  if (kib < 1024) {
+    return `${kib.toFixed(1)} KB`;
+  }
+
+  const mib = kib / 1024;
+  return `${mib.toFixed(1)} MB`;
 }
 
 export function joinMetadataParts(parts: Array<string | null | undefined>): string {
-  return parts.filter((part): part is string => Boolean(part)).join(' · ');
+  return parts
+    .map((part) => (part ?? '').trim())
+    .filter((part) => Boolean(part))
+    .join(' · ');
 }

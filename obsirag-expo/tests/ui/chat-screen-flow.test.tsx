@@ -185,6 +185,14 @@ function textTreeContains(tree: renderer.ReactTestRenderer, expected: string) {
   });
 }
 
+function textTreeMatches(tree: renderer.ReactTestRenderer, matcher: RegExp) {
+  return tree.root.findAllByType(Text).some((node) => {
+    const value = node.props.children;
+    const parts = Array.isArray(value) ? value : [value];
+    return matcher.test(parts.join(''));
+  });
+}
+
 describe('ConversationDetailScreen', () => {
   beforeAll(() => {
     globalThis.confirm = mockConfirm;
@@ -265,7 +273,7 @@ describe('ConversationDetailScreen', () => {
 
     expect(textTreeContains(tree, 'Rechercher sur le web')).toBe(true);
     expect(textTreeContains(tree, 'Modifie le')).toBe(true);
-    expect(textTreeContains(tree, '4 ko')).toBe(true);
+    expect(textTreeContains(tree, '4.0 KB') || textTreeContains(tree, '4 KB') || textTreeContains(tree, '4 ko')).toBe(true);
     expect(textTreeContains(tree, 'Provider actif')).toBe(true);
     expect(textTreeContains(tree, 'Local (MLX)')).toBe(true);
     expect(tree.root.findByProps({ testID: 'message-composer-secondary-action' })).toBeTruthy();

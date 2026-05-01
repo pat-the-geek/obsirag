@@ -1,16 +1,10 @@
 from __future__ import annotations
 
-import concurrent.futures
 import json
 import re
-import ssl
 import urllib.parse
 import urllib.request
 import unicodedata
-
-_SSL_UNVERIFIED_CTX = ssl.create_default_context()
-_SSL_UNVERIFIED_CTX.check_hostname = False
-_SSL_UNVERIFIED_CTX.verify_mode = ssl.CERT_NONE
 from pathlib import Path
 from typing import Any
 
@@ -19,8 +13,7 @@ from loguru import logger
 from src.learning.entity_cache import GeocodeCache, WuddaiCache
 
 
-_DDG_TIMEOUT_SECONDS = 3
-_DDG_ENTITY_MAX_WORKERS = 5
+_DDG_TIMEOUT_SECONDS = 6
 _DDG_USER_AGENT = "Mozilla/5.0 (ObsiRAG/1.0; +https://github.com/pat-the-geek/obsirag)"
 _ENTITY_MATCH_STOPWORDS = {
     "qui", "que", "quoi", "est", "suis", "sont", "dans", "avec", "sans", "pour",
@@ -37,16 +30,9 @@ _FALLBACK_ENTITY_LABELS = {
     "PRODUCT": "PRODUCT",
 }
 _PRODUCT_HINT_TOKENS = {
-    "airpods", "airtag", "apple", "chromebook", "galaxy", "iphone", "ipad",
-    "ipod", "macbook", "mac", "nintendo", "pixel", "playstation", "surface",
-    "switch", "vision", "watch", "xbox",
-}
-_KNOWN_TECH_ORGS = {
-    "adobe", "amd", "apple", "amazon", "alibaba", "asus", "acer",
-    "baidu", "bytedance", "dell", "google", "hp", "huawei", "ibm",
-    "intel", "lenovo", "lg", "meta", "microsoft", "motorola", "netflix",
-    "nvidia", "oneplus", "oppo", "oracle", "qualcomm", "samsung", "sap",
-    "salesforce", "sony", "tencent", "tiktok", "twitter", "x", "xiaomi",
+    "airpods", "airtag", "apple", "galaxy", "iphone", "ipad", "ipod", "macbook",
+    "mac", "nintendo", "pixel", "playstation", "surface", "switch", "vision",
+    "watch", "xbox",
 }
 
 
@@ -69,11 +55,7 @@ class AutoLearnEntityServices:
         if not wuddai_entities:
             return self._owner._entities_to_tags_spacy(text), []
 
-        wuddai_index: dict[str, dict] = {}
-        for _e in wuddai_entities:
-            _key = _e.get("value_normalized") or ""
-            if _key and ((_key not in wuddai_index) or (int(_e.get("mentions") or 0) > int(wuddai_index[_key].get("mentions") or 0))):
-                wuddai_index[_key] = _e
+        wuddai_index: dict[str, dict] = {entity["value_normalized"]: entity for entity in wuddai_entities}
         candidates = self._extract_spacy_candidates(text)
 
         tags: list[str] = []
@@ -138,49 +120,19 @@ class AutoLearnEntityServices:
         entities = self._owner._load_wuddai_entities()
         notes = self._list_notes()
         matches = self._match_wuddai_entities(text, entities, max_entities=max_entities) if entities else []
-
+        contexts: list[dict] = []
         seen_values: set[str] = set()
-        all_matches: list[dict] = []
         for match in matches:
-            normalized = self._owner._normalize_entity_name(str(match.get("value") or ""))
-            if normalized:
-                seen_values.add(normalized)
-            all_matches.append(match)
+            context = self._build_entity_context(match, notes, max_notes=max_notes)
+            contexts.append(context)
+            seen_values.add(self._owner._normalize_entity_name(context["value"]))
 
-        remaining = max(0, max_entities - len(all_matches))
+        remaining = max(0, max_entities - len(contexts))
         if remaining:
             fallback_matches = self._extract_fallback_entities(text, excluded_values=seen_values, max_entities=remaining)
-            all_matches.extend(fallback_matches)
-
-        if not all_matches:
-            return []
-
-        # Fetch DDG knowledge for all entities in parallel
-        max_workers = min(len(all_matches), _DDG_ENTITY_MAX_WORKERS)
-        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-            ddg_futures = {
-                match["value"]: executor.submit(self._fetch_ddg_entity_knowledge, match["value"])
-                for match in all_matches
-            }
-
-        contexts: list[dict] = []
-        for match in all_matches:
-            tag = self._entity_tag(match)
-            related_notes = self._find_notes_for_tag(notes, tag, max_notes=max_notes) if tag else []
-            try:
-                ddg_knowledge = ddg_futures[match["value"]].result()
-            except Exception:
-                ddg_knowledge = {}
-            contexts.append({
-                "type": match["type"],
-                "type_label": self._entity_type_label(match["type"]),
-                "value": match["value"],
-                "mentions": match.get("mentions", 0),
-                "image_url": match.get("image_url"),
-                "tag": tag,
-                "notes": related_notes,
-                "ddg_knowledge": ddg_knowledge,
-            })
+            for match in fallback_matches:
+                context = self._build_entity_context(match, notes, max_notes=max_notes)
+                contexts.append(context)
 
         return contexts
 
@@ -260,11 +212,11 @@ class AutoLearnEntityServices:
         *,
         max_entities: int,
     ) -> list[dict]:
-        index: dict[str, dict] = {}
-        for _e2 in entities:
-            _k2 = _e2.get("value_normalized") or ""
-            if _k2 and ((_k2 not in index) or (int(_e2.get("mentions") or 0) > int(index[_k2].get("mentions") or 0))):
-                index[_k2] = _e2
+        index = {
+            entity.get("value_normalized", ""): entity
+            for entity in entities
+            if entity.get("value_normalized")
+        }
         if not index:
             return []
 
@@ -385,70 +337,12 @@ class AutoLearnEntityServices:
         return fallback_entities
 
     def _map_fallback_label(self, label: str, value: str) -> str | None:
-        # 1. Wudd.ai authoritative type takes priority
-        wuddai_type = self._wuddai_type_for(value)
-        if wuddai_type:
-            return wuddai_type
-
         mapped = _FALLBACK_ENTITY_LABELS.get((label or "").upper())
         if mapped:
-            lowered = unicodedata.normalize("NFD", (value or "").strip().lower())
-            lowered = "".join(c for c in lowered if unicodedata.category(c) != "Mn")
-            # Single-word known tech company: always ORG regardless of spaCy label
-            if lowered in _KNOWN_TECH_ORGS and " " not in (value or "").strip():
-                return "ORG"
-            # Override ORG/GPE/LOC → PRODUCT only when lead token is an explicit product keyword
-            if mapped in ("ORG", "GPE", "LOC"):
-                words = [w for w in re.split(r"\s+", (value or "").strip()) if w]
-                if words:
-                    lead = unicodedata.normalize("NFD", words[0].lower())
-                    lead = "".join(c for c in lead if unicodedata.category(c) != "Mn")
-                    lead_singular = lead[:-1] if lead.endswith("s") else lead
-                    if lead in _PRODUCT_HINT_TOKENS or lead_singular in _PRODUCT_HINT_TOKENS:
-                        return "PRODUCT"
             return mapped
         if self._looks_like_product_name(value):
             return "PRODUCT"
         return None
-
-    def _wuddai_type_for(self, value: str) -> str | None:
-        # Years are always EVENT regardless of wudd.ai classification
-        if re.fullmatch(r"\d{4}", (value or "").strip()):
-            return "EVENT"
-
-        index = getattr(self, "_wuddai_type_index_cache", None)
-        if index is None:
-            index = self._build_wuddai_type_index()
-            self._wuddai_type_index_cache = index  # type: ignore[attr-defined]
-
-        normalized = self._owner._normalize_entity_name(value)
-        entry = index.get(normalized)
-        if entry:
-            return entry[0]
-
-        # Lead-token match for multi-word values
-        words = normalized.split()
-        if len(words) > 1:
-            entry = index.get(words[0])
-            if entry:
-                return entry[0]
-
-        return None
-
-    def _build_wuddai_type_index(self) -> dict[str, tuple[str, int]]:
-        """Build {normalized_value: (type, mentions)} from wudd.ai; highest-mention type wins."""
-        entities = self._owner._load_wuddai_entities()
-        best: dict[str, tuple[str, int]] = {}
-        for e in entities:
-            value_norm = (e.get("value_normalized") or "").strip()
-            entity_type = e.get("type") or ""
-            if not value_norm or not entity_type:
-                continue
-            mentions = int(e.get("mentions") or 0)
-            existing = best.get(value_norm)
-            if existing is None or mentions > existing[1]:
-                best[value_norm] = (entity_type, mentions)
-        return best
 
     @classmethod
     def _extract_product_candidates(cls, text: str) -> list[str]:
@@ -596,7 +490,7 @@ class AutoLearnEntityServices:
                 f"https://api.duckduckgo.com/?{params}",
                 headers={"User-Agent": _DDG_USER_AGENT},
             )
-            with urllib.request.urlopen(request, timeout=_DDG_TIMEOUT_SECONDS, context=_SSL_UNVERIFIED_CTX) as response:
+            with urllib.request.urlopen(request, timeout=_DDG_TIMEOUT_SECONDS) as response:
                 payload = json.loads(response.read().decode("utf-8"))
             return self._summarize_ddg_entity_knowledge(payload)
         except Exception as exc:

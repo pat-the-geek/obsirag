@@ -2,23 +2,13 @@ type NoteRouteOptions = {
   returnTo?: string;
 };
 
-export function buildNoteRoute(notePath: string, options?: NoteRouteOptions) {
+export function buildNoteRoute(notePath: string, options: NoteRouteOptions = {}): string {
   const encodedPath = encodeURIComponent(notePath);
-  const returnTo = options?.returnTo?.trim();
-  if (!returnTo) {
-    return `/(tabs)/note/${encodedPath}`;
-  }
-  return `/(tabs)/note/${encodedPath}?returnTo=${encodeURIComponent(returnTo)}`;
-}
+  const baseRoute = `/(tabs)/note/${encodedPath}`;
 
-export function getCanonicalNotePath(value: string | null | undefined) {
-  if (!value) {
-    return '';
+  if (!options.returnTo) {
+    return baseRoute;
   }
 
-  try {
-    return decodeURIComponent(value);
-  } catch {
-    return value;
-  }
+  return `${baseRoute}?returnTo=${encodeURIComponent(options.returnTo)}`;
 }

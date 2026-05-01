@@ -1,156 +1,65 @@
-import { useEffect, useRef, useState } from 'react';
-import { ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
-import { Feather } from '@expo/vector-icons';
+import { ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import type { LogEntry } from '../../types/domain';
-import { useAppTheme } from '../../theme/app-theme';
 
-type Props = {
+type LogConsoleProps = {
   entries: LogEntry[];
 };
 
-const LEVEL_COLORS: Record<string, string> = {
-  DEBUG: '#6b7280',
-  INFO: '#9ca3af',
-  WARNING: '#f59e0b',
-  ERROR: '#ef4444',
-  CRITICAL: '#dc2626',
-};
-
-function levelColor(level: string): string {
-  return LEVEL_COLORS[level] ?? '#9ca3af';
-}
-
-export function LogConsole({ entries }: Props) {
-  const theme = useAppTheme();
-  const scrollRef = useRef<ScrollView>(null);
-  const [filter, setFilter] = useState('');
-
-  const filtered = filter.trim()
-    ? entries.filter((e) => {
-        const q = filter.toLowerCase();
-        return e.message.toLowerCase().includes(q) || e.name.toLowerCase().includes(q) || e.level.toLowerCase().includes(q);
-      })
-    : entries;
-
-  useEffect(() => {
-    scrollRef.current?.scrollToEnd({ animated: false });
-  }, [filtered.length]);
+export function LogConsole({ entries }: LogConsoleProps) {
+  if (!entries.length) {
+    return (
+      <View style={styles.emptyState}>
+        <Text style={styles.emptyText}>Aucun log disponible.</Text>
+      </View>
+    );
+  }
 
   return (
-    <View style={styles.root}>
-      <View style={[styles.searchRow, { backgroundColor: theme.colors.surfaceMuted, borderColor: theme.colors.border }]}>
-        <Feather name="search" size={14} color={theme.colors.textMuted} style={styles.searchIcon} />
-        <TextInput
-          value={filter}
-          onChangeText={setFilter}
-          placeholder="Filtrer les logs…"
-          placeholderTextColor={theme.colors.textMuted}
-          style={[styles.searchInput, { color: theme.colors.text }]}
-          clearButtonMode="while-editing"
-        />
-      </View>
-      <ScrollView
-        ref={scrollRef}
-        style={[styles.console, { backgroundColor: '#0d1117', borderColor: theme.colors.border }]}
-        contentContainerStyle={styles.consoleContent}
-      >
-        {filtered.length === 0 ? (
-          <Text style={styles.empty}>Aucun log disponible.</Text>
-        ) : (
-          filtered.map((entry, i) => (
-            <View key={i} style={styles.row}>
-              <Text style={[styles.ts, { color: '#6b7280' }]}>
-                {entry.timestamp.slice(11, 19)}
-              </Text>
-              <Text style={[styles.level, { color: levelColor(entry.level) }]}>
-                {entry.level.slice(0, 4)}
-              </Text>
-              <Text style={[styles.name, { color: '#60a5fa' }]} numberOfLines={1}>
-                {entry.name.split('.').pop()}
-              </Text>
-              <Text style={[styles.msg, { color: '#e5e7eb' }]} selectable>
-                {entry.message}
-              </Text>
-            </View>
-          ))
-        )}
-      </ScrollView>
-      <Text style={[styles.count, { color: theme.colors.textMuted }]}>
-        {filtered.length} / {entries.length} entrées
-      </Text>
-    </View>
+    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+      {entries.map((entry, index) => (
+        <View key={`${entry.timestamp}-${entry.level}-${index}`} style={styles.row}>
+          <Text style={styles.meta}>{entry.timestamp} [{entry.level}] {entry.name}:{entry.line}</Text>
+          <Text style={styles.message}>{entry.message}</Text>
+        </View>
+      ))}
+    </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
-  root: {
-    gap: 8,
-  },
-  searchRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
+  container: {
+    maxHeight: 260,
+    borderRadius: 12,
     borderWidth: 1,
-    borderRadius: 10,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    gap: 6,
+    borderColor: '#d8cfc0',
+    backgroundColor: '#0f1115',
   },
-  searchIcon: {
-    flexShrink: 0,
-  },
-  searchInput: {
-    flex: 1,
-    fontSize: 13,
-    padding: 0,
-    margin: 0,
-  },
-  console: {
-    height: 320,
-    borderWidth: 1,
-    borderRadius: 10,
-  },
-  consoleContent: {
-    padding: 10,
-    gap: 2,
-  },
-  empty: {
-    color: '#6b7280',
-    fontSize: 12,
-    fontStyle: 'italic',
+  content: {
+    padding: 12,
+    gap: 10,
   },
   row: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 6,
-    alignItems: 'flex-start',
+    gap: 4,
   },
-  ts: {
+  meta: {
+    color: '#9bb4d3',
     fontSize: 11,
-    fontFamily: 'monospace',
-    flexShrink: 0,
   },
-  level: {
-    fontSize: 11,
-    fontFamily: 'monospace',
-    fontWeight: '700',
-    flexShrink: 0,
-    width: 32,
+  message: {
+    color: '#e8edf6',
+    fontSize: 12,
+    lineHeight: 18,
   },
-  name: {
-    fontSize: 11,
-    fontFamily: 'monospace',
-    flexShrink: 0,
-    maxWidth: 100,
+  emptyState: {
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#d8cfc0',
+    backgroundColor: '#f8f3eb',
+    padding: 12,
   },
-  msg: {
-    fontSize: 11,
-    fontFamily: 'monospace',
-    flex: 1,
-    flexShrink: 1,
-  },
-  count: {
-    fontSize: 11,
-    textAlign: 'right',
+  emptyText: {
+    color: '#6f5d49',
+    fontSize: 12,
   },
 });

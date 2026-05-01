@@ -1,7 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { useServerConfig } from '../auth/use-server-config';
-import type { LogEntry } from '../../types/domain';
 
 type UseSystemStatusOptions = {
   refetchIntervalMs?: number;
@@ -17,13 +16,13 @@ export function useSystemStatus(options?: UseSystemStatusOptions) {
   });
 }
 
-export function useSystemLogs(refetchIntervalMs = 4000) {
+export function useSystemLogs(limit = 200) {
   const { api } = useServerConfig();
 
-  return useQuery<LogEntry[]>({
-    queryKey: ['system-logs'],
-    queryFn: () => api.getLogs(200),
-    refetchInterval: refetchIntervalMs,
+  return useQuery({
+    queryKey: ['system-logs', limit],
+    queryFn: () => api.getLogs(limit),
+    refetchInterval: 10000,
   });
 }
 
@@ -34,7 +33,10 @@ export function useReindexData() {
   return useMutation({
     mutationFn: () => api.reindexData(),
     onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ['system-status'] });
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['system-status'] }),
+        queryClient.invalidateQueries({ queryKey: ['system-logs'] }),
+      ]);
     },
   });
 }

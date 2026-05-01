@@ -237,6 +237,7 @@ export default function ConversationDetailScreen() {
                   if (!trimmedDraft) {
                     return;
                   }
+                  setDraft(conversationId, '');
                   scrollThreadToBottom();
                   streamMessage.mutate(trimmedDraft);
                 }}

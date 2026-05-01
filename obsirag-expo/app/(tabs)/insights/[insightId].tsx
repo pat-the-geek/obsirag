@@ -6,7 +6,6 @@ import { NoteCard } from '../../../components/notes/note-card';
 import { Screen } from '../../../components/ui/screen';
 import { SectionCard } from '../../../components/ui/section-card';
 import { useInsightDetail } from '../../../features/insights/use-insights';
-import { buildNoteRoute } from '../../../utils/note-route';
 
 export default function InsightDetailScreen() {
   const router = useRouter();
@@ -26,7 +25,7 @@ export default function InsightDetailScreen() {
     <Screen refreshing={isRefetching} onRefresh={refetch}>
       <NoteCard note={data} onOpenTag={(value) => router.push(`/(tabs)/graph?tag=${encodeURIComponent(value)}`)} />
       <SectionCard title="Navigation" subtitle="Ouvre la note avec la route standard du visualiseur Expo.">
-        <Pressable style={styles.button} onPress={() => router.push(buildNoteRoute(data.filePath))}>
+        <Pressable style={styles.button} onPress={() => router.push(`/(tabs)/note/${encodeURIComponent(data.filePath)}`)}>
           <Text style={styles.buttonText}>Ouvrir comme note</Text>
         </Pressable>
       </SectionCard>

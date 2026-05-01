@@ -5,40 +5,6 @@ import { useServerConfig } from '../auth/use-server-config';
 import { useAppStore } from '../../store/app-store';
 import { ChatMessage, ConversationDetail, SourceRef } from '../../types/domain';
 import { removeMessageTurn } from './message-turns';
-import { isLocalOnlyMessageForDeletion } from './delete-message-policy';
-
-export function useToggleConversationEntity(conversationId: string) {
-  const { api } = useServerConfig();
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: ({ entityValue, action }: { entityValue: string; action: 'add' | 'remove' }) =>
-      api.toggleConversationHiddenEntities(conversationId, [entityValue], action),
-    onMutate: async ({ entityValue, action }) => {
-      await queryClient.cancelQueries({ queryKey: ['conversation', conversationId] });
-      const snapshot = queryClient.getQueryData<ConversationDetail>(['conversation', conversationId]);
-      queryClient.setQueryData<ConversationDetail | undefined>(
-        ['conversation', conversationId],
-        (current) => {
-          if (!current) return current;
-          const existing = new Set(current.hiddenEntityValues ?? []);
-          if (action === 'add') existing.add(entityValue);
-          else existing.delete(entityValue);
-          return { ...current, hiddenEntityValues: [...existing] };
-        },
-      );
-      return { snapshot };
-    },
-    onError: (_err, _vars, context) => {
-      if (context?.snapshot) {
-        queryClient.setQueryData(['conversation', conversationId], context.snapshot);
-      }
-    },
-    onSettled: () => {
-      queryClient.invalidateQueries({ queryKey: ['conversation', conversationId] });
-    },
-  });
-}
 
 const STREAMING_ASSISTANT_ID = 'streaming-assistant';
 const PENDING_WEB_ASSISTANT_ID = 'pending-web-assistant';
@@ -251,42 +217,69 @@ export function useGenerateConversationReport() {
 export function useDeleteConversationMessage(conversationId: string) {
   const { api } = useServerConfig();
   const queryClient = useQueryClient();
-  const pendingDeleteLocalOnlyRef = useRef(false);
 
   return useMutation({
-    onMutate: async (messageId: string) => {
-      await queryClient.cancelQueries({ queryKey: ['conversation', conversationId] });
-      const snapshot = queryClient.getQueryData<ConversationDetail>(['conversation', conversationId]);
-      const targetMessage = snapshot?.messages.find((message) => message.id === messageId);
-      pendingDeleteLocalOnlyRef.current = isLocalOnlyMessageForDeletion(targetMessage);
-      queryClient.setQueryData<ConversationDetail | undefined>(['conversation', conversationId], (current) => {
-        if (!current) {
-          return current;
-        }
-        return { ...current, messages: removeMessageTurn(current.messages, messageId) };
-      });
-      return { snapshot };
-    },
     mutationFn: async (messageId: string) => {
-      if (pendingDeleteLocalOnlyRef.current) {
-        const current = queryClient.getQueryData<ConversationDetail>(['conversation', conversationId]);
-        if (current) {
-          return { ...current, updatedAt: new Date().toISOString() };
-        }
+      const current = queryClient.getQueryData<ConversationDetail>(['conversation', conversationId]);
+      const targetMessage = current?.messages.find((message) => message.id === messageId);
+
+      if (current && targetMessage?.provenance === 'web') {
+        return {
+          ...current,
+          messages: removeMessageTurn(current.messages, messageId),
+          updatedAt: new Date().toISOString(),
+        };
       }
+
       return api.deleteConversationMessage(conversationId, messageId);
-    },
-    onError: (_error, _messageId, context) => {
-      if (context?.snapshot) {
-        queryClient.setQueryData(['conversation', conversationId], context.snapshot);
-      }
     },
     onSuccess: async (conversation) => {
       queryClient.setQueryData(['conversation', conversationId], conversation);
       await queryClient.invalidateQueries({ queryKey: ['conversations'] });
     },
-    onSettled: () => {
-      pendingDeleteLocalOnlyRef.current = false;
+  });
+}
+
+export function useToggleConversationEntity(conversationId: string) {
+  const { api } = useServerConfig();
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ entityValue, action }: { entityValue: string; action: 'add' | 'remove' }) =>
+      api.toggleConversationEntity(conversationId, entityValue, action),
+    onMutate: async ({ entityValue, action }) => {
+      const queryKey = ['conversation', conversationId] as const;
+      const previous = queryClient.getQueryData<ConversationDetail>(queryKey);
+
+      queryClient.setQueryData<ConversationDetail | undefined>(queryKey, (current) => {
+        if (!current) {
+          return current;
+        }
+
+        const existing = new Set(current.hiddenEntityValues ?? []);
+        if (action === 'remove') {
+          existing.delete(entityValue);
+        } else {
+          existing.add(entityValue);
+        }
+
+        return {
+          ...current,
+          hiddenEntityValues: [...existing],
+          updatedAt: new Date().toISOString(),
+        };
+      });
+
+      return { previous };
+    },
+    onError: (_error, _variables, context) => {
+      if (!context?.previous) {
+        return;
+      }
+      queryClient.setQueryData(['conversation', conversationId], context.previous);
+    },
+    onSuccess: (conversation) => {
+      queryClient.setQueryData(['conversation', conversationId], conversation);
     },
   });
 }

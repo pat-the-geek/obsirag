@@ -4,7 +4,6 @@ Logging professionnel avec loguru.
 - Fichier rotatif (10 MB, rétention 30 jours, compression zip)
 - Fichier d'erreurs séparé
 - Suivi de la consommation de tokens IA (méthode dédiée)
-- Buffer circulaire en mémoire pour l'API /system/logs
 """
 import sys
 import json
@@ -18,26 +17,30 @@ from src.storage.safe_read import read_json_file
 
 
 _TOKEN_STATS_LOCK = threading.RLock()
+_LOG_BUFFER_LOCK = threading.RLock()
+_LOG_BUFFER_MAX = 2000
+_LOG_BUFFER: deque[dict] = deque(maxlen=_LOG_BUFFER_MAX)
 
-_LOG_BUFFER_LOCK = threading.Lock()
-_LOG_BUFFER: deque[dict] = deque(maxlen=500)
+
+def _capture_log_record(message) -> None:
+    """Capture une copie des logs en mémoire pour l'API /system/logs."""
+    record = message.record
+    with _LOG_BUFFER_LOCK:
+        _LOG_BUFFER.append(
+            {
+                "timestamp": record["time"].astimezone(timezone.utc).isoformat(),
+                "level": str(record["level"].name),
+                "name": str(record.get("name") or ""),
+                "line": int(record.get("line") or 0),
+                "message": str(record.get("message") or ""),
+            }
+        )
 
 
 def get_log_buffer() -> list[dict]:
+    """Retourne une copie du buffer de logs mémoire."""
     with _LOG_BUFFER_LOCK:
         return list(_LOG_BUFFER)
-
-
-def _log_buffer_sink(message) -> None:
-    record = message.record
-    with _LOG_BUFFER_LOCK:
-        _LOG_BUFFER.append({
-            "timestamp": record["time"].isoformat(),
-            "level": record["level"].name,
-            "name": record["name"],
-            "line": record["line"],
-            "message": record["message"],
-        })
 
 
 def configure_logging(log_level: str = "INFO", log_dir: str = "/app/logs") -> None:
@@ -57,7 +60,9 @@ def configure_logging(log_level: str = "INFO", log_dir: str = "/app/logs") -> No
     )
 
     logger.add(sys.stdout, format=fmt_console, level=log_level, colorize=True)
-    logger.add(_log_buffer_sink, level="DEBUG", format="{message}", colorize=False)
+
+    # Sink mémoire utilisé par l'endpoint API /api/v1/system/logs.
+    logger.add(_capture_log_record, level="DEBUG")
 
     log_path = Path(log_dir)
     log_path.mkdir(parents=True, exist_ok=True)

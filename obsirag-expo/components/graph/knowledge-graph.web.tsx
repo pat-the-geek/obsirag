@@ -1,7 +1,7 @@
 import type { CSSProperties } from 'react';
 import { useEffect, useMemo, useRef } from 'react';
 import { useWindowDimensions } from 'react-native';
-import { DataSet, Network } from 'vis-network/standalone';
+import { DataSet, Network } from 'vis-network/dist/vis-network';
 
 import { GraphData } from '../../types/domain';
 
@@ -936,8 +936,8 @@ function buildAmbientMotionProfile(nodeCount: number) {
   if (nodeCount > 96) {
     return {
       enabled: true,
-      cycleMs: 238,
-      frameIntervalMs: 3,
+      cycleMs: 7600,
+      frameIntervalMs: 96,
       radiusAmplitude: 0.42,
       borderAmplitude: 0.5,
       shadowBase: 12,
@@ -949,8 +949,8 @@ function buildAmbientMotionProfile(nodeCount: number) {
 
   return {
     enabled: true,
-    cycleMs: 215,
-    frameIntervalMs: 3,
+    cycleMs: 6900,
+    frameIntervalMs: 80,
     radiusAmplitude: 0.58,
     borderAmplitude: 0.56,
     shadowBase: 14,

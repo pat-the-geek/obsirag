@@ -13,7 +13,7 @@ Il est concu pour etre importe tel quel dans un nouveau projet afin de guider :
 - les exigences non fonctionnelles,
 - le plan de livraison.
 
-Le but n'est pas de reproduire l'ancienne interface a l'identique, mais de conserver les invariants utiles d'ObsiRAG tout en basculant vers une application moderne, mobile-first, multi-plateforme.
+Le but n'est pas de reproduire Streamlit a l'identique, mais de conserver les invariants utiles d'ObsiRAG tout en basculant vers une application moderne, mobile-first, multi-plateforme.
 
 ## 2. Decision d'architecture
 
@@ -323,10 +323,7 @@ MVP :
 
 - mode single-user,
 - token simple ou session password-protected,
-- ecran de configuration au premier lancement,
-- verification de session via `/api/v1/session`,
-- sortie automatique de `server-config` pendant le bootstrap si une session valide est deja presente,
-- acces manuel au meme ecran depuis `Settings` sans auto-redirection quand l'utilisateur vient explicitement modifier la connexion.
+- ecran de configuration au premier lancement.
 
 ### 10.2 Conversations
 
@@ -356,15 +353,13 @@ Fonctionnalites obligatoires :
 - saisie de prompt,
 - reponse streamée token par token,
 - rendu markdown,
-- choix du provider de generation a l'echelle du fil ou du tour (`MLX` local ou `Euria`),
 - support des sources,
 - affichage de la note principale,
 - timeline ou statut de generation,
 - etat explicite quand l'information n'est pas dans le coffre,
 - bouton de recherche web explicite si applicable,
 - reprise correcte des relances courtes,
-- affichage des entites detectees dans la conversation avec leur type et leur contexte,
-- badges visibles pour la provenance (`coffre`, `web`, `web + coffre`) et le provider effectif (`llmProvider`).
+- affichage des entites detectees dans la conversation avec leur type et leur contexte.
 
 Precisions sur le NER du chat :
 
@@ -382,7 +377,6 @@ Le frontend ne doit pas reimplementer la logique conversationnelle profonde, mai
 - intent de retrieval,
 - statut sentinel,
 - fallback web,
-- provider effectif du tour,
 - provenance de la reponse,
 - `entityContexts` enrichis avec preuve, relation et contexte web compact.
 
@@ -446,7 +440,6 @@ Le module settings doit couvrir :
 - URL backend,
 - etat de la connexion,
 - theme,
-- taille du texte,
 - preferences UI,
 - diagnostics,
 - lecture des grandes statistiques backend,
@@ -464,9 +457,7 @@ Contenu :
 - bouton tester la connexion,
 - statut de compatibilite version API,
 - saisie de mot de passe ou token si necessaire,
-- validation,
-- message explicite si une session valide existe deja et que l'utilisateur arrive ici via le bootstrap,
-- comportement manuel preserve depuis `Settings` pour editer l'URL ou le token sans sortie forcee.
+- validation.
 
 ### 11.2 Dashboard
 
@@ -1041,9 +1032,9 @@ Exigences minimales :
 
 ### 25.2 Ce qui doit etre remplace
 
-- ancienne UI web,
-- etat session purement lie au runtime historique,
-- widgets et flux de rendu specifiques a cette interface.
+- UI Streamlit,
+- etat session purement Streamlit,
+- widgets et flux de rendu specifiques Streamlit.
 
 ### 25.3 Strategie recommandee
 

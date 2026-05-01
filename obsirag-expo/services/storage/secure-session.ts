@@ -3,45 +3,53 @@ import { Platform } from 'react-native';
 
 const ACCESS_TOKEN_KEY = 'obsirag-access-token';
 
-const isWeb = Platform.OS === 'web';
+function hasWebStorage(): boolean {
+  return typeof window !== 'undefined' && typeof window.localStorage !== 'undefined';
+}
 
-function logSecureSessionFailure(operation: 'read' | 'write' | 'delete', error: unknown): void {
-  console.error(`Secure session ${operation} failed. Continuing without persisted token.`, error);
+function saveWebToken(token: string): void {
+  if (!hasWebStorage()) {
+    return;
+  }
+  window.localStorage.setItem(ACCESS_TOKEN_KEY, token);
+}
+
+function loadWebToken(): string {
+  if (!hasWebStorage()) {
+    return '';
+  }
+  return window.localStorage.getItem(ACCESS_TOKEN_KEY) ?? '';
+}
+
+function clearWebToken(): void {
+  if (!hasWebStorage()) {
+    return;
+  }
+  window.localStorage.removeItem(ACCESS_TOKEN_KEY);
 }
 
 export async function saveAccessToken(token: string): Promise<void> {
-  if (isWeb) {
+  if (Platform.OS === 'web') {
+    saveWebToken(token);
     return;
   }
 
-  try {
-    await SecureStore.setItemAsync(ACCESS_TOKEN_KEY, token);
-  } catch (error) {
-    logSecureSessionFailure('write', error);
-  }
+  await SecureStore.setItemAsync(ACCESS_TOKEN_KEY, token);
 }
 
 export async function loadAccessToken(): Promise<string> {
-  if (isWeb) {
-    return '';
+  if (Platform.OS === 'web') {
+    return loadWebToken();
   }
 
-  try {
-    return (await SecureStore.getItemAsync(ACCESS_TOKEN_KEY)) ?? '';
-  } catch (error) {
-    logSecureSessionFailure('read', error);
-    return '';
-  }
+  return (await SecureStore.getItemAsync(ACCESS_TOKEN_KEY)) ?? '';
 }
 
 export async function clearAccessToken(): Promise<void> {
-  if (isWeb) {
+  if (Platform.OS === 'web') {
+    clearWebToken();
     return;
   }
 
-  try {
-    await SecureStore.deleteItemAsync(ACCESS_TOKEN_KEY);
-  } catch (error) {
-    logSecureSessionFailure('delete', error);
-  }
+  await SecureStore.deleteItemAsync(ACCESS_TOKEN_KEY);
 }

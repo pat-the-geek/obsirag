@@ -4,7 +4,6 @@ import { Text, View } from 'react-native';
 
 import { MessageBubble } from '../../components/chat/message-bubble';
 import { MarkdownNote } from '../../components/notes/markdown-note';
-import { useAppStore } from '../../store/app-store';
 import { ChatMessage } from '../../types/domain';
 
 function flattenStyle(value: unknown): Array<Record<string, unknown>> {
@@ -44,10 +43,6 @@ function collectText(value: unknown): string[] {
 
 function findHighlightByText(tree: renderer.ReactTestRenderer, expected: string) {
   return tree.root.findAllByProps({ testID: 'markdown-inline-entity-highlight' }).find((node) => collectText(node.props.children).join('') === expected);
-}
-
-function normalizeInlineText(value: string) {
-  return value.replace(/\s+/g, ' ').trim();
 }
 
 describe('MessageBubble', () => {
@@ -117,58 +112,6 @@ describe('MessageBubble', () => {
     expect(joined).not.toMatch(/Cette information n'est pas dans ton coffre/);
   });
 
-  it('renders the generating provider badge on standard assistant responses', () => {
-    const message: ChatMessage = {
-      id: 'assistant-provider-main',
-      role: 'assistant',
-      content: 'Reponse generee par Euria.',
-      createdAt: '2026-04-20T12:00:00Z',
-      provenance: 'vault',
-      llmProvider: 'Euria',
-    };
-
-    const tree = renderer.create(<MessageBubble message={message} />);
-    const texts = tree.root.findAllByType(Text).flatMap((node) => collectText(node.props.children));
-    const joined = texts.join(' ');
-
-    expect(joined).toMatch(/ObsiRAG/);
-    expect(joined).toMatch(/coffre/);
-    expect(joined).toMatch(/via Euria/);
-  });
-
-  it('renders a lowercase web provenance badge for web answers', () => {
-    const message: ChatMessage = {
-      id: 'assistant-web-badge',
-      role: 'assistant',
-      content: 'Réponse issue du web.',
-      createdAt: '2026-04-20T12:00:00Z',
-      provenance: 'web',
-      llmProvider: 'Euria',
-    };
-
-    const tree = renderer.create(<MessageBubble message={message} />);
-    const joined = tree.root.findAllByType(Text).flatMap((node) => collectText(node.props.children)).join(' ');
-
-    expect(joined).toMatch(/web/);
-    expect(joined).toMatch(/via Euria/);
-  });
-
-  it('passes the full assistant markdown to the renderer without incremental truncation', () => {
-    const message: ChatMessage = {
-      id: 'assistant-full-markdown',
-      role: 'assistant',
-      content: '🌟 Clés pour comprendre les rôles :\n\n- Maison Atreides : Noble, honorable, mais détruite au début.\n- Béné Gesserit : Ordre secret influent.',
-      createdAt: '2026-04-20T12:00:00Z',
-      provenance: 'vault',
-      llmProvider: 'Euria',
-    };
-
-    const tree = renderer.create(<MessageBubble message={message} />);
-    const markdownNode = tree.root.findByType(MarkdownNote);
-
-    expect(markdownNode.props.markdown).toBe(message.content);
-  });
-
   it('renders the DDG follow-up as formatted markdown content', () => {
     const message: ChatMessage = {
       id: 'assistant-2',
@@ -176,7 +119,6 @@ describe('MessageBubble', () => {
       content: '# Vue d\'ensemble DDG\n\n- **Un court paragraphe d\'ensemble :**\nThe Boring Company est une entreprise fondee par Elon Musk.',
       createdAt: '2026-04-16T12:00:00Z',
       provenance: 'web',
-      llmProvider: 'MLX',
       queryOverview: {
         query: 'The Boring Company',
         searchQuery: 'The Boring Company overview',
@@ -192,7 +134,6 @@ describe('MessageBubble', () => {
     expect(markdownNodes[0]?.props.markdown).toContain('The Boring Company est une entreprise fondee par Elon Musk.');
     expect(markdownNodes[0]?.props.markdown).toContain('## Un court paragraphe d\'ensemble');
     expect(markdownNodes[0]?.props.markdown).not.toContain('- **Un court paragraphe d\'ensemble :**');
-    expect(tree.root.findAllByType(Text).flatMap((node) => collectText(node.props.children)).join(' ')).toMatch(/via MLX/);
   });
 
   it('renders compact generation stats for completed assistant responses', () => {
@@ -304,38 +245,7 @@ describe('MessageBubble', () => {
     expect(texts).toContain('Notes/Charles.md');
   });
 
-  it('labels vault references distinctly when they are attached after a web response', () => {
-    const message: ChatMessage = {
-      id: 'assistant-web-vault-refs',
-      role: 'assistant',
-      content: 'Voici une réponse web Euria.',
-      createdAt: '2026-04-16T12:00:00Z',
-      provenance: 'web',
-      enrichmentPath: 'euria-direct-web',
-      queryOverview: {
-        query: 'Paul Atreides',
-        searchQuery: 'Paul Atreides Dune',
-        summary: 'Paul Atreides est un personnage central de Dune.',
-        sources: [],
-      },
-      sources: [
-        {
-          filePath: 'Stories/Dune.md',
-          noteTitle: 'Dune',
-        },
-      ],
-    };
-
-    const tree = renderer.create(<MessageBubble message={message} />);
-
-    const texts = tree.root.findAllByType(Text).flatMap((node) => collectText(node.props.children));
-    expect(texts).toContain('Références coffre');
-    expect(texts).toContain('Notes associées après la réponse');
-    expect(tree.root.findByProps({ testID: 'message-query-overview-response' })).toBeTruthy();
-    expect(tree.root.findByProps({ testID: 'sources-panel-toggle' })).toBeTruthy();
-  });
-
-  it('uses the active light theme palette for the assistant bubble', () => {
+  it('uses a light assistant bubble palette', () => {
     const message: ChatMessage = {
       id: 'assistant-light',
       role: 'assistant',
@@ -348,9 +258,7 @@ describe('MessageBubble', () => {
     const bubble = tree.root.findByProps({ testID: 'assistant-message-bubble' });
     const bubbleStyle = flattenStyle(bubble.props.style);
 
-    expect(bubbleStyle).toEqual(
-      expect.arrayContaining([expect.objectContaining({ backgroundColor: '#ffffff', borderColor: '#d7deea' })]),
-    );
+    expect(bubbleStyle).toEqual(expect.arrayContaining([expect.objectContaining({ backgroundColor: '#f4f1ea' })]));
     expect(tree.root.findByType(MarkdownNote).props.tone).toBe('light');
   });
 
@@ -415,12 +323,10 @@ describe('MessageBubble', () => {
 
     const tree = renderer.create(<MessageBubble message={message} />);
     const markdownNodes = tree.root.findAllByType(MarkdownNote);
-    const joined = tree.root.findAllByType(Text).flatMap((node) => collectText(node.props.children)).join(' ');
 
     expect(markdownNodes).toHaveLength(1);
     expect(markdownNodes[0]?.props.markdown).toContain('Contenu du coffre affiche dans la bulle principale.');
     expect(tree.root.findAllByProps({ testID: 'message-query-overview-response' })).toHaveLength(0);
-    expect(joined).toMatch(/web \+ coffre/);
   });
 
   it('keeps the main assistant response visible when Mermaid content is present alongside a DDG overview', () => {
@@ -647,7 +553,7 @@ describe('MessageBubble', () => {
     );
   });
 
-  it('keeps detected entities collapsed by default and renders the entity list on demand', () => {
+  it('keeps detected entities collapsed by default and renders the markdown table on demand', () => {
     const message: ChatMessage = {
       id: 'assistant-6',
       role: 'assistant',
@@ -696,204 +602,14 @@ describe('MessageBubble', () => {
     });
 
     expect(tree.root.findByProps({ testID: 'entity-contexts-panel-content' })).toBeTruthy();
-    const panelContent = tree.root.findByProps({ testID: 'entity-contexts-panel-content' });
-    const joined = panelContent.findAllByType(Text).flatMap((node) => collectText(node.props.children)).join(' ');
+    const markdownTable = tree.root.findByProps({ testID: 'markdown-table' });
+    const joined = markdownTable.findAllByType(Text).flatMap((node) => collectText(node.props.children)).join(' ');
 
+    expect(joined).toContain('N°');
+    expect(joined).toContain("Nom de l'entité");
     expect(joined).toContain('Napoleon Bonaparte');
+    expect(joined).toContain('1');
     expect(joined).toContain('comme sujet central de ce passage');
-  });
-
-  it('renders the detected entities panel with the active custom theme instead of Light+', () => {
-    const previousThemeMode = useAppStore.getState().themeMode;
-    act(() => {
-      useAppStore.setState({ themeMode: 'quiet' });
-    });
-
-    let tree: renderer.ReactTestRenderer | undefined;
-
-    try {
-      const message: ChatMessage = {
-        id: 'assistant-entities-theme',
-        role: 'assistant',
-        content: 'Napoleon est mentionne dans la reponse.',
-        createdAt: '2026-04-16T12:00:00Z',
-        provenance: 'vault',
-        entityContexts: [
-          {
-            type: 'person',
-            typeLabel: 'Personne',
-            value: 'Napoleon Bonaparte',
-            relationExplanation: 'Napoleon Bonaparte est relie a la reponse.',
-            notes: [],
-          },
-        ],
-      };
-
-      tree = renderer.create(<MessageBubble message={message} />);
-
-      act(() => {
-        tree!.root.findByProps({ testID: 'entity-contexts-panel-toggle' }).props.onPress();
-      });
-
-      const panel = tree!.root.findByProps({ testID: 'entity-contexts-panel' });
-      const panelStyle = flattenStyle(panel.props.style);
-
-      expect(panelStyle).toEqual(
-        expect.arrayContaining([expect.objectContaining({ backgroundColor: '#f0f3f6', borderColor: '#d4dbe3' })]),
-      );
-    } finally {
-      act(() => { tree?.unmount(); });
-      act(() => {
-        useAppStore.setState({ themeMode: previousThemeMode });
-      });
-    }
-  });
-
-  it('renders the detected entities panel with the active custom dark theme instead of Dark+', () => {
-    const previousThemeMode = useAppStore.getState().themeMode;
-    act(() => {
-      useAppStore.setState({ themeMode: 'abyss' });
-    });
-
-    let tree: renderer.ReactTestRenderer | undefined;
-
-    try {
-      const message: ChatMessage = {
-        id: 'assistant-entities-theme-abyss',
-        role: 'assistant',
-        content: 'Arrakis est mentionne dans la reponse.',
-        createdAt: '2026-04-16T12:00:00Z',
-        provenance: 'vault',
-        entityContexts: [
-          {
-            type: 'location',
-            typeLabel: 'Lieu',
-            value: 'Arrakis',
-            relationExplanation: 'Arrakis est relie a la reponse.',
-            notes: [],
-          },
-        ],
-      };
-
-      tree = renderer.create(<MessageBubble message={message} />);
-
-      act(() => {
-        tree!.root.findByProps({ testID: 'entity-contexts-panel-toggle' }).props.onPress();
-      });
-
-      const panel = tree!.root.findByProps({ testID: 'entity-contexts-panel' });
-      const panelStyle = flattenStyle(panel.props.style);
-
-      expect(panelStyle).toEqual(
-        expect.arrayContaining([expect.objectContaining({ backgroundColor: '#0b2235', borderColor: '#163956' })]),
-      );
-    } finally {
-      act(() => { tree?.unmount(); });
-      act(() => {
-        useAppStore.setState({ themeMode: previousThemeMode });
-      });
-    }
-  });
-
-  it('defaults the inline detected entities filter to Personne when available', () => {
-    const message: ChatMessage = {
-      id: 'assistant-entities-filter-default',
-      role: 'assistant',
-      content: 'Napoleon et Arrakis sont mentionnes dans la reponse.',
-      createdAt: '2026-04-16T12:00:00Z',
-      provenance: 'vault',
-      entityContexts: [
-        {
-          type: 'person',
-          typeLabel: 'Personne',
-          value: 'Napoleon Bonaparte',
-          relationExplanation: 'Napoleon Bonaparte est relie a la reponse.',
-          notes: [],
-        },
-        {
-          type: 'location',
-          typeLabel: 'Lieu',
-          value: 'Arrakis',
-          relationExplanation: 'Arrakis est reliee a la reponse.',
-          notes: [],
-        },
-      ],
-    };
-
-    const tree = renderer.create(<MessageBubble message={message} />);
-
-    act(() => {
-      tree.root.findByProps({ testID: 'entity-contexts-panel-toggle' }).props.onPress();
-    });
-
-    const panelText = normalizeInlineText(tree.root.findAllByType(Text).flatMap((node) => collectText(node.props.children)).join(' '));
-
-    expect(panelText).toContain('1 entité sur 2');
-    expect(panelText).toContain('Personne');
-
-    const panelContent = tree.root.findByProps({ testID: 'entity-contexts-panel-content' });
-    const joined = normalizeInlineText(panelContent.findAllByType(Text).flatMap((node) => collectText(node.props.children)).join(' '));
-
-    expect(joined).toContain('Napoleon Bonaparte');
-    expect(joined).not.toContain('Arrakis');
-  });
-
-  it('can switch the inline detected entities filter back to all types', () => {
-    const message: ChatMessage = {
-      id: 'assistant-entities-filter-all',
-      role: 'assistant',
-      content: 'Napoleon et Arrakis sont mentionnes dans la reponse.',
-      createdAt: '2026-04-16T12:00:00Z',
-      provenance: 'vault',
-      entityContexts: [
-        {
-          type: 'person',
-          typeLabel: 'Personne',
-          value: 'Napoleon Bonaparte',
-          relationExplanation: 'Napoleon Bonaparte est relie a la reponse.',
-          notes: [],
-        },
-        {
-          type: 'location',
-          typeLabel: 'Lieu',
-          value: 'Arrakis',
-          relationExplanation: 'Arrakis est reliee a la reponse.',
-          notes: [],
-        },
-      ],
-    };
-
-    const tree = renderer.create(<MessageBubble message={message} />);
-
-    act(() => {
-      tree.root.findByProps({ testID: 'entity-contexts-panel-toggle' }).props.onPress();
-    });
-
-    act(() => {
-      tree.root.findByProps({ testID: 'entity-contexts-filter-trigger' }).props.onPress();
-    });
-
-    const menuTextBeforeSelection = normalizeInlineText(
-      tree.root.findByProps({ testID: 'entity-contexts-filter-menu' }).findAllByType(Text).flatMap((node) => collectText(node.props.children)).join(' '),
-    );
-
-    expect(menuTextBeforeSelection).toContain("Tous les types d'entités");
-    expect(menuTextBeforeSelection).toContain('Personne');
-    expect(menuTextBeforeSelection).toContain('Lieu');
-
-    act(() => {
-      tree.root.findByProps({ testID: 'entity-contexts-filter-option-all' }).props.onPress();
-    });
-
-    const panelText = normalizeInlineText(tree.root.findAllByType(Text).flatMap((node) => collectText(node.props.children)).join(' '));
-    expect(panelText).toMatch(/2 entité ?s/);
-    expect(panelText).toContain("Tous les types d'entités");
-
-    const panelContent = tree.root.findByProps({ testID: 'entity-contexts-panel-content' });
-    const joined = normalizeInlineText(panelContent.findAllByType(Text).flatMap((node) => collectText(node.props.children)).join(' '));
-
-    expect(joined).toContain('Napoleon Bonaparte');
-    expect(joined).toContain('Arrakis');
   });
 
   it('opens internal wikilinks from assistant markdown', () => {

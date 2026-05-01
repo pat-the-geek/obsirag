@@ -1,10 +1,8 @@
 from pathlib import Path
 from typing import Optional
-from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _ENV_FILE = Path(__file__).resolve().parent.parent / ".env"
-_PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 
 class Settings(BaseSettings):
@@ -43,8 +41,11 @@ class Settings(BaseSettings):
     # API Expo / mobile
     api_access_token: Optional[str] = None
     api_public_base_url: str = "http://localhost:8000"
-    euria_url: Optional[str] = Field(default=None, validation_alias=AliasChoices("URL", "url", "EURIA_URL", "euria_url"))
-    euria_bearer: Optional[str] = Field(default=None, validation_alias=AliasChoices("bearer", "BEARER", "EURIA_BEARER", "euria_bearer"))
+    expo_web_dist_path: str = str(Path(__file__).resolve().parent.parent / "obsirag-expo" / "dist")
+
+    # Euria (Infomaniak)
+    euria_url: Optional[str] = None
+    euria_bearer: Optional[str] = None
 
     # Auto-apprentissage
     autolearn_enabled: bool = True
@@ -218,6 +219,11 @@ class Settings(BaseSettings):
         return self.vault_obsirag_dir / "conversations"
 
     @property
+    def expo_web_dist_dir(self) -> Path:
+        """Répertoire du build Expo web à servir via FastAPI lorsqu'il est présent."""
+        return Path(self.expo_web_dist_path)
+
+    @property
     def synapse_index_file(self) -> Path:
         """Index des paires déjà traitées pour éviter les doublons."""
         return self.data_dir / "autolearn" / "synapse_index.json"
@@ -226,14 +232,6 @@ class Settings(BaseSettings):
     @property
     def knowledge_dir(self) -> Path:
         return self.insights_dir
-
-    @property
-    def project_root(self) -> Path:
-        return _PROJECT_ROOT
-
-    @property
-    def expo_web_dist_dir(self) -> Path:
-        return self.project_root / "obsirag-expo" / "dist"
 
 
 settings = Settings()

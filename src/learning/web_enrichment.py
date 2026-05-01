@@ -1,14 +1,9 @@
 from __future__ import annotations
 
 import re
-import ssl
 from typing import TYPE_CHECKING
 
 from loguru import logger
-
-_SSL_UNVERIFIED_CTX = ssl.create_default_context()
-_SSL_UNVERIFIED_CTX.check_hostname = False
-_SSL_UNVERIFIED_CTX.verify_mode = ssl.CERT_NONE
 
 if TYPE_CHECKING:
     from src.learning.autolearn import AutoLearner
@@ -34,7 +29,7 @@ class AutoLearnWebEnrichment:
             import urllib.request
 
             req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-            with urllib.request.urlopen(req, timeout=8, context=_SSL_UNVERIFIED_CTX) as resp:
+            with urllib.request.urlopen(req, timeout=8) as resp:
                 content_type = resp.headers.get("Content-Type", "")
                 if "pdf" in content_type.lower():
                     return ""
@@ -105,7 +100,7 @@ class AutoLearnWebEnrichment:
             from ddgs import DDGS
 
             enriched_query = self.build_search_query(query)
-            with DDGS(timeout=self._DDGS_TIMEOUT, verify=False) as ddgs:
+            with DDGS(timeout=self._DDGS_TIMEOUT) as ddgs:
                 results = list(ddgs.text(enriched_query, max_results=15))
             trusted = [
                 result for result in results

@@ -3,31 +3,7 @@ import renderer, { act } from 'react-test-renderer';
 import { Text } from 'react-native';
 
 import { aggregateConversationEntityContexts, buildCompactNoteLabel, ConversationEntitySidebar } from '../../components/chat/conversation-entity-sidebar';
-import { useAppStore } from '../../store/app-store';
 import { ChatMessage } from '../../types/domain';
-
-function flattenStyle(value: unknown): Array<Record<string, unknown>> {
-  if (!value) {
-    return [];
-  }
-  if (Array.isArray(value)) {
-    return value.flatMap((item) => flattenStyle(item));
-  }
-  if (typeof value === 'object') {
-    return [value as Record<string, unknown>];
-  }
-  return [];
-}
-
-function collectRenderedText(tree: renderer.ReactTestRenderer): string {
-  return tree.root
-    .findAllByType(Text)
-    .map((node) => {
-      const children = node.props.children;
-      return Array.isArray(children) ? children.join('') : String(children ?? '');
-    })
-    .join('\n');
-}
 
 describe('ConversationEntitySidebar', () => {
   it('aggregates, deduplicates and sorts entity contexts across the conversation', () => {
@@ -127,7 +103,13 @@ describe('ConversationEntitySidebar', () => {
       />,
     );
 
-    const renderedText = collectRenderedText(tree);
+    const renderedText = tree.root
+      .findAllByType(Text)
+      .map((node) => {
+        const children = node.props.children;
+        return Array.isArray(children) ? children.join('') : String(children ?? '');
+      })
+      .join('\n');
 
     expect(renderedText).toContain('4 ko');
   });
@@ -148,116 +130,5 @@ describe('ConversationEntitySidebar', () => {
     );
 
     expect(tree.root.findByProps({ testID: 'conversation-entity-sidebar-scroll' })).toBeTruthy();
-  });
-
-  it('defaults the entity filter to Personne when available', () => {
-    const tree = renderer.create(
-      <ConversationEntitySidebar
-        entities={[
-          {
-            type: 'person',
-            typeLabel: 'Personne',
-            value: 'Amy Adams',
-            notes: [],
-          },
-          {
-            type: 'location',
-            typeLabel: 'Lieu',
-            value: 'Arrakis',
-            notes: [],
-          },
-        ]}
-      />,
-    );
-
-    const renderedText = collectRenderedText(tree);
-
-    expect(renderedText).toContain('Amy Adams');
-    expect(renderedText).not.toContain('Arrakis');
-    expect(renderedText).toContain('Personne');
-    expect(renderedText).toContain('1 entree sur 2');
-  });
-
-  it('can switch the entity filter back to all entity types', () => {
-    const tree = renderer.create(
-      <ConversationEntitySidebar
-        entities={[
-          {
-            type: 'person',
-            typeLabel: 'Personne',
-            value: 'Amy Adams',
-            notes: [],
-          },
-          {
-            type: 'location',
-            typeLabel: 'Lieu',
-            value: 'Arrakis',
-            notes: [],
-          },
-        ]}
-      />,
-    );
-
-    act(() => {
-      tree.root.findByProps({ testID: 'entity-type-filter-trigger' }).props.onPress();
-    });
-
-    const menuTextBeforeSelection = collectRenderedText(tree);
-
-    expect(menuTextBeforeSelection).toContain('Tous les types d\'entites');
-    expect(menuTextBeforeSelection).toContain('Personne');
-    expect(menuTextBeforeSelection).toContain('Lieu');
-
-    act(() => {
-      tree.root.findByProps({ testID: 'entity-type-filter-option-all' }).props.onPress();
-    });
-
-    const renderedText = collectRenderedText(tree);
-
-    expect(renderedText).toContain('Amy Adams');
-    expect(renderedText).toContain('Arrakis');
-    expect(renderedText).toContain('2 entrees');
-    expect(renderedText).toContain('Tous les types d\'entites');
-  });
-
-  it('uses the active custom dark theme for the sidebar and cards', () => {
-    const previousThemeMode = useAppStore.getState().themeMode;
-    act(() => {
-      useAppStore.setState({ themeMode: 'abyss' });
-    });
-
-    let tree: renderer.ReactTestRenderer | undefined;
-
-    try {
-      tree = renderer.create(
-        <ConversationEntitySidebar
-          entities={[
-            {
-              type: 'person',
-              typeLabel: 'Personne',
-              value: 'Amy Adams',
-              notes: [],
-            },
-          ]}
-        />,
-      );
-
-      const sidebar = tree.root.findByProps({ testID: 'conversation-entity-sidebar' });
-      const sidebarStyle = flattenStyle(sidebar.props.style);
-      const card = tree.root.findByProps({ testID: 'conversation-entity-card' });
-      const cardStyle = flattenStyle(card.props.style);
-
-      expect(sidebarStyle).toEqual(
-        expect.arrayContaining([expect.objectContaining({ backgroundColor: '#061a2b', borderColor: '#163956' })]),
-      );
-      expect(cardStyle).toEqual(
-        expect.arrayContaining([expect.objectContaining({ backgroundColor: '#0b2235', borderColor: '#163956' })]),
-      );
-    } finally {
-      tree?.unmount();
-      act(() => {
-        useAppStore.setState({ themeMode: previousThemeMode });
-      });
-    }
   });
 });

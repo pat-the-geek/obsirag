@@ -63,9 +63,6 @@ describe('dashboard screen', () => {
           vectorStore: 'ChromaDB',
           nerModel: 'xx_ent_wiki_sm',
           autolearnMode: 'worker',
-          euriaProvider: 'Infomaniak',
-          euriaModel: 'Qwen/Qwen3.5-122B-A10B-FP8',
-          euriaEnabled: true,
         },
       },
       isLoading: false,
@@ -88,10 +85,6 @@ describe('dashboard screen', () => {
 
     expect(renderedText).toContain('LLM actif ObsiRAG');
     expect(renderedText).toContain('mlx-community/Qwen2.5-7B-Instruct-4bit');
-    expect(renderedText).toContain('Euria Infomaniak');
-    expect(renderedText).toContain('Qwen/Qwen3.5-122B-A10B-FP8');
-    expect(renderedText).toContain('Provider: Infomaniak');
-    expect(renderedText).toContain('Statut: Disponible');
     expect(renderedText).toContain('Source runtime: API FastAPI live');
     expect(renderedText).toContain('Backend: http://192.168.1.217:8000');
     expect(renderedText).toContain('React 19.1');
@@ -134,9 +127,6 @@ describe('dashboard screen', () => {
           vectorStore: 'ChromaDB',
           nerModel: 'xx_ent_wiki_sm',
           autolearnMode: 'worker',
-          euriaProvider: 'Infomaniak',
-          euriaModel: 'Qwen/Qwen3.5-122B-A10B-FP8',
-          euriaEnabled: true,
         },
       },
       isLoading: false,

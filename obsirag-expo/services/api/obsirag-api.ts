@@ -211,6 +211,37 @@ export class ObsiRagApi {
     );
   }
 
+  async toggleConversationEntity(
+    conversationId: string,
+    entityValue: string,
+    action: 'add' | 'remove',
+  ): Promise<ConversationDetail> {
+    if (this.config.useMockServer) {
+      const found = mockConversations.find((item) => item.id === conversationId) ?? mockConversations[0];
+      if (!found) {
+        throw new Error('No mock conversations available.');
+      }
+
+      const existing = new Set(found.hiddenEntityValues ?? []);
+      if (action === 'remove') {
+        existing.delete(entityValue);
+      } else {
+        existing.add(entityValue);
+      }
+
+      return {
+        ...found,
+        hiddenEntityValues: [...existing].sort((left, right) => left.localeCompare(right, 'fr')),
+      };
+    }
+
+    return this.requestJson<ConversationDetail>(`/api/v1/conversations/${encodeURIComponent(conversationId)}/entities`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ entityValue, action }),
+    });
+  }
+
   async saveConversation(conversationId: string): Promise<SaveConversationResult> {
     if (this.config.useMockServer) {
       return { path: `obsirag/conversations/mock/${conversationId}.md` };
@@ -219,17 +250,6 @@ export class ObsiRagApi {
     return this.requestJson<SaveConversationResult>(`/api/v1/conversations/${encodeURIComponent(conversationId)}/save`, {
       method: 'POST',
     });
-  }
-
-  async toggleConversationHiddenEntities(conversationId: string, entityValues: string[], action: 'add' | 'remove'): Promise<{ hiddenEntityValues: string[] }> {
-    if (this.config.useMockServer) {
-      return { hiddenEntityValues: entityValues };
-    }
-
-    return this.requestJson<{ hiddenEntityValues: string[] }>(
-      `/api/v1/conversations/${encodeURIComponent(conversationId)}/hidden-entities`,
-      { method: 'PATCH', body: JSON.stringify({ entityValues, action }), headers: { 'Content-Type': 'application/json' } },
-    );
   }
 
   async generateConversationReport(conversationId: string): Promise<SaveConversationResult> {
@@ -691,7 +711,15 @@ export class ObsiRagApi {
   private async toRequestError(response: Response, fallbackMessage: string): Promise<Error> {
     try {
       const payload = (await response.json()) as { detail?: string };
-      return new Error(payload.detail ?? fallbackMessage);
+      const detail = payload.detail?.trim();
+      if (response.status === 404) {
+        return new Error(
+          detail === 'Not Found'
+            ? 'Endpoint introuvable (404). Verifiez l\'URL backend: utilisez uniquement la base, par ex. http://127.0.0.1:8000, sans /server-config ni /api/v1.'
+            : detail ?? fallbackMessage,
+        );
+      }
+      return new Error(detail ?? fallbackMessage);
     } catch {
       return new Error(fallbackMessage);
     }

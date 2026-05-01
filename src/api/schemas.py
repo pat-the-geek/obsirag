@@ -208,6 +208,11 @@ class MessageCreateRequest(BaseModel):
     useRag: bool = True
 
 
+class PatchConversationEntityRequest(BaseModel):
+    entityValue: str = Field(min_length=1)
+    action: Literal["add", "remove"] = "add"
+
+
 class SaveConversationResponse(BaseModel):
     path: str
 

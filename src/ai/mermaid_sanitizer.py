@@ -26,26 +26,6 @@ _ASCII_REPLACEMENTS = str.maketrans(
 )
 
 
-def _normalize_directive_spacing(value: str) -> str:
-    return (
-        value
-        .replace("date Format", "dateFormat")
-        .replace("date format", "dateFormat")
-        .replace("axis Format", "axisFormat")
-        .replace("axis format", "axisFormat")
-        .replace("tick Interval", "tickInterval")
-        .replace("tick interval", "tickInterval")
-        .replace("today Marker", "todayMarker")
-        .replace("today marker", "todayMarker")
-        .replace("weekend Fill", "weekendFill")
-        .replace("weekend fill", "weekendFill")
-        .replace("acc Title", "accTitle")
-        .replace("acc title", "accTitle")
-        .replace("acc Descr", "accDescr")
-        .replace("acc descr", "accDescr")
-    )
-
-
 def contains_mermaid_fence(text: str) -> bool:
     return bool(MERMAID_FENCE_RE.search(text or ""))
 
@@ -103,7 +83,7 @@ def sanitize_mermaid_code_ascii(code: str) -> str:
             for character in body
             if character in {"\t", "\n", "\r"} or 32 <= ord(character) <= 126
         )
-        sanitized_lines.append(_normalize_directive_spacing(f"{indent}{body.rstrip()}"))
+        sanitized_lines.append(f"{indent}{body.rstrip()}")
 
     return normalize_mermaid_code_syntax("\n".join(sanitized_lines).strip())
 

@@ -10,7 +10,7 @@ from src.ui.side_menu import render_mobile_main_menu
 
 @pytest.mark.unit
 class TestSideMenu:
-    def test_render_mobile_main_menu_uses_page_link_for_internal_navigation(self):
+    def test_render_mobile_main_menu_uses_streamlit_page_link_for_internal_navigation(self):
         with patch("src.ui.side_menu.st.markdown"):
             with patch("src.ui.side_menu.st.container", return_value=nullcontext()):
                 with patch("src.ui.side_menu.st.expander", return_value=nullcontext()) as expander:

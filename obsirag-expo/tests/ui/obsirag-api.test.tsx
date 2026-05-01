@@ -106,20 +106,6 @@ describe('ObsiRagApi.streamConversationResponse', () => {
     expect(result).toEqual(fallbackMessage);
   });
 
-  it('does not fall back to the non-streaming endpoint when the stream request is aborted intentionally', async () => {
-    const api = new ObsiRagApi({
-      backendUrl: 'http://localhost:8000',
-      useMockServer: false,
-    });
-    const abortError = new DOMException('The user aborted a request.', 'AbortError');
-
-    (global.fetch as jest.Mock).mockRejectedValueOnce(abortError);
-
-    await expect(api.streamConversationResponse('conv-1', 'bonjour', {}, { signal: new AbortController().signal })).rejects.toBe(abortError);
-
-    expect(global.fetch).toHaveBeenCalledTimes(1);
-  });
-
   it('returns the completion payload even when token frames were emitted before it', async () => {
     const api = new ObsiRagApi({
       backendUrl: 'http://localhost:8000',

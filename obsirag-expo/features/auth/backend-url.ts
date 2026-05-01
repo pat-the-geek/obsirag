@@ -15,7 +15,13 @@ export function normalizeBackendUrlInput(value: string): string {
     normalizedValue = `http://${normalizedValue}`;
   }
 
-  return normalizedValue.replace(/\/$/, '');
+  try {
+    const parsedUrl = new URL(normalizedValue);
+    // Le backend Expo attend une base d'origine, sans chemin (/api/v1 est ajoute par le client).
+    return parsedUrl.origin;
+  } catch {
+    return normalizedValue.replace(/\/$/, '');
+  }
 }
 
 export function isLocalOnlyUrl(value: string): boolean {
@@ -45,19 +51,4 @@ export function resolveSessionBackendUrlHint(currentBackendUrl: string, backendU
   }
 
   return normalizedHint;
-}
-
-export function resolveLocalWebBackendUrl(currentBackendUrl: string, browserOrigin?: string | null): string | null {
-  const normalizedCurrentUrl = normalizeBackendUrlInput(currentBackendUrl);
-  const normalizedBrowserOrigin = normalizeBackendUrlInput(browserOrigin ?? '');
-
-  if (!normalizedCurrentUrl || !normalizedBrowserOrigin || normalizedCurrentUrl === normalizedBrowserOrigin) {
-    return null;
-  }
-
-  if (!isLocalOnlyUrl(normalizedBrowserOrigin) || isLocalOnlyUrl(normalizedCurrentUrl)) {
-    return null;
-  }
-
-  return normalizedBrowserOrigin;
 }

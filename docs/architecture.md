@@ -10,7 +10,7 @@ ObsiRAG repose sur cinq blocs principaux :
 2. `ChromaStore` fournit l'index vectoriel et les accès de récupération.
 3. `RAGPipeline` résout les requêtes utilisateur en séparant désormais mieux retrieval et prompting.
 4. `AutoLearner` traite les notes en arrière-plan pour produire insights, synapses et synthèses.
-5. Le backend FastAPI et le client Expo exposent le chat, la recherche web, le graphe, les insights et le visualiseur de notes, avec un choix de provider conversationnel entre MLX et Euria.
+5. Le backend FastAPI et le client Expo exposent le chat, la recherche web, le graphe, les insights et le visualiseur de notes.
 
 ## Flux principal
 
@@ -49,11 +49,9 @@ Une requête suit ce chemin :
 2. `RAGPipeline` résout la question dans le fil si nécessaire,
 3. `RetrievalStrategy` choisit une stratégie de récupération,
 4. `AnswerPrompting` prépare le contexte et les messages,
-5. le backend choisit le provider demande pour le tour courant: MLX local par defaut, ou Euria si `useEuria=true`,
-6. le provider produit une réponse, eventuellement ancree dans le coffre si un contexte RAG local existe,
-7. le backend enrichit la réponse avec les contextes d'entités NER et, si le coffre est insuffisant, une synthèse de recherche web,
-8. la sortie est annotee avec la provenance et le provider effectif,
-9. `RAGPipeline` normalise la sortie et applique les garde-fous.
+5. le backend MLX produit une réponse,
+6. le backend enrichit la réponse avec les contextes d'entités NER et, si le coffre est insuffisant, une synthèse de recherche web,
+7. `RAGPipeline` normalise la sortie et applique les garde-fous.
 
 Précision importante sur le NER conversationnel :
 
@@ -96,48 +94,45 @@ Responsabilité : exposer les capacités produit réellement utilisées dans le 
 
 - FastAPI reste la façade unique pour les conversations, le statut système, le graphe, les notes, les insights et la recherche web,
 - Expo reste une couche de présentation et d'interaction, sans logique RAG embarquée,
-- les réponses de conversation peuvent transporter des sources, une note principale, un `queryOverview`, des `entityContexts`, une provenance explicite et `llmProvider`,
-- le frontend peut demander `useEuria=true` au niveau d'un tour de conversation ou d'une recherche web explicite sans changer la configuration globale du runtime,
+- les réponses de conversation peuvent transporter des sources, une note principale, un `queryOverview`, des `entityContexts` et une provenance explicite,
 - `entityContexts` doit rester le conteneur de référence pour les enrichissements NER du chat: type, notes liées, image éventuelle, ligne de preuve, explication de relation et connaissances web compactes,
-- l'ecran `server-config` a deux modes distincts: bootstrap avec auto-sortie si la session est deja valide, et acces manuel depuis `Settings` avec maintien explicite sur l'ecran,
-- les preferences UI persistantes incluent desormais le theme, la taille du texte et le provider conversationnel courant,
 - le graphe doit rester filtrable côté backend par texte, dossier, tag, type et profondeur de sous-graphe.
 
-### UI héritée, hot reload et stratégie d'import
+### UI Streamlit héritée, hot reload et stratégie d'import
 
 Responsabilité : documenter et maintenir la surface historique encore présente dans le dépôt, sans la confondre avec le point d'entrée produit principal qui est désormais le couple FastAPI + Expo.
 
 Cette section ne décrit donc qu'un besoin de maintenance de compatibilité pour les modules UI hérités encore présents dans le dépôt.
 
-Constat pratique : en développement, le runtime UI historique peut conserver un état de modules intermédiaire lors d'un hot reload. Cela peut produire des `ImportError` transitoires sur des imports nommés depuis des modules UI récemment modifiés, alors même qu'un import Python propre fonctionne hors runtime interactif.
+Constat pratique : en développement, Streamlit peut conserver un état de modules intermédiaire lors d'un hot reload. Cela peut produire des `ImportError` transitoires sur des imports nommés depuis des modules UI récemment modifiés, alors même qu'un import Python propre fonctionne hors runtime Streamlit.
 
 Conventions retenues :
 
-- pour les pages de l'interface héritée qui consomment plusieurs helpers d'un même module UI en évolution rapide, préférer `from src.ui import module_x` puis `module_x.helper(...)` plutôt que multiplier les imports nommés,
+- pour les pages Streamlit qui consomment plusieurs helpers d'un même module UI en évolution rapide, préférer `from src.ui import module_x` puis `module_x.helper(...)` plutôt que multiplier les imports nommés,
 - extraire les générateurs HTML purs ou helpers de rendu testables dans de petits modules sans effet de bord de page,
 - éviter d'importer au niveau module des dépendances qui déclenchent du runtime lourd si elles ne sont utiles qu'au rendu,
-- centraliser les contournements sensibles dans des helpers partagés comme `html_embed` ou les helpers Mermaid pour réduire la surface de reload fragile.
+- centraliser les contournements Streamlit sensibles dans des helpers partagés comme `html_embed` ou les helpers Mermaid pour réduire la surface de reload fragile.
 
 Contournements déjà appliqués :
 
 - la page Cerveau s'appuie sur un import de module `brain_explorer` plutôt que sur plusieurs imports nommés,
-- les embeds HTML de l'interface héritée sont centralisés dans `src/ui/html_embed.py`,
-- le rendu Mermaid du visualiseur de note est sorti dans un helper pur afin d'être testable sans charger toute la page UI,
+- les embeds HTML Streamlit sont centralisés dans `src/ui/html_embed.py`,
+- le rendu Mermaid du visualiseur de note est sorti dans un helper pur afin d'être testable sans charger toute la page Streamlit,
 - `src/ui/services_cache.py` invalide désormais le singleton si le runtime conserve une instance `chroma` ne portant plus les helpers attendus.
 
-### Protocole opératoire hot reload UI héritée
+### Protocole opératoire hot reload Streamlit
 
-Quand une page de l'interface héritée casse juste après un refactor alors que l'import Python direct fonctionne, suivre cette séquence dans cet ordre :
+Quand une page Streamlit héritée casse juste après un refactor alors que l'import Python direct fonctionne, suivre cette séquence dans cet ordre :
 
 1. vérifier si le code source expose bien le helper ou symbole attendu via une lecture directe du fichier concerné,
-2. confirmer si l'erreur n'existe qu'en runtime interactif en comparant avec un import Python hors UI,
+2. confirmer si l'erreur n'existe qu'en runtime Streamlit en comparant avec un import Python hors UI,
 3. consulter `logs/obsirag.log` pour distinguer une vraie régression source d'un objet singleton obsolète encore en mémoire,
 4. si l'erreur pointe un helper Chroma ou UI récemment ajouté, privilégier la reconstruction des services plutôt qu'un débogage métier prématuré.
 
 Procédure locale recommandée :
 
 1. exécuter `./scripts/validate_local.sh` pour enchaîner redémarrage contrôlé, tests UI ciblés et lecture rapide des logs,
-2. recharger ensuite la page UI en cause,
+2. recharger ensuite la page Streamlit en cause,
 3. en cas d'évolution code significative, compléter avec `source .venv/bin/activate && pytest --no-cov`.
 
 Chaîne standard de validation locale post-changement :
@@ -174,7 +169,7 @@ Sorties machine-readable :
 
 Signaux utiles de diagnostic :
 
-- si l'import Python direct voit la nouvelle méthode mais que le runtime UI signale encore `AttributeError`, suspecter d'abord un objet mis en cache,
+- si l'import Python direct voit la nouvelle méthode mais que Streamlit signale encore `AttributeError`, suspecter d'abord un objet mis en cache,
 - si `services_cache` déclenche une reconstruction et qu'un second rendu passe, conserver la correction côté compatibilité plutôt qu'ajouter un contournement spécifique de page,
 - si l'erreur mentionne qu'une clé `st.session_state` ne peut plus être modifiée après instanciation d'un widget, déplacer la mutation dans un callback `on_click` ou `on_change`, ou l'exécuter avant la création du widget,
 - si l'erreur persiste après redémarrage complet, traiter alors le problème comme une régression source classique.
