@@ -41,3 +41,10 @@ src/ui/pages/__pycache__/
 .obsirag-autolearn.pid
 .obsirag-api.pid
 .obsirag-expo.pid
+
+# Artefacts locaux (ne pas commiter)
+.coverage*
+.tmp_*.txt
+reports/
+"package-lock 2.json"
+htmlcov/
