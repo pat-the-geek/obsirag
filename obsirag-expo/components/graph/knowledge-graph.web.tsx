@@ -1,7 +1,8 @@
 import type { CSSProperties } from 'react';
 import { useEffect, useMemo, useRef } from 'react';
 import { useWindowDimensions } from 'react-native';
-import { DataSet, Network } from 'vis-network';
+import { DataSet } from 'vis-data';
+import { Network } from 'vis-network';
 
 import { GraphData } from '../../types/domain';
 
