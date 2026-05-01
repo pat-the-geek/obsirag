@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import urllib.error
 from datetime import datetime
 from unittest.mock import MagicMock, patch
 
@@ -196,3 +197,19 @@ class TestEntityServices:
         assert [context["value"] for context in contexts] == ["MacBook Neo", "MacBook Air"]
         assert [context["type"] for context in contexts] == ["PRODUCT", "PRODUCT"]
         assert contexts[0]["tag"] == "produit/macbook-neo"
+
+    def test_fetch_ddg_entity_knowledge_disables_after_ssl_cert_error(self, tmp_settings):
+        owner = _make_owner(tmp_settings)
+        service = AutoLearnEntityServices(owner)
+
+        ssl_error = urllib.error.URLError("[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: self-signed certificate in certificate chain")
+        with (
+            patch("urllib.request.urlopen", side_effect=ssl_error) as mock_urlopen,
+            patch("src.learning.entity_services.logger.warning") as warning_log,
+        ):
+            assert service._fetch_ddg_entity_knowledge("Nestle") == {}
+            assert service._fetch_ddg_entity_knowledge("OneNote") == {}
+
+        assert service._ddg_lookup_disabled is True
+        assert mock_urlopen.call_count == 1
+        warning_log.assert_called_once()

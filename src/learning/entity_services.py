@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import re
+import ssl
+import urllib.error
 import urllib.parse
 import urllib.request
 import unicodedata
@@ -39,6 +41,7 @@ _PRODUCT_HINT_TOKENS = {
 class AutoLearnEntityServices:
     def __init__(self, owner: Any) -> None:
         self._owner = owner
+        self._ddg_lookup_disabled = False
 
     def load_wuddai_entities(self) -> list[dict]:
         settings = self._owner._get_settings()
@@ -476,6 +479,9 @@ class AutoLearnEntityServices:
         }.get(entity_type, entity_type.title())
 
     def _fetch_ddg_entity_knowledge(self, entity_name: str) -> dict:
+        if self._ddg_lookup_disabled:
+            return {}
+
         try:
             params = urllib.parse.urlencode(
                 {
@@ -493,9 +499,34 @@ class AutoLearnEntityServices:
             with urllib.request.urlopen(request, timeout=_DDG_TIMEOUT_SECONDS) as response:
                 payload = json.loads(response.read().decode("utf-8"))
             return self._summarize_ddg_entity_knowledge(payload)
+        except urllib.error.URLError as exc:
+            if self._is_ssl_certificate_error(exc):
+                self._ddg_lookup_disabled = True
+                logger.warning(
+                    "DDG knowledge lookup désactivé pour cette exécution: vérification SSL impossible "
+                    "(certificat auto-signé/interception TLS). Configurez SSL_CERT_FILE/REQUESTS_CA_BUNDLE "
+                    "avec l'autorité de certification de votre réseau."
+                )
+                return {}
+            logger.debug(f"DDG knowledge lookup échoué pour {entity_name!r}: {exc}")
+            return {}
         except Exception as exc:
             logger.debug(f"DDG knowledge lookup échoué pour {entity_name!r}: {exc}")
             return {}
+
+    @staticmethod
+    def _is_ssl_certificate_error(exc: urllib.error.URLError) -> bool:
+        reason = getattr(exc, "reason", None)
+        if isinstance(reason, ssl.SSLCertVerificationError):
+            return True
+
+        reason_text = str(reason or exc)
+        lowered = reason_text.lower()
+        return (
+            "certificate_verify_failed" in lowered
+            or "certificate verify failed" in lowered
+            or "self-signed certificate" in lowered
+        )
 
     @classmethod
     def _summarize_ddg_entity_knowledge(cls, payload: dict) -> dict:
