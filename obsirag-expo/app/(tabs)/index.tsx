@@ -204,7 +204,7 @@ function formatEuriaModelValue(model: string | undefined, enabled: boolean | und
   if (trimmed) {
     return trimmed;
   }
-  return enabled ? 'En attente du runtime Euria' : 'Non configure';
+  return enabled ? 'En attente du runtime Euria' : 'openai/gpt-oss-120b';
 }
 
 const styles = StyleSheet.create({

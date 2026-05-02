@@ -1238,9 +1238,9 @@ def system_status(_: None = Depends(require_api_auth)) -> SystemStatusResponse:
             vectorStore="ChromaDB",
             nerModel=settings.ner_model,
             autolearnMode="worker" if settings.autolearn_enabled else "disabled",
-            euriaProvider="Infomaniak" if settings.euria_url else None,
-            euriaModel=settings.euria_model if settings.euria_url else None,
-            euriaEnabled=bool(settings.euria_url and settings.euria_bearer),
+            euriaProvider="Infomaniak",
+            euriaModel=(settings.euria_model or EuriaClient.DEFAULT_MODEL),
+            euriaEnabled=bool((settings.euria_url or "").strip() and (settings.euria_bearer or "").strip()),
         ),
         alerts=[
             SystemAlertModel(
