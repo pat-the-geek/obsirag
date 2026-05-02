@@ -75,6 +75,7 @@ export default function DashboardScreen() {
   const autolearnStatus = formatStatusValue(data.autolearn?.step, 'Inactif');
   const stackBadges = buildDashboardBadges(data);
   const activeLlmModel = formatActiveModelValue(data.runtime?.llmModel);
+  const euriaLlmModel = formatEuriaModelValue(data.runtime?.euriaModel, data.runtime?.euriaEnabled);
   const runtimeSourceLabel = useMockServer ? 'Donnees mock locales' : 'API FastAPI live';
   const connectionModeLabel = useMockServer ? 'Mode mock' : 'Mode live';
 
@@ -88,7 +89,8 @@ export default function DashboardScreen() {
           <Text style={styles.heroSubtitle}>Vue d’ensemble du runtime, des recherches rapides et de l’activité de l’auto-learner.</Text>
           <View style={styles.activeModelCard}>
             <Text style={styles.activeModelLabel}>LLM actif ObsiRAG</Text>
-            <Text selectable style={styles.activeModelValue}>{activeLlmModel}</Text>
+            <Text selectable style={styles.activeModelValue}>LLM MLX: {activeLlmModel}</Text>
+            <Text selectable style={styles.activeModelValue}>LLM Euria: {euriaLlmModel}</Text>
             <Text style={styles.activeModelMeta}>Source runtime: {runtimeSourceLabel}</Text>
             <Text selectable style={styles.activeModelMeta}>Backend: {backendUrl}</Text>
           </View>
@@ -195,6 +197,14 @@ function formatActiveModelValue(model: string | undefined) {
     return 'Chargement du modèle MLX…';
   }
   return trimmed;
+}
+
+function formatEuriaModelValue(model: string | undefined, enabled: boolean | undefined) {
+  const trimmed = model?.trim();
+  if (trimmed) {
+    return trimmed;
+  }
+  return enabled ? 'En attente du runtime Euria' : 'Non configure';
 }
 
 const styles = StyleSheet.create({

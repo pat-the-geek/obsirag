@@ -1,5 +1,6 @@
 from pathlib import Path
 from typing import Optional
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _ENV_FILE = Path(__file__).resolve().parent.parent / ".env"
@@ -44,8 +45,18 @@ class Settings(BaseSettings):
     expo_web_dist_path: str = str(Path(__file__).resolve().parent.parent / "obsirag-expo" / "dist")
 
     # Euria (Infomaniak)
-    euria_url: Optional[str] = None
-    euria_bearer: Optional[str] = None
+    euria_url: Optional[str] = Field(
+        default=None,
+        validation_alias=AliasChoices("EURIA_URL", "EURIA_API_URL", "INFOMANIAK_EURIA_URL"),
+    )
+    euria_bearer: Optional[str] = Field(
+        default=None,
+        validation_alias=AliasChoices("EURIA_BEARER", "EURIA_API_KEY", "EURIA_TOKEN", "INFOMANIAK_API_KEY"),
+    )
+    euria_model: str = Field(
+        default="openai/gpt-oss-120b",
+        validation_alias=AliasChoices("EURIA_MODEL", "EURIA_LLM_MODEL"),
+    )
 
     # Auto-apprentissage
     autolearn_enabled: bool = True

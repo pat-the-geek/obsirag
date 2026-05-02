@@ -63,6 +63,9 @@ describe('dashboard screen', () => {
           vectorStore: 'ChromaDB',
           nerModel: 'xx_ent_wiki_sm',
           autolearnMode: 'worker',
+          euriaProvider: 'Infomaniak',
+          euriaModel: 'openai/gpt-oss-120b',
+          euriaEnabled: true,
         },
       },
       isLoading: false,
@@ -84,7 +87,8 @@ describe('dashboard screen', () => {
       .join('\n');
 
     expect(renderedText).toContain('LLM actif ObsiRAG');
-    expect(renderedText).toContain('mlx-community/Qwen2.5-7B-Instruct-4bit');
+    expect(renderedText).toContain('LLM MLX: mlx-community/Qwen2.5-7B-Instruct-4bit');
+    expect(renderedText).toContain('LLM Euria: openai/gpt-oss-120b');
     expect(renderedText).toContain('Source runtime: API FastAPI live');
     expect(renderedText).toContain('Backend: http://192.168.1.217:8000');
     expect(renderedText).toContain('React 19.1');
@@ -127,6 +131,9 @@ describe('dashboard screen', () => {
           vectorStore: 'ChromaDB',
           nerModel: 'xx_ent_wiki_sm',
           autolearnMode: 'worker',
+          euriaProvider: 'Infomaniak',
+          euriaModel: 'openai/gpt-oss-120b',
+          euriaEnabled: true,
         },
       },
       isLoading: false,

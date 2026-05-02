@@ -20,11 +20,11 @@ class EuriaClient:
         *,
         url: str | None = None,
         bearer: str | None = None,
-        model: str = DEFAULT_MODEL,
+        model: str | None = None,
     ) -> None:
         self._url = (url or settings.euria_url or "").strip()
         self._bearer = (bearer or settings.euria_bearer or "").strip()
-        self._model = model
+        self._model = (model or settings.euria_model or self.DEFAULT_MODEL).strip()
         if not self._url or not self._bearer:
             raise ValueError("URL et bearer Euria sont requis pour la conversation.")
 

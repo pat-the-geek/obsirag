@@ -1239,7 +1239,7 @@ def system_status(_: None = Depends(require_api_auth)) -> SystemStatusResponse:
             nerModel=settings.ner_model,
             autolearnMode="worker" if settings.autolearn_enabled else "disabled",
             euriaProvider="Infomaniak" if settings.euria_url else None,
-            euriaModel=EuriaClient.DEFAULT_MODEL if settings.euria_url else None,
+            euriaModel=settings.euria_model if settings.euria_url else None,
             euriaEnabled=bool(settings.euria_url and settings.euria_bearer),
         ),
         alerts=[

@@ -114,6 +114,9 @@ export default function SettingsScreen() {
         <Text style={[styles.bodyText, { color: theme.colors.text, fontSize: scaleFontSize(14, fontScale.scale), lineHeight: scaleLineHeight(20, fontScale.scale) }]}>LLM: {data?.llmAvailable ? 'disponible' : 'indisponible'}</Text>
         <Text style={[styles.bodyText, { color: theme.colors.text, fontSize: scaleFontSize(14, fontScale.scale), lineHeight: scaleLineHeight(20, fontScale.scale) }]}>Provider LLM: {data?.runtime?.llmProvider ?? '-'}</Text>
         <Text style={[styles.bodyText, { color: theme.colors.text, fontSize: scaleFontSize(14, fontScale.scale), lineHeight: scaleLineHeight(20, fontScale.scale) }]}>Modele actif: {data?.runtime?.llmModel ?? 'en attente'}</Text>
+        <Text style={[styles.bodyText, { color: theme.colors.text, fontSize: scaleFontSize(14, fontScale.scale), lineHeight: scaleLineHeight(20, fontScale.scale) }]}>Provider Euria: {data?.runtime?.euriaProvider ?? '-'}</Text>
+        <Text style={[styles.bodyText, { color: theme.colors.text, fontSize: scaleFontSize(14, fontScale.scale), lineHeight: scaleLineHeight(20, fontScale.scale) }]}>Euria active: {data?.runtime?.euriaEnabled ? 'oui' : 'non'}</Text>
+        <Text style={[styles.bodyText, { color: theme.colors.text, fontSize: scaleFontSize(14, fontScale.scale), lineHeight: scaleLineHeight(20, fontScale.scale) }]}>Modele Euria: {data?.runtime?.euriaModel ?? 'non configure'}</Text>
         <Text style={[styles.bodyText, { color: theme.colors.text, fontSize: scaleFontSize(14, fontScale.scale), lineHeight: scaleLineHeight(20, fontScale.scale) }]}>Embeddings: {data?.runtime?.embeddingModel ?? '-'}</Text>
         <StatusPill label={autolearnLabel} tone={autolearnTone} />
         <Text style={[styles.bodyText, { color: theme.colors.text, fontSize: scaleFontSize(14, fontScale.scale), lineHeight: scaleLineHeight(20, fontScale.scale) }]}>Gestion auto-learn: {data?.autolearn?.managedBy ?? '-'}</Text>
