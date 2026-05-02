@@ -78,6 +78,16 @@ MLX_CHAT_MODEL="${MLX_CHAT_MODEL:-mlx-community/Qwen2.5-7B-Instruct-4bit}"
 OLLAMA_EMBED_MODEL="$(_env_val OLLAMA_EMBED_MODEL)"
 EMBEDDING_MODEL="$(_env_val EMBEDDING_MODEL)"
 EMBEDDING_MODEL="${EMBEDDING_MODEL:-paraphrase-multilingual-MiniLM-L12-v2}"
+EURIA_URL="$(_env_val EURIA_URL)"
+EURIA_URL="${EURIA_URL:-$(_env_val EURIA_API_URL)}"
+EURIA_URL="${EURIA_URL:-$(_env_val INFOMANIAK_EURIA_URL)}"
+EURIA_BEARER="$(_env_val EURIA_BEARER)"
+EURIA_BEARER="${EURIA_BEARER:-$(_env_val EURIA_API_KEY)}"
+EURIA_BEARER="${EURIA_BEARER:-$(_env_val EURIA_TOKEN)}"
+EURIA_BEARER="${EURIA_BEARER:-$(_env_val INFOMANIAK_API_KEY)}"
+EURIA_MODEL="$(_env_val EURIA_MODEL)"
+EURIA_MODEL="${EURIA_MODEL:-$(_env_val EURIA_LLM_MODEL)}"
+EURIA_MODEL="${EURIA_MODEL:-openai/gpt-oss-120b}"
 OBSIDIAN_VAULT_NAME="$(_env_val OBSIDIAN_VAULT_NAME)"
 LOG_LEVEL="$(_env_val LOG_LEVEL)"
 LOG_LEVEL="${LOG_LEVEL:-INFO}"
@@ -154,6 +164,12 @@ cat > "$API_PLIST_DST" <<PLIST
     <string>${EMBEDDING_MODEL}</string>
     <key>OBSIDIAN_VAULT_NAME</key>
     <string>${OBSIDIAN_VAULT_NAME}</string>
+    <key>EURIA_URL</key>
+    <string>${EURIA_URL}</string>
+    <key>EURIA_BEARER</key>
+    <string>${EURIA_BEARER}</string>
+    <key>EURIA_MODEL</key>
+    <string>${EURIA_MODEL}</string>
     <key>OBSIRAG_API_PORT</key>
     <string>${API_PORT}</string>
     <key>TRANSFORMERS_CACHE</key>
@@ -234,6 +250,12 @@ cat > "$AUTOLEARN_PLIST_DST" <<PLIST
         <string>${EMBEDDING_MODEL}</string>
         <key>OBSIDIAN_VAULT_NAME</key>
         <string>${OBSIDIAN_VAULT_NAME}</string>
+        <key>EURIA_URL</key>
+        <string>${EURIA_URL}</string>
+        <key>EURIA_BEARER</key>
+        <string>${EURIA_BEARER}</string>
+        <key>EURIA_MODEL</key>
+        <string>${EURIA_MODEL}</string>
         <key>AUTOLEARN_ENABLED</key>
         <string>${AUTOLEARN_ENABLED}</string>
         <key>AUTOLEARN_ALLOW_BACKGROUND_LLM</key>
