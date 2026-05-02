@@ -75,7 +75,7 @@ export default function DashboardScreen() {
   const autolearnStatus = formatStatusValue(data.autolearn?.step, 'Inactif');
   const stackBadges = buildDashboardBadges(data);
   const activeLlmModel = formatActiveModelValue(data.runtime?.llmModel);
-  const euriaLlmModel = formatEuriaModelValue(data.runtime?.euriaModel, data.runtime?.euriaEnabled);
+  const euriaLlmModel = formatEuriaModelValue(data.runtime?.euriaModel);
   const runtimeSourceLabel = useMockServer ? 'Donnees mock locales' : 'API FastAPI live';
   const connectionModeLabel = useMockServer ? 'Mode mock' : 'Mode live';
 
@@ -199,12 +199,9 @@ function formatActiveModelValue(model: string | undefined) {
   return trimmed;
 }
 
-function formatEuriaModelValue(model: string | undefined, enabled: boolean | undefined) {
+function formatEuriaModelValue(model: string | undefined) {
   const trimmed = model?.trim();
-  if (trimmed) {
-    return trimmed;
-  }
-  return enabled ? 'En attente du runtime Euria' : 'openai/gpt-oss-120b';
+  return trimmed || 'openai/gpt-oss-120b';
 }
 
 const styles = StyleSheet.create({
