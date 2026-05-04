@@ -120,7 +120,7 @@ class TestChatWorker:
             patch("src.api.chat_worker.settings", tmp_settings),
             patch("src.api.chat_worker.configure_logging") as configure,
             patch("src.api.chat_worker.MetricsRecorder", return_value=metrics) as metrics_cls,
-            patch("src.api.chat_worker.ChromaStore", return_value=chroma),
+            patch("src.api.chat_worker.make_vector_store", return_value=chroma),
             patch("src.api.chat_worker.MlxClient", return_value=llm),
             patch("src.api.chat_worker.RAGPipeline", return_value=rag) as rag_cls,
         ):
@@ -183,7 +183,7 @@ class TestAutolearnWorker:
             patch("src.learning.worker.settings", tmp_settings),
             patch("src.learning.worker.configure_logging") as configure,
             patch("src.learning.worker.MetricsRecorder", return_value=metrics),
-            patch("src.learning.worker.ChromaStore", return_value=chroma),
+            patch("src.learning.worker.make_vector_store", return_value=chroma),
             patch("src.learning.worker.MlxClient", return_value=llm),
             patch("src.learning.worker.RAGPipeline", return_value=rag),
             patch("src.learning.worker.IndexingPipeline", return_value=indexer),

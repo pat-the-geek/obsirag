@@ -11,7 +11,7 @@ from loguru import logger
 from src.ai.ollama_client import OllamaClient
 from src.ai.rag import RAGPipeline
 from src.config import settings
-from src.database.chroma_store import ChromaStore
+from src.database import make_vector_store
 from src.indexer.pipeline import IndexingPipeline
 from src.learning.autolearn import AutoLearner
 from src.learning.runtime_state import save_autolearn_runtime_state
@@ -24,7 +24,7 @@ class AutolearnWorker:
         configure_logging(settings.log_level, settings.log_dir)
         self._stop_event = threading.Event()
         self._metrics = MetricsRecorder(lambda: settings.data_dir / "stats" / "metrics.json")
-        self._chroma = ChromaStore()
+        self._chroma = make_vector_store()
         self._llm = OllamaClient()
         self._rag = RAGPipeline(self._chroma, self._llm, metrics=self._metrics)
         self._indexer = IndexingPipeline(self._chroma)

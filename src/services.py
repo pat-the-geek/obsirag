@@ -46,9 +46,9 @@ class ServiceManager:
         _step("📁 Initialisation des répertoires de données…")
         self._init_data_dirs()
 
-        _step("🗄️ Chargement de ChromaDB et du modèle d'embedding (peut prendre 30 s)…")
-        from src.database.chroma_store import ChromaStore
-        self.chroma = ChromaStore()
+        _step("🗄️ Chargement du store vecteurs et du modèle d'embedding (peut prendre 30 s)…")
+        from src.database import make_vector_store
+        self.chroma = make_vector_store()
 
         _step("🤖 Initialisation du client Ollama (chat local)…")
         from src.ai.ollama_client import OllamaClient

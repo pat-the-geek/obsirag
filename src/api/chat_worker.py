@@ -6,7 +6,7 @@ import sys
 from src.ai.ollama_client import OllamaClient
 from src.ai.rag import RAGPipeline
 from src.config import settings
-from src.database.chroma_store import ChromaStore
+from src.database import make_vector_store
 from src.logger import configure_logging
 from src.metrics import MetricsRecorder
 
@@ -14,7 +14,7 @@ from src.metrics import MetricsRecorder
 def _build_runtime() -> tuple[OllamaClient, RAGPipeline]:
     configure_logging(settings.log_level, settings.log_dir)
     metrics = MetricsRecorder(lambda: settings.data_dir / "stats" / "metrics.json")
-    chroma = ChromaStore()
+    chroma = make_vector_store()
     llm = OllamaClient()
     rag = RAGPipeline(chroma, llm, metrics=metrics)
     return llm, rag

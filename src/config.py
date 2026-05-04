@@ -33,7 +33,10 @@ class Settings(BaseSettings):
     # WUDD.ai — entités NER officielles
     wuddai_entities_url: str = "http://100.72.122.51:5050"
 
-    # ChromaDB
+    # Base vecteurs : "chroma" (défaut) ou "lance" (LanceDB, multi-process safe)
+    vector_backend: str = "chroma"
+
+    # ChromaDB / LanceDB — nom de la collection/table
     chroma_collection: str = "vault_chunks"
 
     # Logging
@@ -142,6 +145,10 @@ class Settings(BaseSettings):
     @property
     def chroma_persist_dir(self) -> str:
         return str(self.data_dir / "chroma")
+
+    @property
+    def lance_persist_dir(self) -> str:
+        return str(self.data_dir / "lance")
 
     @property
     def index_state_file(self) -> Path:

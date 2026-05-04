@@ -7,7 +7,6 @@ ce qui évite le disque, le modèle sentence-transformers et les ports réseau.
 from __future__ import annotations
 
 import os
-import subprocess
 import sqlite3
 import tempfile
 import threading
@@ -349,16 +348,17 @@ class TestChromaKeyword:
 
 @pytest.mark.unit
 class TestChromaNativeApiProbe:
-    def test_native_api_probe_marks_store_unavailable_on_signal_failure(self, tmp_path):
+    def test_native_api_probe_marks_store_unavailable_on_exception(self, tmp_path):
         from src.database.chroma_store import ChromaStore
 
         store = ChromaStore.__new__(ChromaStore)
         store._persist_dir = str(tmp_path / "chroma-test")
+        # Simule une collection dont .count() lève une exception (ex: SIGSEGV simulé)
+        mock_collection = MagicMock()
+        mock_collection.count.side_effect = RuntimeError("segfault simulation")
+        store._collection = mock_collection
 
-        with patch("src.database.chroma_store.subprocess.run") as run_mock:
-            run_mock.return_value = subprocess.CompletedProcess(args=["python"], returncode=-11, stdout="", stderr="segv")
-
-            assert ChromaStore._probe_native_api_availability(store) is False
+        assert ChromaStore._probe_native_api_availability(store) is False
 
 
 
