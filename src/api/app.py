@@ -187,16 +187,26 @@ class _SinglePageAppFiles(StaticFiles):
             clean_path = (path or "").split("?")[0]
             if clean_path.endswith(_JS_EXTS):
                 from starlette.responses import Response as _Resp
-                # window.* est réinitialisé à chaque reload — utiliser sessionStorage
-                # pour que le compteur survive aux rechargements et éviter la boucle infinie.
+                # Le bundle demandé n'existe plus (rebuild). On redirige vers l'origine
+                # avec un paramètre cache-buster pour forcer Safari à charger un nouvel
+                # index.html (URL différente = pas de cache). sessionStorage évite la boucle.
                 _snippet = (
-                    "/* bundle obsolete — rechargement */\n"
+                    "/* bundle obsolete — redirection vers index frais */\n"
                     "(function(){"
-                    "if(typeof sessionStorage==='undefined')return;"
-                    "var k='__obsirag_reload';"
+                    "if(typeof sessionStorage==='undefined'||typeof window==='undefined')return;"
+                    "var k='__obsirag_bust';"
                     "var n=parseInt(sessionStorage.getItem(k)||'0',10);"
-                    "if(n<3){sessionStorage.setItem(k,n+1);window.location.reload(true);}"
-                    "else{sessionStorage.removeItem(k);}"
+                    "if(n<3){"
+                    "sessionStorage.setItem(k,n+1);"
+                    "var base=window.location.origin+(window.location.pathname||'/');"
+                    "window.location.replace(base+'?_v='+Date.now());"
+                    "}else{"
+                    "sessionStorage.removeItem(k);"
+                    "document.write('<p style=\"font-family:sans-serif;padding:2rem\">"
+                    "Impossible de charger l\\'application. "
+                    "<a href=\\'/?_v='+Date.now()+'\\'>"
+                    "Cliquez ici pour r\\'essayer</a>.</p>');"
+                    "}"
                     "})()"
                 )
                 return _Resp(content=_snippet, media_type="application/javascript",
