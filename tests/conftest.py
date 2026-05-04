@@ -1,7 +1,7 @@
 """
 Configuration partagée des tests ObsiRAG.
 Fournit des fixtures réutilisables sans dépendances externes
-(pas de modèle MLX, pas de ChromaDB réel, pas de spaCy).
+(pas de modèle MLX, pas de store vecteurs réel, pas de spaCy).
 """
 from __future__ import annotations
 
@@ -140,7 +140,7 @@ def mock_nlp():
 
 @pytest.fixture
 def mock_embedding_fn():
-    """Mock de la fonction d'embedding ChromaDB."""
+    """Mock de la fonction d'embedding vectoriel."""
     fn = MagicMock()
     fn.return_value = [[0.1] * 384]
     return fn

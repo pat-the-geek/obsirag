@@ -5,7 +5,7 @@
 
 ![ObsiRAG logo](https://raw.githubusercontent.com/pat-the-geek/obsirag/main/src/ui/static/android-chrome-512x512.png)
 
-Un système RAG (Retrieval-Augmented Generation) local pour votre coffre Obsidian, tournant nativement en Python sur macOS et utilisant **MLX-LM** (Apple Silicon) comme moteur IA local et **ChromaDB** comme base vectorielle.
+Un système RAG (Retrieval-Augmented Generation) local pour votre coffre Obsidian, tournant nativement en Python sur macOS et utilisant **MLX-LM** (Apple Silicon) comme moteur IA local et **LanceDB** comme base vectorielle.
 
 ---
 
@@ -356,7 +356,7 @@ Avec ce mode, un crash MLX éventuel du worker n'arrête plus l'API FastAPI.
 | 2 | **Cycle autolearn** | Toutes les `AUTOLEARN_INTERVAL_MINUTES` min (défaut 60), 5 min après le démarrage, uniquement entre `AUTOLEARN_ACTIVE_HOUR_START` et `AUTOLEARN_ACTIVE_HOUR_END` (défaut 8h–22h) | Pass 1 : jusqu'à `AUTOLEARN_MAX_NOTES_PER_RUN` notes récentes (modifiées dans les 24 h). Pass 2 : jusqu'à `AUTOLEARN_FULLSCAN_PER_RUN` notes jamais traitées (full-scan) |
 | 3 | **Découverte de synapses** | À la fin de chaque cycle autolearn | Trouve `AUTOLEARN_SYNAPSE_PER_RUN` paires de notes sémantiquement proches sans lien existant et génère une note de connexion dans `obsirag/synapses/` |
 | 4 | **Synthèse hebdomadaire** | Chaque **dimanche à 20 h UTC** (avec rattrapage si le Mac était en veille) | Résume les notes modifiées dans la semaine et crée une note dans `obsirag/synthesis/` |
-| 5 | **Watcher de coffre** | En **temps réel** (watchdog filesystem) | Détecte les créations / modifications / suppressions / renommages de fichiers `.md` et re-indexe dans ChromaDB avec un debounce |
+| 5 | **Watcher de coffre** | En **temps réel** (watchdog filesystem) | Détecte les créations / modifications / suppressions / renommages de fichiers `.md` et re-indexe dans le store vecteurs avec un debounce |
 
 #### Alignement sémantique des questions
 
@@ -405,7 +405,7 @@ Le script :
 - Saute le frontmatter pour lire le corps de la note (évite que les tags YAML consomment le contexte LLM)
 - Propage `[[ancien_titre]]` → `[[nouveau_titre]]` dans **tout le vault**
 - Met à jour `synapse_index.json` (paires `fp_a|||fp_b`)
-- Re-indexe dans ChromaDB les fichiers modifiés
+- Re-indexe dans le store vecteurs les fichiers modifiés
 
 ### Sauvegarde des conversations
 
@@ -440,7 +440,7 @@ Toutes les notes ne donnent pas lieu à un insight. Voici les cas où une note e
 
 | Condition | Raison | Ce qui se passe |
 | --- | --- | --- |
-| **Note trop courte / mal indexée** | Aucun chunk trouvé dans ChromaDB | La note n'est pas dans l'index vectoriel ; elle sera ignorée jusqu'à la prochaine réindexation |
+| **Note trop courte / mal indexée** | Aucun chunk trouvé dans le store vecteurs | La note n'est pas dans l'index vectoriel ; elle sera ignorée jusqu'à la prochaine réindexation |
 | **Aucune question générée** | Le LLM n'a pas suivi le format attendu, ou le contenu est trop pauvre pour formuler une question | L'étape de génération de questions est sautée |
 | **Toutes les réponses QA ont échoué** | Erreur LLM (contexte dépassé, modèle non disponible…) pour les 3 questions | L'insight n'est pas sauvegardé |
 | **Note mal parsée (YAML invalide)** | Le frontmatter Obsidian contient des caractères illégaux ou est mal formé | La note n'est pas indexée du tout |
@@ -449,7 +449,7 @@ Toutes les notes ne donnent pas lieu à un insight. Voici les cas où une note e
 
 Une note génère un insight lorsque :
 
-1. Elle est présente et correctement indexée dans ChromaDB (au moins un chunk)
+1. Elle est présente et correctement indexée dans le store vecteurs (au moins un chunk)
 2. Le LLM génère au moins une question orientée vers des **connaissances externes** pertinentes au domaine
 3. Au moins une réponse QA aboutit — soit via web (DDG + synthèse LLM), soit en fallback via RAG
 4. La réponse n'est pas détectée comme vide ou générique (filtres anti-réponse-creuse)
@@ -472,7 +472,7 @@ En neurologie, une **synapse** est la jonction entre deux neurones : elle transm
 
 ### Comment ça fonctionne
 
-1. **Détection de paires** : à chaque cycle, ObsiRAG tire aléatoirement des notes du coffre et cherche dans ChromaDB les notes sémantiquement proches (similarité cosinus au-dessus d'un seuil configurable), en excluant celles qui ont déjà un wikilink entre elles
+1. **Détection de paires** : à chaque cycle, ObsiRAG tire aléatoirement des notes du coffre et cherche dans le store vecteurs les notes sémantiquement proches (similarité cosinus au-dessus d'un seuil configurable), en excluant celles qui ont déjà un wikilink entre elles
 2. **Mémoire des paires** : chaque paire `Note A ↔ Note B` est mémorisée dans `data/synapse_index.json` — elle ne sera jamais retraitée deux fois
 3. **Génération du texte** : le LLM reçoit un extrait des deux notes (600 premiers caractères chacune) et rédige une explication complète de la connexion implicite qui les unit, ainsi qu'une question à approfondir
 4. **Fichier résultat** : une note Markdown est créée dans `obsirag/synapses/` nommée `{NoteA}__{NoteB}_{date}.md`, avec le score de similarité, la connexion expliquée et les extraits des deux notes sources
@@ -554,7 +554,7 @@ Le découpage respecte la structure de la note : d'abord par section (`## Titre`
 
 #### Qu'est-ce qu'un chunk ?
 
-Un **chunk** est un fragment de texte extrait d'une note, avec ses métadonnées associées. Il contient le texte brut, un identifiant unique `{file_hash}_{index}`, et toutes les métadonnées de la note source (titre, section, tags, dates, wikilinks, entités NER…). C'est l'unité atomique de recherche dans ChromaDB.
+Un **chunk** est un fragment de texte extrait d'une note, avec ses métadonnées associées. Il contient le texte brut, un identifiant unique `{file_hash}_{index}`, et toutes les métadonnées de la note source (titre, section, tags, dates, wikilinks, entités NER…). C'est l'unité atomique de recherche dans le store vecteurs.
 
 #### Algorithme de découpage
 
@@ -605,16 +605,16 @@ Chaque chunk reçoit :
 
 Chaque chunk est transformé en un **vecteur numérique** — une liste de ~384 nombres — par le modèle `paraphrase-multilingual-MiniLM-L12-v2` via **sentence-transformers** (calculs en local, CPU). Ce vecteur encode le *sens* du texte : deux passages sémantiquement proches produisent des vecteurs proches dans l'espace mathématique, même s'ils n'ont aucun mot en commun.
 
-### 3. Stockage dans ChromaDB
+### 3. Stockage dans le store vecteurs
 
-Les vecteurs et leurs métadonnées sont stockés dans **ChromaDB**, une base vectorielle locale. L'indexation est incrémentale : seules les notes nouvelles ou modifiées sont retraitées.
+Les vecteurs et leurs métadonnées sont stockés dans **LanceDB**, une base vectorielle locale. L'indexation est incrémentale : seules les notes nouvelles ou modifiées sont retraitées.
 
 ### 4. Recherche à la requête
 
 Quand vous posez une question dans le chat :
 
 1. La question est elle-même vectorisée
-2. ChromaDB identifie les chunks dont le vecteur est le plus proche → **similarité cosinus**
+2. Le store vecteurs identifie les chunks dont le vecteur est le plus proche → **similarité cosinus**
 3. Ces chunks (vos notes) sont injectés comme contexte dans le prompt envoyé à **MLX-LM**
 4. Le modèle génère une réponse ancrée dans **votre coffre**, pas dans ses seules connaissances pré-entraînées
 
@@ -733,7 +733,7 @@ python scripts/benchmark_model_shortlist.py \
 | Langage | Python 3.12 |
 | Déploiement | macOS natif (launchd + Python venv) |
 | IA | MLX-LM (Apple Silicon, sans serveur) |
-| Base vectorielle | ChromaDB |
+| Base vectorielle | LanceDB |
 | Embeddings | sentence-transformers — `paraphrase-multilingual-MiniLM-L12-v2` (384 dim, CPU) |
 | Interface | Expo web + FastAPI |
 | Graphe | NetworkX + Pyvis |

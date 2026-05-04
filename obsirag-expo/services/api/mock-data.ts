@@ -88,7 +88,7 @@ export const mockSystemStatus: SystemStatus = {
     llmProvider: 'Local',
     llmModel: 'qwen2.5:7b',
     embeddingModel: 'paraphrase-multilingual-MiniLM-L12-v2',
-    vectorStore: 'ChromaDB',
+    vectorStore: 'LanceDB',
     nerModel: 'xx_ent_wiki_sm',
     autolearnMode: 'worker',
     euriaProvider: 'Infomaniak',
@@ -100,7 +100,7 @@ export const mockSystemStatus: SystemStatus = {
     currentStep: 'Tous les services sont opérationnels',
     steps: [
       '📁 Initialisation des répertoires de données…',
-      "🗄️ Chargement de ChromaDB et du modèle d'embedding (peut prendre 30 s)…",
+      "🗄️ Chargement du store vecteurs et du modèle d'embedding (peut prendre 30 s)…",
       '🤖 Initialisation du client Ollama…',
       '🔗 Initialisation du pipeline RAG…',
       "🗂️ Initialisation du pipeline d'indexation…",

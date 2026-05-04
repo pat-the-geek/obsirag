@@ -90,7 +90,7 @@ with tab_config:
     st.caption(
         "📁 **Dans le coffre** (visibles dans Obsidian) : "
         f"`obsirag/insights/`, `obsirag/synthesis/`  \n"
-        "� **Données système** (hors iCloud) : ChromaDB, index, stats, requêtes"
+        "📦 **Données système** (hors iCloud) : LanceDB, index, stats, requêtes"
     )
 
     st.divider()
@@ -429,7 +429,7 @@ with tab_runtime_metrics:
     else:
         st.caption("Aucune ligne de log disponible.")
 
-# ---- Index ChromaDB ----
+# ---- Index LanceDB ----
 with tab_index:
     st.markdown("### État de l'index vectoriel")
     st.caption("Stocké dans les données système locales — pas dans iCloud")
@@ -482,7 +482,7 @@ with tab_danger:
 
     st.markdown("#### Réinitialiser l'index vectoriel")
     st.caption(
-        "Supprime ChromaDB et l'état d'indexation des données système locales. "
+        "Supprime LanceDB et l'état d'indexation des données système locales. "
         "Le coffre Obsidian n'est pas modifié. "
         "Une re-indexation complète se lancera au prochain démarrage."
     )

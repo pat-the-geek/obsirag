@@ -20,8 +20,8 @@ class Chunk:
     section_level: int
     date_modified: str   # ISO 8601 (affichage)
     date_created: str    # ISO 8601 (affichage)
-    date_modified_ts: float  # Unix timestamp (filtrage ChromaDB)
-    date_created_ts: float   # Unix timestamp (filtrage ChromaDB)
+    date_modified_ts: float  # Unix timestamp (filtrage vectoriel)
+    date_created_ts: float   # Unix timestamp (filtrage vectoriel)
     tags: str            # séparé par ","
     wikilinks: str       # séparé par ","
     ner_persons: str

@@ -270,10 +270,10 @@ En plus des performances LLM, plusieurs optimisations ciblent la reduction des r
 
 - Une couche commune `safe_read` uniformise la lecture defensive de fichiers textes/JSON. Moins d'exceptions runtime liees aux fichiers absents, archives ou temporairement invalides.
 
-### Mesures de non-régression — vues dérivées de `list_notes()` (ChromaDB éphémère, Mac M5 16GB)
+### Mesures de non-régression — vues dérivées de `list_notes()` (store vecteurs éphémère, Mac M5 16GB)
 
 > Mesures issues de `TestChromaPerformance` / `TestChromaDerivedViewsNonRegression` dans `tests/test_chroma_store.py`.
-> ChromaDB en mémoire, embedding mocké — les chiffres reflètent la seule logique Python, sans I/O disque ni réseau.
+> Store vecteurs en mémoire, embedding mocké — les chiffres reflètent la seule logique Python, sans I/O disque ni réseau.
 > Seuils calibrés local/CI : les bornes sont strictes en local et assouplies automatiquement en CI via un facteur de robustesse pour limiter les faux positifs de timing.
 
 | Opération | Données | Durée mesurée | Seuil garanti |

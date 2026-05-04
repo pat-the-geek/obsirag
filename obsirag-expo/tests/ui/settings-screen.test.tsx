@@ -102,7 +102,7 @@ describe('settings screen', () => {
           llmProvider: 'Local',
           llmModel: 'qwen2.5:7b',
           embeddingModel: 'paraphrase-multilingual-MiniLM-L12-v2',
-          vectorStore: 'ChromaDB',
+          vectorStore: 'LanceDB',
         },
         indexing: {
           running: false,
@@ -136,8 +136,8 @@ describe('settings screen', () => {
 
     expect(renderedText).toContain('Modele actif: qwen2.5:7b');
     expect(renderedText).toContain('Provider LLM: Local');
-    expect(renderedText).toContain('ChromaDB');
-    expect(renderedText).toContain('Moteur vectoriel: ChromaDB');
+    expect(renderedText).toContain('LanceDB');
+    expect(renderedText).toContain('Moteur vectoriel: LanceDB');
     expect(renderedText).toContain('Notes indexees: 12');
     expect(renderedText).toContain('Chunks stockes: 48');
     expect(renderedText).not.toContain('Configuration serveur');

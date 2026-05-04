@@ -1,6 +1,6 @@
 """
 Tests unitaires — scripts/canary_validation.py (PERF-16)
-Toutes les fonctions pures testées sans LLM ni ChromaDB réels.
+Toutes les fonctions pures testées sans LLM ni store vecteurs réels.
 """
 from __future__ import annotations
 

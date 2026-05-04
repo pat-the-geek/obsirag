@@ -1,7 +1,7 @@
 """
 Tests d'intégration + benchmarks de bout en bout — ObsiRAG
 
-Ces tests utilisent de vrais fichiers Markdown, ChromaDB en mémoire
+Ces tests utilisent de vrais fichiers Markdown, store vecteurs en mémoire
 et NLP mocké (pas de modèle MLX ni sentence-transformers).
 Ils valident que les composants fonctionnent correctement ensemble
 et que les seuils de performance clés sont tenus.

@@ -175,7 +175,7 @@ function buildDashboardBadges(data: NonNullable<ReturnType<typeof useSystemStatu
     { icon: 'EMB', label: shortModelLabel(runtime?.embeddingModel, 'MiniLM'), tone: 'ai' },
     { icon: 'NER', label: shortModelLabel(runtime?.nerModel, 'xx_ent_wiki_sm'), tone: 'ai' },
     { icon: 'API', label: data.backendReachable ? 'FastAPI online' : 'FastAPI offline', tone: 'backend' },
-    { icon: 'DB', label: runtime?.vectorStore ?? 'ChromaDB', tone: 'backend' },
+    { icon: 'DB', label: runtime?.vectorStore ?? 'LanceDB', tone: 'backend' },
     { icon: 'RUN', label: data.autolearn?.managedBy === 'worker' || runtime?.autolearnMode === 'worker' ? 'Auto-learn worker' : 'Auto-learn intégré', tone: 'runtime' },
     { icon: 'OK', label: data.llmAvailable ? 'LLM prêt' : 'LLM en attente', tone: 'runtime' },
   ];

@@ -66,7 +66,7 @@ class NoteEntities:
         return self.persons + self.orgs + self.locations + self.misc
 
     def as_metadata(self) -> dict[str, str]:
-        """Sérialise pour ChromaDB (valeurs str)."""
+        """Sérialise pour le store vecteurs (valeurs str)."""
         return {
             "ner_persons": ",".join(self.persons[:30]),
             "ner_orgs": ",".join(self.orgs[:30]),

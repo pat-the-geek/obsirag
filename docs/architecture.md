@@ -176,7 +176,7 @@ Signaux utiles de diagnostic :
 
 ### `src/database/chroma_store.py`
 
-Responsabilité : unique façade d'accès à ChromaDB.
+Responsabilité : unique façade d'accès au store vecteurs (LanceDB/ChromaDB).
 
 À préserver :
 
@@ -249,7 +249,7 @@ Ces métriques sont volontairement simples : elles servent d'abord à objectiver
 
 1. Les notes utilisateur ne doivent jamais être modifiées hors fonctionnalités explicitement prévues.
 2. Les réponses RAG ne doivent jamais dépendre de connaissances hors contexte fourni.
-3. Les accès ChromaDB spécifiques restent derrière `ChromaStore` autant que possible.
+3. Les accès au store vecteurs restent derrière l'interface `VectorStore` autant que possible.
 4. Les composants extraits doivent rester remplaçables sans changer les API des classes principales.
 5. Chaque refactor structurel doit rester couvert par un `pytest` complet, la couverture minimale du dépôt restant à 90%.
 

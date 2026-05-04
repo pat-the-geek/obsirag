@@ -30,14 +30,14 @@ L'implementation actuelle repose sur :
 
 - Python,
 - MLX-LM sur Apple Silicon,
-- ChromaDB,
+- LanceDB,
 - acces filesystem direct au vault Obsidian,
 - watchers de fichiers,
 - traitements d'arriere-plan planifies.
 
 Ces capacites ne doivent pas etre portees telles quelles dans Expo :
 
-- Expo ne doit pas heberger MLX ni ChromaDB localement,
+- Expo ne doit pas heberger MLX ni LanceDB localement,
 - l'app mobile ne doit pas indexer directement un vault Obsidian desktop,
 - les taches longues et le scheduler doivent rester cote serveur.
 

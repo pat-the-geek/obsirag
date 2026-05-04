@@ -36,7 +36,7 @@ class Settings(BaseSettings):
     # Base vecteurs : "chroma" (défaut) ou "lance" (LanceDB, multi-process safe)
     vector_backend: str = "chroma"
 
-    # ChromaDB / LanceDB — nom de la collection/table
+    # LanceDB / ChromaDB — nom de la table/collection
     chroma_collection: str = "vault_chunks"
 
     # Logging
@@ -84,7 +84,7 @@ class Settings(BaseSettings):
     max_context_chars: int = 6000
     max_chunk_chars: int = 800
     # Plafond de chunks par note — les notes ultra-larges (insights en boucle, etc.)
-    # sont tronquées à max_chunks_per_note pour éviter un crash SIGSEGV ChromaDB.
+    # sont tronquées à max_chunks_per_note pour éviter les crashs SIGSEGV sur gros volumes.
     max_chunks_per_note: int = 300
     # Taille maximale d'un fichier Markdown indexé (en octets). Au-delà : ignoré.
     max_note_size_bytes: int = 500_000  # 500 KB

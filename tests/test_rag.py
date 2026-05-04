@@ -1,6 +1,6 @@
 """
 Tests unitaires + performance — RAG Pipeline (src/ai/rag.py)
-Tous les appels LLM et ChromaDB sont mockés.
+Tous les appels LLM et store vecteurs sont mockés.
 """
 from __future__ import annotations
 

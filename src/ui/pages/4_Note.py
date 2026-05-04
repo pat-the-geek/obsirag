@@ -185,7 +185,7 @@ if not note_abs.exists():
     st.error(f"Fichier introuvable : `{selected_fp}`")
     st.stop()
 
-# Métadonnées de la note depuis ChromaDB
+# Métadonnées de la note depuis le store vecteurs
 note_meta = notes_by_path.get(selected_fp) or svc.chroma.get_note_by_file_path(selected_fp) or {}
 tags = note_meta.get("tags", [])
 wikilinks = note_meta.get("wikilinks", [])

@@ -32,8 +32,8 @@ class IndexingPipeline:
     def index_vault(self, on_progress: Callable[[str, int, int], None] | None = None) -> dict:
         """Indexe (ou met à jour) l'ensemble du coffre. Retourne les stats.
 
-        Première exécution (état vide + ChromaDB vide) : mode accéléré automatique —
-        les chunks sont regroupés en lots avant envoi à ChromaDB, sans pause entre notes.
+        Première exécution (état vide + store vecteurs vide) : mode accéléré automatique —
+        les chunks sont regroupés en lots avant envoi au store vecteurs, sans pause entre notes.
         Les exécutions suivantes utilisent le mode normal incrémental.
 
         on_progress(current_note, processed, total) — appelé après chaque note traitée.
@@ -139,12 +139,12 @@ class IndexingPipeline:
     # ---- helpers privés ----
 
     def _is_first_run(self) -> bool:
-        """Vrai si le coffre n'a jamais été indexé (état vide et ChromaDB vide).
+        """Vrai si le coffre n'a jamais été indexé (état vide et store vecteurs vide).
         Déclenche le mode accéléré dans index_vault()."""
         return len(self._state) == 0 and self._chroma.count() == 0
 
     def _prepare_chunks(self, abs_path: Path, rel_path: str) -> list[Chunk]:
-        """Parse et découpe une note sans l'envoyer à ChromaDB.
+        """Parse et découpe une note sans l'envoyer au store vecteurs.
         Utilisé en mode accéléré pour accumuler les chunks avant envoi par lots."""
         # Ignorer les notes trop volumineuses
         try:

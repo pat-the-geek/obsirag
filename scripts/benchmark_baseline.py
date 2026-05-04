@@ -386,7 +386,7 @@ def main() -> None:
     print("=" * 60)
 
     # ── Initialisation minimale (sans threads de fond) ──────────────────
-    print("\n[init] Chargement ChromaDB...")
+    print("\n[init] Chargement du store vecteurs...")
     from src.database.chroma_store import ChromaStore
     chroma = ChromaStore()
 

@@ -60,7 +60,7 @@ describe('dashboard screen', () => {
           llmProvider: 'Local',
           llmModel: 'qwen2.5:7b',
           embeddingModel: 'paraphrase-multilingual-MiniLM-L12-v2',
-          vectorStore: 'ChromaDB',
+          vectorStore: 'LanceDB',
           nerModel: 'xx_ent_wiki_sm',
           autolearnMode: 'worker',
           euriaProvider: 'Infomaniak',
@@ -93,8 +93,8 @@ describe('dashboard screen', () => {
     expect(renderedText).toContain('Backend: http://192.168.1.217:8000');
     expect(renderedText).toContain('React 19.1');
     expect(renderedText).toContain('Expo 54');
-    expect(renderedText).toContain('ChromaDB');
-    expect(renderedText).not.toContain('ChromaDB 1.5');
+    expect(renderedText).toContain('LanceDB');
+    expect(renderedText).not.toContain('LanceDB 1.5');
     expect(renderedText).toContain('Mode live');
     expect(renderedText).toContain('Indexation: Aucun traitement en cours');
     expect(renderedText).not.toContain('Indexation: Indexation terminée');
@@ -128,7 +128,7 @@ describe('dashboard screen', () => {
           llmProvider: 'Local',
           llmModel: 'qwen2.5:7b',
           embeddingModel: 'paraphrase-multilingual-MiniLM-L12-v2',
-          vectorStore: 'ChromaDB',
+          vectorStore: 'LanceDB',
           nerModel: 'xx_ent_wiki_sm',
           autolearnMode: 'worker',
           euriaProvider: 'Infomaniak',

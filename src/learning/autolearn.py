@@ -876,7 +876,7 @@ class AutoLearner:
                     if result:
                         # Mettre à jour note_meta avec le nouveau chemin relatif
                         # pour que _mark_processed (appelé par le caller) utilise
-                        # le chemin cohérent avec ChromaDB
+                        # le chemin cohérent avec le store vecteurs
                         try:
                             new_rel = str(result.relative_to(settings.vault))
                             note_meta["file_path"] = new_rel

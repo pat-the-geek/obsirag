@@ -140,7 +140,7 @@ def test_system_status_includes_startup_steps(tmp_settings):
     assert payload["startup"]["currentStep"] == startup_payload["current_step"]
     assert payload["runtime"]["llmProvider"] == "MLX"
     assert payload["runtime"]["llmModel"] == tmp_settings.mlx_chat_model
-    assert payload["runtime"]["vectorStore"] == "ChromaDB"
+    assert payload["runtime"]["vectorStore"] == "LanceDB"
 
 
 def test_system_status_infers_ready_startup_when_status_file_is_missing(tmp_settings):

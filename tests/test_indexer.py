@@ -1,6 +1,6 @@
 """
 Tests unitaires + performance — IndexingPipeline (src/indexer/pipeline.py)
-ChromaDB et NLP sont mockés pour rester rapides.
+Store vecteurs et NLP sont mockés pour rester rapides.
 """
 from __future__ import annotations
 

@@ -1052,7 +1052,7 @@ def _generate_suggestions(on_suggestion=None) -> list[str]:
 
         questions: list[str] = []
         for note in sample:
-            # Récupérer un extrait réel depuis ChromaDB plutôt que de n'utiliser que le titre
+            # Récupérer un extrait réel depuis le store vecteurs plutôt que de n'utiliser que le titre
             snippet = ""
             try:
                 docs = [

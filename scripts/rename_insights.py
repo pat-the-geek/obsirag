@@ -10,7 +10,7 @@ Pour chaque note dans obsirag/insights, obsirag/synapses et obsirag/synthesis :
   3. Met à jour le champ `title` dans le frontmatter
   4. Remplace [[ancien_titre]] → [[nouveau_titre]] dans TOUT le vault
   5. Met à jour synapse_index.json (liste de paires "fp_a|||fp_b" en chemins relatifs au vault)
-  6. Re-indexe dans ChromaDB les fichiers wikilinks modifiés + la note renommée
+  6. Re-indexe dans le store vecteurs les fichiers wikilinks modifiés + la note renommée
 
 Options :
   --dry-run        Simule sans écrire (utile pour prévisualiser)
@@ -275,7 +275,7 @@ def main() -> None:
             chroma = ChromaStore()
             indexer = IndexingPipeline(chroma)
         except Exception as exc:
-            print(f"⚠ ChromaDB/Indexer init failed: {exc} — re-indexation désactivée")
+            print(f"⚠ Indexer init failed: {exc} — re-indexation désactivée")
 
     # Collecter tous les fichiers .md des dossiers cibles
     files: list[Path] = []

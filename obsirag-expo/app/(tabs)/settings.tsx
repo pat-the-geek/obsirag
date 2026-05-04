@@ -32,7 +32,7 @@ export default function SettingsScreen() {
   const indexingTone = data?.indexing?.running ? 'warning' : 'success';
   const indexingLabel = data?.indexing?.running
     ? `Indexation en cours ${data.indexing.processed}/${data.indexing.total || '?'}`
-    : 'Index ChromaDB pret';
+    : 'Index LanceDB pret';
 
   const onReindex = () => {
     reindexData.mutate(undefined, {
@@ -126,11 +126,11 @@ export default function SettingsScreen() {
         <Text style={[styles.bodyText, { color: theme.colors.text, fontSize: scaleFontSize(14, fontScale.scale), lineHeight: scaleLineHeight(20, fontScale.scale) }]}>Prochain cycle: {formatTimestamp(data?.autolearn?.nextRunAt)}</Text>
       </SectionCard>
       <SectionCard
-        title="ChromaDB"
+        title="LanceDB"
         subtitle="Etat de l'index vectoriel local et relance manuelle de l'indexation du coffre."
         headerAccessory={<StatusPill label={indexingLabel} tone={indexingTone} />}
       >
-        <Text style={[styles.bodyText, { color: theme.colors.text, fontSize: scaleFontSize(14, fontScale.scale), lineHeight: scaleLineHeight(20, fontScale.scale) }]}>Moteur vectoriel: {data?.runtime?.vectorStore ?? 'ChromaDB'}</Text>
+        <Text style={[styles.bodyText, { color: theme.colors.text, fontSize: scaleFontSize(14, fontScale.scale), lineHeight: scaleLineHeight(20, fontScale.scale) }]}>Moteur vectoriel: {data?.runtime?.vectorStore ?? 'LanceDB'}</Text>
         <Text style={[styles.bodyText, { color: theme.colors.text, fontSize: scaleFontSize(14, fontScale.scale), lineHeight: scaleLineHeight(20, fontScale.scale) }]}>Notes indexees: {data?.notesIndexed ?? '-'}</Text>
         <Text style={[styles.bodyText, { color: theme.colors.text, fontSize: scaleFontSize(14, fontScale.scale), lineHeight: scaleLineHeight(20, fontScale.scale) }]}>Chunks stockes: {data?.chunksIndexed ?? '-'}</Text>
         <Text style={[styles.bodyText, { color: theme.colors.text, fontSize: scaleFontSize(14, fontScale.scale), lineHeight: scaleLineHeight(20, fontScale.scale) }]}>Progression: {data?.indexing?.processed ?? 0} / {data?.indexing?.total ?? 0}</Text>

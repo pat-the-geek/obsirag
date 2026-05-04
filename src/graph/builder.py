@@ -51,7 +51,7 @@ class GraphBuilder:
     # ---- API publique ----
 
     def build(self, notes: list[dict]) -> nx.DiGraph:
-        """Construit le graphe à partir des métadonnées ChromaDB."""
+        """Construit le graphe à partir des métadonnées vectorielles."""
         logger.info(f"Construction du graphe ({len(notes)} notes)…")
         g = nx.DiGraph()
 
