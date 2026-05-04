@@ -274,8 +274,6 @@ describe('ConversationDetailScreen', () => {
     expect(textTreeContains(tree, 'Rechercher sur le web')).toBe(true);
     expect(textTreeContains(tree, 'Modifie le')).toBe(true);
     expect(textTreeContains(tree, '4.0 KB') || textTreeContains(tree, '4 KB') || textTreeContains(tree, '4 ko')).toBe(true);
-    expect(textTreeContains(tree, 'Provider actif')).toBe(true);
-    expect(textTreeContains(tree, 'Local (MLX)')).toBe(true);
     expect(tree.root.findByProps({ testID: 'message-composer-secondary-action' })).toBeTruthy();
     expect(tree.root.findByProps({ testID: 'message-composer-tertiary-action' })).toBeTruthy();
 
@@ -292,7 +290,6 @@ describe('ConversationDetailScreen', () => {
 
     const tree = renderer.create(<ConversationDetailScreen />);
 
-    expect(textTreeContains(tree, 'Provider actif')).toBe(true);
     expect(textTreeContains(tree, 'Euria')).toBe(true);
     expect(tree.root.findByProps({ testID: 'message-composer-rag-toggle' })).toBeTruthy();
   });
@@ -737,7 +734,7 @@ describe('ConversationDetailScreen', () => {
           role: 'assistant',
           content: '',
           createdAt: '2026-04-16T12:00:01Z',
-          timeline: ['Analyse de la requete', 'Recherche dans le coffre', 'Generation MLX'],
+          timeline: ['Analyse de la requete', 'Recherche dans le coffre', 'Génération locale'],
         },
       ],
     };
@@ -748,7 +745,7 @@ describe('ConversationDetailScreen', () => {
     expect(textTreeContains(tree, 'Réponse en préparation')).toBe(true);
     expect(textTreeContains(tree, 'Analyse de la requete')).toBe(false);
     expect(textTreeContains(tree, 'Recherche dans le coffre')).toBe(false);
-    expect(textTreeContains(tree, 'Generation MLX')).toBe(true);
+    expect(textTreeContains(tree, 'Génération locale')).toBe(true);
     expect(textTreeContains(tree, 'Generation en cours...')).toBe(false);
   });
 

@@ -302,7 +302,7 @@ export function useExplicitWebSearch(conversationId: string) {
       const pendingAssistant = buildPendingAssistantMessage(PENDING_WEB_ASSISTANT_ID, 'web', [
         'Réponse en préparation',
         WEB_SEARCH_PROGRESS_LABEL,
-      ], useEuriaForConversation ? 'Euria' : 'MLX');
+      ], useEuriaForConversation ? 'Euria' : 'Local');
 
       queryClient.setQueryData<ConversationDetail | undefined>(['conversation', conversationId], (current) => {
         if (!current) {
@@ -411,7 +411,7 @@ export function useStreamMessage(conversationId: string) {
         if (!safeCurrent) {
           return undefined;
         }
-        const pendingAssistant = buildPendingAssistantMessage(STREAMING_ASSISTANT_ID, 'vault', ['Réponse en préparation'], useEuriaForConversation ? 'Euria' : 'MLX');
+        const pendingAssistant = buildPendingAssistantMessage(STREAMING_ASSISTANT_ID, 'vault', ['Réponse en préparation'], useEuriaForConversation ? 'Euria' : 'Local');
         return {
           ...safeCurrent,
           messages: upsertStreamingTurn(safeCurrent.messages, userMessage, pendingAssistant),

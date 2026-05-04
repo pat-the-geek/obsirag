@@ -252,8 +252,6 @@ class ChromaStore:
         return (
             name.startswith("chat_")
             or name.startswith("web_")
-            or "/obsirag/conversations/" in normalized
-            or normalized.startswith("obsirag/conversations/")
         )
 
     @staticmethod

@@ -145,13 +145,6 @@ export default function ConversationDetailScreen() {
           <View style={styles.headerCopy}>
             <Text style={[styles.headerTitle, { color: theme.colors.text }]}>{data.title}</Text>
             {conversationMetadata ? <Text style={[styles.headerMeta, { color: theme.colors.textSubtle }]}>{conversationMetadata}</Text> : null}
-            <View style={[styles.providerBadge, { backgroundColor: theme.colors.surfaceMuted, borderColor: theme.colors.border }] }>
-              <Text style={[styles.providerBadgeLabel, { color: theme.colors.textMuted }]}>Provider actif</Text>
-              <Text style={[styles.providerBadgeValue, { color: useEuriaForConversation ? theme.colors.primary : theme.colors.text }]}>
-                {useEuriaForConversation ? 'Euria' : 'Local (MLX)'}
-              </Text>
-            </View>
-            <Text style={[styles.headerSubtitle, { color: theme.colors.textMuted }]}>Conversation centree, reponses developpees et actions contextuelles en bas d'ecran.</Text>
           </View>
         </View>
 

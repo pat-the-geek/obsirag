@@ -163,10 +163,10 @@ describe('ObsiRagApi.streamConversationResponse', () => {
     const onToken = jest.fn();
     const onComplete = jest.fn();
     const frames = [
-      'event: retrieval_status\ndata: {"message":"Generation MLX"}\n\n',
+      'event: retrieval_status\ndata: {"message":"Génération locale"}\n\n',
       'event: token\ndata: {"token":"Bonjour "}\n\n',
       'event: token\ndata: {"token":"monde"}\n\n',
-      'event: message_complete\ndata: {"id":"assistant-2","role":"assistant","content":"Bonjour monde","createdAt":"2026-04-18T12:00:00Z","provenance":"vault","timeline":["Generation MLX"]}\n\n',
+      'event: message_complete\ndata: {"id":"assistant-2","role":"assistant","content":"Bonjour monde","createdAt":"2026-04-18T12:00:00Z","provenance":"vault","timeline":["Génération locale"]}\n\n',
     ].join('');
 
     (global.fetch as jest.Mock).mockResolvedValueOnce({

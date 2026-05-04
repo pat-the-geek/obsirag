@@ -37,7 +37,7 @@ const messages: ChatMessage[] = [
         score: 0.96,
       },
     ],
-    timeline: ['Analyse de la requete', 'Recherche dans le coffre', 'Generation MLX'],
+    timeline: ['Analyse de la requete', 'Recherche dans le coffre', 'Génération locale'],
     stats: {
       tokens: 196,
       ttft: 0.9,
@@ -85,8 +85,8 @@ export const mockSystemStatus: SystemStatus = {
   notesIndexed: 736,
   chunksIndexed: 4812,
   runtime: {
-    llmProvider: 'MLX',
-    llmModel: 'mlx-community/Qwen2.5-7B-Instruct-4bit',
+    llmProvider: 'Local',
+    llmModel: 'qwen2.5:7b',
     embeddingModel: 'paraphrase-multilingual-MiniLM-L12-v2',
     vectorStore: 'ChromaDB',
     nerModel: 'xx_ent_wiki_sm',
@@ -101,7 +101,7 @@ export const mockSystemStatus: SystemStatus = {
     steps: [
       '📁 Initialisation des répertoires de données…',
       "🗄️ Chargement de ChromaDB et du modèle d'embedding (peut prendre 30 s)…",
-      '🤖 Initialisation du client MLX (chargement differe)…',
+      '🤖 Initialisation du client Ollama…',
       '🔗 Initialisation du pipeline RAG…',
       "🗂️ Initialisation du pipeline d'indexation…",
       '🧠 Initialisation du graphe de connaissances…',

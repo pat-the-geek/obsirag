@@ -99,8 +99,8 @@ describe('settings screen', () => {
           nextRunAt: '2026-04-18T11:00:00Z',
         },
         runtime: {
-          llmProvider: 'MLX',
-          llmModel: 'mlx-community/Qwen2.5-7B-Instruct-4bit',
+          llmProvider: 'Local',
+          llmModel: 'qwen2.5:7b',
           embeddingModel: 'paraphrase-multilingual-MiniLM-L12-v2',
           vectorStore: 'ChromaDB',
         },
@@ -134,8 +134,8 @@ describe('settings screen', () => {
       })
       .join('\n');
 
-    expect(renderedText).toContain('Modele actif: mlx-community/Qwen2.5-7B-Instruct-4bit');
-    expect(renderedText).toContain('Provider LLM: MLX');
+    expect(renderedText).toContain('Modele actif: qwen2.5:7b');
+    expect(renderedText).toContain('Provider LLM: Local');
     expect(renderedText).toContain('ChromaDB');
     expect(renderedText).toContain('Moteur vectoriel: ChromaDB');
     expect(renderedText).toContain('Notes indexees: 12');

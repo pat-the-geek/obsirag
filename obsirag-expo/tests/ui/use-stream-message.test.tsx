@@ -66,7 +66,7 @@ describe('useStreamMessage', () => {
     });
 
     mockStreamConversationResponse.mockImplementation(async (_conversationId: string, _prompt: string, handlers: Record<string, Function>) => {
-      handlers.onStatus?.('Generation MLX');
+      handlers.onStatus?.('Génération locale');
       handlers.onToken?.('Bonjour');
       handlers.onToken?.(' monde');
       const finalMessage: ChatMessage = {
@@ -100,7 +100,7 @@ describe('useStreamMessage', () => {
 
     const conversation = queryClient.getQueryData<ConversationDetail>(['conversation', 'conv-1']);
     expect(conversation?.messages.at(-1)?.content).toBe('Bonjour monde');
-    expect(conversation?.messages.at(-1)?.timeline).toEqual(['Réponse en préparation', 'Generation MLX']);
+    expect(conversation?.messages.at(-1)?.timeline).toEqual(['Réponse en préparation', 'Génération locale']);
     expect(mockSetDraft).toHaveBeenCalledWith('conv-1', '');
   });
 });

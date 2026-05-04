@@ -96,7 +96,7 @@ export default function DashboardScreen() {
           <Text style={styles.heroSubtitle}>Vue d’ensemble du runtime, des recherches rapides et de l’activité de l’auto-learner.</Text>
           <View style={styles.activeModelCard}>
             <Text style={styles.activeModelLabel}>LLM actif ObsiRAG</Text>
-            <Text selectable style={styles.activeModelValue}>LLM Ollama: {activeLlmModel}</Text>
+            <Text selectable style={styles.activeModelValue}>LLM Local: {activeLlmModel}</Text>
             <Text selectable style={styles.activeModelValue}>LLM Euria: {euriaLlmModel}</Text>
             <Text style={styles.activeModelMeta}>Source runtime: {runtimeSourceLabel}</Text>
             <Text selectable style={styles.activeModelMeta}>Backend: {backendUrl}</Text>

@@ -216,7 +216,28 @@ _start_api() {
     40
 }
 
+_patch_plist_env_key() {
+  local plist="$1"
+  local key="$2"
+  local value="$3"
+  if [ ! -f "$plist" ]; then return 0; fi
+  /usr/libexec/PlistBuddy -c "Set :EnvironmentVariables:${key} ${value}" "$plist" 2>/dev/null || true
+}
+
+_sync_euria_to_plist() {
+  local euria_url="${EURIA_URL:-}"
+  local euria_bearer="${EURIA_BEARER:-}"
+  local euria_model="${EURIA_MODEL:-openai/gpt-oss-120b}"
+  if [ -f "$API_PLIST_DST" ]; then
+    _patch_plist_env_key "$API_PLIST_DST" "EURIA_URL" "$euria_url"
+    _patch_plist_env_key "$API_PLIST_DST" "EURIA_BEARER" "$euria_bearer"
+    _patch_plist_env_key "$API_PLIST_DST" "EURIA_MODEL" "$euria_model"
+  fi
+}
+
 mkdir -p logs
+
+_sync_euria_to_plist
 
 _start_autolearn
 

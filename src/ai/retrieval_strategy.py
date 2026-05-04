@@ -163,7 +163,15 @@ class RetrievalStrategy:
         for noun in retrieval_terms:
             title_hits = self._owner._chroma.search_by_note_title(noun, top_k=3)
             keyword_hits = self._owner._chroma.search_by_keyword(noun, top_k=3)
-            per_term_chunks.append(self._owner._prefer_informative_chunks(title_hits + keyword_hits))
+            # Keep all chunks without dedup so chunk_match_count can find the
+            # term-bearing chunk even when the note's longest chunk lacks it.
+            combined: list[dict] = []
+            seen_cids: set[str] = set()
+            for c in title_hits + keyword_hits:
+                if c["chunk_id"] not in seen_cids:
+                    seen_cids.add(c["chunk_id"])
+                    combined.append(c)
+            per_term_chunks.append(combined)
 
         seen_ids: set[str] = set()
         seen_notes: set[str] = set()

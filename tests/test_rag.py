@@ -220,6 +220,26 @@ class TestRAGConversationBehavior:
 
         assert resolved == "et la durée ?"
 
+    def test_resolve_query_with_history_uses_last_user_prompt_as_anchor_for_action_follow_up(self):
+        history = [
+            {"role": "user", "content": "premier homme marche lune date mission apollo 11"},
+            {"role": "assistant", "content": "Réponse en cours de structuration."},
+        ]
+
+        resolved = RAGPipeline._resolve_query_with_history("ajoute les dates au tableau", history)
+
+        assert "concernant:" in resolved
+        assert "premier homme" in resolved
+        assert "lune" in resolved
+
+    def test_follow_up_anchor_from_prompt_truncates_long_prompt(self):
+        prompt = "mot " * 80
+
+        anchor = RAGPipeline._follow_up_anchor_from_prompt(prompt, max_len=40)
+
+        assert len(anchor) <= 40
+        assert anchor.endswith("…")
+
     def test_normalize_final_answer_removes_leading_sentinel_when_body_exists(self, rag):
         answer = (
             "Cette information n'est pas dans ton coffre.\n\n"
@@ -459,6 +479,21 @@ class TestRAGConversationBehavior:
         cleaned = rag._sanitize_single_subject_answer(original, "Parle moi de Python", "hybrid")
         assert cleaned == original
 
+    def test_normalize_final_answer_returns_sentinel_for_low_signal_factoid_answer(self, rag):
+        answer = "Si vous avez d'autres questions ou besoin d'informations, n'hésitez pas à me le faire savoir."
+
+        normalized = rag._normalize_final_answer(answer, "Quel est le premier homme à marche sur la lune ?", "hybrid")
+
+        assert normalized == "Cette information n'est pas dans ton coffre."
+
+    def test_normalize_final_answer_keeps_useful_single_subject_summary_for_factoid_query(self, rag):
+        answer = "Cette information n'est pas dans ton coffre. Neil Armstrong est mentionné dans mes notes sur la Lune et la mission Apollo 11."
+
+        normalized = rag._normalize_final_answer(answer, "Quel est le premier homme à marche sur la lune ?", "hybrid")
+
+        assert normalized.startswith("### Aperçu de")
+        assert "Neil Armstrong" in normalized
+
     def test_is_generic_subject_reference_detects_all_generic_tokens(self):
         assert RAGPipeline._is_generic_subject_reference("les objectifs") is True
         assert RAGPipeline._is_generic_subject_reference("Ada Lovelace") is False
@@ -564,6 +599,18 @@ class TestRAGAdvancedRetrieval:
         filtered = rag._filter_supported_chunks("Parle moi de Artemis II", chunks, "entity")
 
         assert filtered == []
+
+    def test_filter_supported_chunks_keeps_context_for_generic_entity_query(self, rag):
+        chunks = [_make_chunk(title="Notes IA", text="Mes idées récentes sur l'IA.", fp="ia.md")]
+
+        filtered = rag._filter_supported_chunks("Quelles sont mes notes sur mes dernières idées ?", chunks, "entity")
+
+        assert filtered == chunks
+
+    def test_note_focus_tokens_do_not_use_generic_theme_fallback(self, rag):
+        tokens = rag._note_focus_tokens("Quelles sont mes notes sur mes dernières idées ?")
+
+        assert tokens == set()
 
     def test_retrieve_hybrid_chunks_prefers_bridges_and_unique_notes(self, rag, mock_chroma):
         bridge = _make_chunk(title="Bridge", text="Garry Tan et Claude Code ensemble.", fp="bridge.md")

@@ -404,7 +404,7 @@ export class ObsiRagApi {
       await wait(250);
       handlers.onStatus?.('Recherche dans le coffre');
       await wait(400);
-      handlers.onStatus?.('Generation MLX');
+      handlers.onStatus?.('Génération locale');
 
       const content = [
         '### Apercu de la question',
@@ -445,7 +445,7 @@ export class ObsiRagApi {
           isPrimary: true,
           score: 0.92,
         },
-        timeline: ['Analyse de la requete', 'Recherche dans le coffre', 'Generation MLX'],
+        timeline: ['Analyse de la requete', 'Recherche dans le coffre', 'Génération locale'],
         stats: {
           tokens: content.split(' ').length,
           ttft: 0.7,

@@ -57,8 +57,8 @@ describe('dashboard screen', () => {
           log: [],
         },
         runtime: {
-          llmProvider: 'MLX',
-          llmModel: 'mlx-community/Qwen2.5-7B-Instruct-4bit',
+          llmProvider: 'Local',
+          llmModel: 'qwen2.5:7b',
           embeddingModel: 'paraphrase-multilingual-MiniLM-L12-v2',
           vectorStore: 'ChromaDB',
           nerModel: 'xx_ent_wiki_sm',
@@ -87,7 +87,7 @@ describe('dashboard screen', () => {
       .join('\n');
 
     expect(renderedText).toContain('LLM actif ObsiRAG');
-    expect(renderedText).toContain('LLM MLX: mlx-community/Qwen2.5-7B-Instruct-4bit');
+    expect(renderedText).toContain('LLM Local: qwen2.5:7b');
     expect(renderedText).toContain('LLM Euria: openai/gpt-oss-120b');
     expect(renderedText).toContain('Source runtime: API FastAPI live');
     expect(renderedText).toContain('Backend: http://192.168.1.217:8000');
@@ -125,8 +125,8 @@ describe('dashboard screen', () => {
           log: [],
         },
         runtime: {
-          llmProvider: 'MLX',
-          llmModel: 'mlx-community/Qwen2.5-7B-Instruct-4bit',
+          llmProvider: 'Local',
+          llmModel: 'qwen2.5:7b',
           embeddingModel: 'paraphrase-multilingual-MiniLM-L12-v2',
           vectorStore: 'ChromaDB',
           nerModel: 'xx_ent_wiki_sm',

@@ -254,6 +254,26 @@ _HARD_SENTINEL = "cette information n'est pas dans ton coffre."
 _DISALLOWED_USER_VISIBLE_SCRIPT_RE = re.compile(
     r"[\u0400-\u04FF\u0600-\u06FF\u4E00-\u9FFF\u3040-\u30FF\uAC00-\uD7AF]"
 )
+_FACTOID_QUERY_RE = re.compile(
+    r"\b(qui\s+est|quel(?:le)?s?\s+est|quand|combien|date|premier|premiere|premiers|premieres)\b",
+    re.IGNORECASE,
+)
+_GENERIC_CLOSING_RE = re.compile(
+    r"(si\s+vous\s+avez\s+d['’]autres\s+questions.*|n['’]h[eé]sitez\s+pas.*)$",
+    re.IGNORECASE,
+)
+# Aveux implicites du LLM : "mentionné mais sans info directe", "sous une autre identité", etc.
+# → toujours retourner le sentinel.
+_IMPLICIT_NO_INFO_RE = re.compile(
+    r"(aucune\s+information\s+directe"
+    r"|mentionn[eé][^.]{0,80}mais\s+(?:sous\s+une\s+autre|sans\s+info)"
+    r"|sous\s+une\s+autre\s+identit[eé]"
+    r"|il\s+n['’]y\s+a\s+aucune\s+information\s+(?:directe|disponible|pr[eé]cise)"
+    r"|n['’]y\s+a\s+pas\s+d['’]information\s+(?:directe|disponible|pr[eé]cise)"
+    r"|extraits\s+(?:fournis\s+)?ne\s+(?:contiennent|mentionnent)\s+(?:pas|aucune)"
+    r")",
+    re.IGNORECASE,
+)
 
 
 class RAGPipeline:
@@ -365,6 +385,7 @@ class RAGPipeline:
         history: list[dict[str, str]],
         resolved_query: str,
         intent: str,
+        user_query: str | None = None,
     ) -> str:
         answer = self._llm.chat(
             messages,
@@ -378,7 +399,7 @@ class RAGPipeline:
             history=history,
             intent=intent,
         )
-        normalized = self._normalize_final_answer(answer, resolved_query, intent)
+        normalized = self._normalize_final_answer(answer, user_query or resolved_query, intent)
         if normalized.strip().lower() == _HARD_SENTINEL:
             try:
                 self._metrics.increment("rag_sentinel_answers_total")
@@ -523,7 +544,7 @@ class RAGPipeline:
                     if self._backpressure is not None:
                         self._backpressure.acquire()
                     try:
-                        answer = self._run_chat_attempt(messages, context, history, resolved_query, intent)
+                        answer = self._run_chat_attempt(messages, context, history, resolved_query, intent, user_query=user_query)
                     finally:
                         if self._backpressure is not None:
                             self._backpressure.release()
@@ -606,7 +627,7 @@ class RAGPipeline:
                 intent,
             ):
                 try:
-                    answer = self._run_chat_attempt(messages, context, history, resolved_query, intent)
+                    answer = self._run_chat_attempt(messages, context, history, resolved_query, intent, user_query=user_query)
                     if self._answer_cache is not None and not exclude_obsirag_generated:
                         self._answer_cache.put(user_query, history, answer, chunks)
                     return answer, chunks
@@ -690,6 +711,11 @@ class RAGPipeline:
         text = self._sanitize_single_subject_answer(text, query, intent)
 
         text = RAGPipeline._sanitize_structured_study_answer(text)
+
+        # Détecte les aveux implicites du LLM ("mentionné mais sans info directe", etc.)
+        if _IMPLICIT_NO_INFO_RE.search(text):
+            logger.info("RAG normalize: aveu implicite détecté → sentinel")
+            return "Cette information n'est pas dans ton coffre."
 
         if self._contains_disallowed_user_visible_script(text):
             text = self._rewrite_answer_in_french(text, query=query)
@@ -805,9 +831,42 @@ class RAGPipeline:
 
         cleaned = "\n\n".join(part for part in kept_sentences if part)
         cleaned = re.sub(r"\n{3,}", "\n\n", cleaned).strip()
+        cleaned = _GENERIC_CLOSING_RE.sub("", cleaned).strip()
+        if self._is_low_signal_factoid_answer(cleaned, query):
+            return "Cette information n'est pas dans ton coffre."
         if not cleaned:
-            return text
+            return "Cette information n'est pas dans ton coffre."
         return self._ensure_single_subject_structure(cleaned, query)
+
+    @classmethod
+    def _is_low_signal_factoid_answer(cls, text: str, query: str) -> bool:
+        normalized_query = cls._normalize_match_text(query)
+        if not _FACTOID_QUERY_RE.search(normalized_query):
+            return False
+
+        normalized_text = cls._normalize_match_text(text)
+        if not normalized_text:
+            return True
+        if "n est pas dans ton coffre" in normalized_text:
+            return False
+
+        query_tokens = {
+            token
+            for token in re.findall(r"\w+", normalized_query)
+            if len(token) >= 4
+            and token not in {
+                "quel", "quelle", "quels", "quelles", "premier", "premiere", "premiers", "premieres",
+                "avec", "dans", "pour", "quoi", "sujet", "notes", "cette", "sur", "des", "les",
+                "date", "combien", "quand",
+            }
+        }
+        if query_tokens and not any(token in normalized_text for token in query_tokens):
+            return True
+
+        # Évite les réponses très courtes ou purement formulaires sur les questions factuelles.
+        if len(normalized_text) < 80:
+            return True
+        return False
 
     def _ensure_single_subject_structure(self, text: str, query: str) -> str:
         if re.search(r"^###\s+", text, flags=re.MULTILINE):
@@ -1279,12 +1338,21 @@ class RAGPipeline:
 
         return None
 
+    @staticmethod
+    def _follow_up_anchor_from_prompt(prompt: str, max_len: int = 160) -> str:
+        normalized = re.sub(r"\s+", " ", prompt or " ").strip()
+        normalized = re.sub(r"[`*_#|]", "", normalized).strip()
+        if len(normalized) <= max_len:
+            return normalized
+        return normalized[: max_len - 1].rstrip() + "…"
+
     @classmethod
     def _resolve_query_with_history(cls, query: str, history: list[dict[str, str]]) -> str:
         if not history or not cls._looks_like_follow_up_query(query):
             return query
 
         subject: str | None = None
+        last_user_prompt: str | None = None
         for message in reversed(history):
             role = message.get("role")
             if role not in {"user", "assistant"}:
@@ -1292,23 +1360,38 @@ class RAGPipeline:
             content = (message.get("content") or "").strip()
             if not content:
                 continue
+            if role == "user" and last_user_prompt is None:
+                last_user_prompt = content
             subject = cls._extract_subject_from_message(content)
             if subject:
                 break
 
-        if not subject:
-            return query
+        if subject:
+            resolved = f"{query.strip()} concernant {subject}"
+            logger.info(f"RAG follow-up resolved (subject): {query!r} -> {resolved!r}")
+            return resolved
 
-        resolved = f"{query.strip()} concernant {subject}"
-        logger.info(f"RAG follow-up resolved: {query!r} -> {resolved!r}")
-        return resolved
+        if last_user_prompt:
+            anchor = cls._follow_up_anchor_from_prompt(last_user_prompt)
+            if anchor:
+                resolved = f"{query.strip()} concernant: {anchor}"
+                logger.info(f"RAG follow-up resolved (anchor): {query!r} -> {resolved!r}")
+                return resolved
+
+        return query
 
     @classmethod
     def _should_use_single_subject_prompt(cls, intent: str, query: str) -> bool:
         if cls._should_use_study_prompt(intent, query):
             return False
         if intent in {"hybrid", "entity"}:
-            return True
+            # N'active le filtre lexical strict que si un sujet explicite est détecté.
+            # Sinon (requête vague/générique), on conserve les chunks initiaux pour
+            # éviter de vider le contexte à tort.
+            return (
+                cls._extract_single_subject_candidate(query) is not None
+                or bool(cls._extract_proper_nouns(query))
+            )
         if intent in {"general", "general_kw_fallback"}:
             return cls._extract_single_subject_candidate(query) is not None
         return False
@@ -1444,10 +1527,9 @@ class RAGPipeline:
         retrieval_terms = cls._expand_retrieval_terms(query, proper_nouns)
         if not retrieval_terms:
             candidate = cls._extract_single_subject_candidate(query)
-            primary_theme = cls._derive_primary_theme(query)
-            # N'utilise pas la requête complète comme fallback : ses tokens ("quelles",
-            # "sont", "notes"…) ne correspondent jamais aux chunks et vident le filtre.
-            retrieval_terms = [term for term in (candidate, primary_theme) if term]
+            # N'utilise pas de fallback générique (ex: "le sujet demandé"), car ses
+            # tokens ne sont pas discriminants et peuvent vider le contexte à tort.
+            retrieval_terms = [candidate] if candidate else []
 
         ignored_tokens = {
             "comment", "pourquoi", "parle", "moi", "sujet", "notes", "avec",
