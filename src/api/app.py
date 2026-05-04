@@ -1235,7 +1235,7 @@ def system_status(_: None = Depends(require_api_auth)) -> SystemStatusResponse:
             llmProvider="Ollama",
             llmModel=settings.ollama_chat_model,
             embeddingModel=settings.embedding_model,
-            vectorStore="ChromaDB",
+            vectorStore="LanceDB" if settings.vector_backend == "lance" else "ChromaDB",
             nerModel=settings.ner_model,
             autolearnMode="worker" if settings.autolearn_enabled else "disabled",
             euriaProvider="Infomaniak",

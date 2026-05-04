@@ -190,14 +190,22 @@ class LanceStore:
         existing = self._db.list_tables()
         if name in existing:
             tbl = self._db.open_table(name)
-            # FTS index si absent
             try:
                 tbl.create_fts_index("text", replace=False)
             except Exception:
                 pass
             return tbl
-        tbl = self._db.create_table(name, schema=schema, mode="create")
-        logger.info(f"Table LanceDB '{name}' créée (schéma {self._dims}d)")
+        try:
+            tbl = self._db.create_table(name, schema=schema, mode="create")
+            logger.info(f"Table LanceDB '{name}' créée (schéma {self._dims}d)")
+        except Exception:
+            # Race condition API+worker : un autre process a créé la table entre-temps
+            tbl = self._db.open_table(name)
+            logger.info(f"Table LanceDB '{name}' ouverte (déjà créée par un autre processus)")
+        try:
+            tbl.create_fts_index("text", replace=False)
+        except Exception:
+            pass
         return tbl
 
     # ── Utilitaires statiques (compatibilité ChromaStore) ─────────────────────
