@@ -26,7 +26,6 @@ import pytest
 from pathlib import Path
 from unittest.mock import patch
 from src.config import settings
-from src.database.chroma_store import ChromaStore
 from src.indexer.pipeline import IndexingPipeline
 from src.ai.rag import RAGPipeline
 from src.ai.ollama_client import OllamaClient
@@ -94,20 +93,30 @@ def vault_path() -> Path:
 
 
 @pytest.fixture(scope="module")
-def chroma(tmp_path_factory: pytest.TempPathFactory) -> ChromaStore:
-    """ChromaStore isolé dans un répertoire temporaire.
+def chroma(tmp_path_factory: pytest.TempPathFactory):
+    """Store vecteurs isolé dans un répertoire temporaire.
 
-    IMPORTANT: ne PAS utiliser la base de production (settings.chroma_persist_dir)
-    en parallèle avec le service ObsiRAG — cela causerait un accès concurrent
-    à l'index HNSW et une corruption (SIGSEGV).
+    Fonctionne pour ChromaDB (défaut) et LanceDB (VECTOR_BACKEND=lance).
+    IMPORTANT: ne PAS utiliser la base de production en parallèle avec le
+    service ObsiRAG — cela causerait un accès concurrent et une corruption.
     """
-    tmp_dir = tmp_path_factory.mktemp("chroma_live_test")
-    with patch.object(settings, "chroma_persist_dir", str(tmp_dir)):
-        yield ChromaStore()
+    from unittest.mock import PropertyMock
+    tmp_dir = tmp_path_factory.mktemp("vector_live_test")
+    backend = (settings.vector_backend or "chroma").lower()
+    if backend == "lance":
+        with patch.object(type(settings), "lance_persist_dir",
+                          new_callable=PropertyMock, return_value=str(tmp_dir)):
+            from src.database.lance_store import LanceStore
+            yield LanceStore()
+    else:
+        with patch.object(type(settings), "chroma_persist_dir",
+                          new_callable=PropertyMock, return_value=str(tmp_dir)):
+            from src.database.chroma_store import ChromaStore
+            yield ChromaStore()
 
 
 @pytest.fixture(scope="module")
-def indexer(chroma: ChromaStore) -> IndexingPipeline:
+def indexer(chroma) -> IndexingPipeline:
     return IndexingPipeline(chroma)
 
 
@@ -130,13 +139,13 @@ def setup_and_teardown(vault_path: Path, indexer: IndexingPipeline):
 
 
 @pytest.fixture(scope="module")
-def rag_ollama(chroma: ChromaStore) -> RAGPipeline:
+def rag_ollama(chroma) -> RAGPipeline:
     llm = OllamaClient()
     return RAGPipeline(chroma, llm)
 
 
 @pytest.fixture(scope="module")
-def rag_euria(chroma: ChromaStore) -> RAGPipeline | None:
+def rag_euria(chroma) -> RAGPipeline | None:
     try:
         llm = EuriaClient()
         return RAGPipeline(chroma, llm)

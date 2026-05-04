@@ -187,7 +187,7 @@ class LanceStore:
     def _open_or_create_table(self) -> Any:
         name = settings.chroma_collection
         schema = _build_schema(self._dims)
-        existing = self._db.table_names()
+        existing = self._db.list_tables()
         if name in existing:
             tbl = self._db.open_table(name)
             # FTS index si absent
