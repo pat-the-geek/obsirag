@@ -178,12 +178,24 @@ class _SinglePageAppFiles(StaticFiles):
         except StarletteHTTPException as exc:
             if exc.status_code != 404:
                 raise
-            # Ne pas fallback vers index.html pour les assets statiques (JS, CSS, images…).
-            # Sinon le navigateur reçoit du HTML à la place d'un JS manquant et affiche
-            # une page blanche au lieu d'un vrai 404.
-            _ASSET_EXTS = (".js", ".css", ".map", ".png", ".jpg", ".jpeg", ".svg",
+            # Bundles JS manquants (ex : ancien bundle après un rebuild) → on retourne un
+            # petit snippet JS qui force le rechargement de la page. Cela corrige la page
+            # blanche sur les navigateurs/mobiles qui ont mis en cache l'ancien index.html.
+            _JS_EXTS = (".js", ".mjs")
+            _ASSET_EXTS = (".css", ".map", ".png", ".jpg", ".jpeg", ".svg",
                            ".ico", ".woff", ".woff2", ".ttf", ".otf", ".eot", ".json")
-            if path and any(path.split("?")[0].endswith(ext) for ext in _ASSET_EXTS):
+            clean_path = (path or "").split("?")[0]
+            if clean_path.endswith(_JS_EXTS):
+                from starlette.responses import Response as _Resp
+                _snippet = (
+                    "/* bundle obsolete — rechargement */\n"
+                    "if(typeof window!=='undefined'){"
+                    "window.__obsirag_reload_attempts=(window.__obsirag_reload_attempts||0)+1;"
+                    "if(window.__obsirag_reload_attempts<=3){window.location.reload(true);}}"
+                )
+                return _Resp(content=_snippet, media_type="application/javascript",
+                             headers={"Cache-Control": "no-store, max-age=0"})
+            if clean_path.endswith(_ASSET_EXTS):
                 raise
             response = await super().get_response("index.html", scope)
 
