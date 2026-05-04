@@ -187,11 +187,17 @@ class _SinglePageAppFiles(StaticFiles):
             clean_path = (path or "").split("?")[0]
             if clean_path.endswith(_JS_EXTS):
                 from starlette.responses import Response as _Resp
+                # window.* est réinitialisé à chaque reload — utiliser sessionStorage
+                # pour que le compteur survive aux rechargements et éviter la boucle infinie.
                 _snippet = (
                     "/* bundle obsolete — rechargement */\n"
-                    "if(typeof window!=='undefined'){"
-                    "window.__obsirag_reload_attempts=(window.__obsirag_reload_attempts||0)+1;"
-                    "if(window.__obsirag_reload_attempts<=3){window.location.reload(true);}}"
+                    "(function(){"
+                    "if(typeof sessionStorage==='undefined')return;"
+                    "var k='__obsirag_reload';"
+                    "var n=parseInt(sessionStorage.getItem(k)||'0',10);"
+                    "if(n<3){sessionStorage.setItem(k,n+1);window.location.reload(true);}"
+                    "else{sessionStorage.removeItem(k);}"
+                    "})()"
                 )
                 return _Resp(content=_snippet, media_type="application/javascript",
                              headers={"Cache-Control": "no-store, max-age=0"})
