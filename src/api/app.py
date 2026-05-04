@@ -178,6 +178,13 @@ class _SinglePageAppFiles(StaticFiles):
         except StarletteHTTPException as exc:
             if exc.status_code != 404:
                 raise
+            # Ne pas fallback vers index.html pour les assets statiques (JS, CSS, images…).
+            # Sinon le navigateur reçoit du HTML à la place d'un JS manquant et affiche
+            # une page blanche au lieu d'un vrai 404.
+            _ASSET_EXTS = (".js", ".css", ".map", ".png", ".jpg", ".jpeg", ".svg",
+                           ".ico", ".woff", ".woff2", ".ttf", ".otf", ".eot", ".json")
+            if path and any(path.split("?")[0].endswith(ext) for ext in _ASSET_EXTS):
+                raise
             response = await super().get_response("index.html", scope)
 
         self._apply_html_no_cache_headers(response)
