@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 
 from loguru import logger
 
-from src.ai.mlx_client import MlxClient
+from src.ai.ollama_client import OllamaClient
 from src.ai.rag import RAGPipeline
 from src.config import settings
 from src.database.chroma_store import ChromaStore
@@ -25,7 +25,7 @@ class AutolearnWorker:
         self._stop_event = threading.Event()
         self._metrics = MetricsRecorder(lambda: settings.data_dir / "stats" / "metrics.json")
         self._chroma = ChromaStore()
-        self._llm = MlxClient()
+        self._llm = OllamaClient()
         self._rag = RAGPipeline(self._chroma, self._llm, metrics=self._metrics)
         self._indexer = IndexingPipeline(self._chroma)
         self._learner = AutoLearner(
@@ -81,7 +81,7 @@ class AutolearnWorker:
             try:
                 self._llm.unload()
             except Exception as exc:
-                logger.warning(f"Auto-learner worker: erreur déchargement MLX : {exc}")
+                logger.warning(f"Auto-learner worker: erreur fermeture client LLM : {exc}")
 
             save_autolearn_runtime_state(
                 {

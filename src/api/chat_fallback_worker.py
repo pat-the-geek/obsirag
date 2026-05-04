@@ -10,7 +10,7 @@ from typing import Any
 
 import frontmatter
 
-from src.ai.mlx_client import MlxClient
+from src.ai.ollama_client import OllamaClient
 from src.ai.rag import RAGPipeline
 from src.config import settings
 from src.logger import configure_logging
@@ -310,10 +310,10 @@ class _FallbackChroma:
         }
 
 
-def _build_runtime(records: list[_NoteRecord]) -> tuple[MlxClient, RAGPipeline]:
+def _build_runtime(records: list[_NoteRecord]) -> tuple[OllamaClient, RAGPipeline]:
     configure_logging(settings.log_level, settings.log_dir)
     metrics = MetricsRecorder(lambda: settings.data_dir / "stats" / "metrics.json")
-    llm = MlxClient()
+    llm = OllamaClient()
     rag = RAGPipeline(_FallbackChroma(records), llm, metrics=metrics)
     return llm, rag
 

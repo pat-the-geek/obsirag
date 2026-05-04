@@ -1232,8 +1232,8 @@ def system_status(_: None = Depends(require_api_auth)) -> SystemStatusResponse:
         autolearn=_resolve_autolearn_status(),
         startup=_resolve_startup_status(),
         runtime=RuntimeInfoModel(
-            llmProvider="MLX",
-            llmModel=settings.mlx_chat_model,
+            llmProvider="Ollama",
+            llmModel=settings.ollama_chat_model,
             embeddingModel=settings.embedding_model,
             vectorStore="ChromaDB",
             nerModel=settings.ner_model,
@@ -3335,7 +3335,7 @@ def _conversation_llm(svc, use_euria: bool):
 
 
 def _conversation_llm_provider(use_euria: bool) -> str:
-    return "Euria" if use_euria else "MLX"
+    return "Euria" if use_euria else "Ollama"
 
 
 def _build_euria_direct_messages(

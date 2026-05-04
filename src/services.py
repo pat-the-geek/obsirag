@@ -50,9 +50,9 @@ class ServiceManager:
         from src.database.chroma_store import ChromaStore
         self.chroma = ChromaStore()
 
-        _step("🤖 Initialisation du client MLX (chargement differe)…")
-        from src.ai.mlx_client import MlxClient
-        self.llm = MlxClient()
+        _step("🤖 Initialisation du client Ollama (chat local)…")
+        from src.ai.ollama_client import OllamaClient
+        self.llm = OllamaClient()
 
         _step("🔗 Initialisation du pipeline RAG…")
         from src.ai.rag import RAGPipeline
@@ -107,7 +107,7 @@ class ServiceManager:
                 logger.info("Auto-learner démarré")
             else:
                 logger.warning(
-                    "Auto-learner désactivé pour ce runtime: activer AUTOLEARN_ALLOW_BACKGROUND_LLM=true pour autoriser le chargement MLX en tâche de fond"
+                    "Auto-learner désactivé pour ce runtime: activer AUTOLEARN_ALLOW_BACKGROUND_LLM=true pour autoriser le LLM en tâche de fond"
                 )
 
         thread = threading.Thread(
@@ -124,9 +124,7 @@ class ServiceManager:
     def signal_ui_active(self) -> None:
         """Marque l'UI comme active.
 
-        Le chargement MLX reste synchrone et piloté par l'appel d'inférence lui-même.
-        Eviter un préchargement en thread ici réduit les crashs natifs observés sur
-        l'API FastAPI au premier prompt utilisateur.
+        Le chargement LLM reste piloté par l'appel d'inférence.
         """
         self._last_ui_activity = time.monotonic()
 
@@ -168,7 +166,7 @@ class ServiceManager:
                         and not self.is_scheduler_active()
                     ):
                         logger.info(
-                            "Watchdog : UI inactif + aucun scheduler actif — déchargement du modèle MLX"
+                            "Watchdog : UI inactif + aucun scheduler actif — libération du client LLM"
                         )
                         self.llm.unload()
                 except Exception as exc:

@@ -72,12 +72,13 @@ tab_config, tab_tokens, tab_runtime_metrics, tab_index, tab_danger = st.tabs(
 
 # ---- Configuration ----
 with tab_config:
-    st.markdown("### Modèle de génération (MLX-LM)")
-    c1, c2 = st.columns(2)
-    c1.text_input("Modèle MLX", value=settings.mlx_chat_model, disabled=True)
+    st.markdown("### Modèle de génération (Ollama)")
+    c1, c2, c3 = st.columns(3)
+    c1.text_input("Modèle Ollama", value=settings.ollama_chat_model, disabled=True)
+    c2.text_input("Base URL", value=settings.ollama_base_url, disabled=True)
+    c3.metric("Contexte (tokens)", settings.ollama_context_size)
     llm_ok = svc.llm.is_available()
-    c2.markdown("")  # espaceur
-    st.markdown(f"**Statut :** {'🟢 Modèle chargé' if llm_ok else '🔴 Modèle non disponible'}")
+    st.markdown(f"**Statut :** {'🟢 Ollama disponible' if llm_ok else '🔴 Ollama non disponible'}")
 
     st.divider()
     st.markdown("### Chemins")

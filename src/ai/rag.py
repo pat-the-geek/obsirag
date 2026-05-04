@@ -184,6 +184,10 @@ _GENERIC_SUBJECT_TOKENS = {
     "sujet", "sujets", "aspect", "aspects", "point", "points",
     "date", "dates", "etape", "etapes", "info", "infos", "information",
     "informations", "role", "roles", "contexte", "enjeu", "enjeux",
+    # Termes temporels/abstraits trop vagues pour filtrer lexicalement
+    "idee", "idees", "pensee", "pensees", "reflexion", "reflexions",
+    "recente", "recentes", "dernier", "derniere", "derniers", "dernieres",
+    "inspiration", "inspirations", "apprentissage", "apprentissages",
 }
 
 # Détecte les questions de type "relation/lien/connexion entre A et B"
@@ -1231,9 +1235,14 @@ class RAGPipeline:
     @classmethod
     def _is_generic_subject_reference(cls, candidate: str) -> bool:
         normalized = cls._normalize_match_text(candidate)
+        _ARTICLES = {
+            "le", "la", "les", "de", "des", "du", "un", "une", "sur", "ses", "ces",
+            # Possessifs — exclus car ils n'identifient pas une entité
+            "mes", "mon", "ma", "tes", "ton", "ta", "vos", "votre", "nos", "notre",
+        }
         tokens = [
             token for token in re.findall(r"\w+", normalized)
-            if token not in {"le", "la", "les", "de", "des", "du", "un", "une", "sur", "ses", "ces"}
+            if token not in _ARTICLES
         ]
         if not tokens:
             return True
@@ -1436,7 +1445,9 @@ class RAGPipeline:
         if not retrieval_terms:
             candidate = cls._extract_single_subject_candidate(query)
             primary_theme = cls._derive_primary_theme(query)
-            retrieval_terms = [term for term in (candidate, primary_theme, query) if term]
+            # N'utilise pas la requête complète comme fallback : ses tokens ("quelles",
+            # "sont", "notes"…) ne correspondent jamais aux chunks et vident le filtre.
+            retrieval_terms = [term for term in (candidate, primary_theme) if term]
 
         ignored_tokens = {
             "comment", "pourquoi", "parle", "moi", "sujet", "notes", "avec",

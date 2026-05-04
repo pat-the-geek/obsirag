@@ -5,11 +5,11 @@ import streamlit as st
 from pathlib import Path
 
 PAGES = [
-    {"label": "Tableau de bord", "icon": "📊", "page": "pages/0_Dashboard.py"},
-    {"label": "Chat", "icon": "💬", "page": "app.py"},
-    {"label": "Cerveau", "icon": "🧠", "page": "pages/1_Brain.py"},
-    {"label": "Insights", "icon": "💡", "page": "pages/2_Insights.py"},
-    {"label": "Paramètres", "icon": "⚙️", "page": "pages/3_Settings.py"},
+    {"label": "Tableau de bord", "icon": ":material/dashboard:", "page": "pages/0_Dashboard.py"},
+    {"label": "Chat", "icon": ":material/chat:", "page": "app.py"},
+    {"label": "Cerveau", "icon": ":material/account_tree:", "page": "pages/1_Brain.py"},
+    {"label": "Insights", "icon": ":material/insights:", "page": "pages/2_Insights.py"},
+    {"label": "Paramètres", "icon": ":material/settings:", "page": "pages/3_Settings.py"},
 ]
 
 FAVORIS_KEY = "obsirag_favoris"
@@ -285,7 +285,7 @@ def render_side_menu():
 
     # Recherche globale
     st.sidebar.markdown("<hr style='border:1px solid #bbb;margin:0.5em 0;'>", unsafe_allow_html=True)
-    st.sidebar.markdown("<div class='sidebar-section'><span style='font-size:1.1em;'>🔎 Recherche globale</span></div>", unsafe_allow_html=True)
+    st.sidebar.markdown("<div class='sidebar-section'><span style='font-size:1.1em;'>Recherche globale</span></div>", unsafe_allow_html=True)
     query = st.sidebar.text_input("Rechercher dans les notes...", key="global_search_input", help="Recherche plein texte dans toutes les notes du coffre")
     if query and len(query) > 2:
         import re
@@ -339,7 +339,7 @@ def render_side_menu():
             """, unsafe_allow_html=True)
             for res in results:
                 file_fullname = str(res)
-                label = f"📝 {res.stem}"
+                label = f"{res.stem}"
                 btn = st.sidebar.button(label, key=f"searchres_{res}", help=file_fullname)
                 if btn:
                     st.session_state.viewing_note = str(res)
@@ -373,26 +373,28 @@ def render_side_menu():
 
     st.sidebar.markdown("<div class='sidebar-section'><span style='font-size:1.2em;font-weight:bold;'>Navigation</span></div>", unsafe_allow_html=True)
     for entry in PAGES:
-        label = f"{entry['icon']} {entry['label'] }"
-        help_text = f"Aller à la page {entry['label']}"
-        if st.sidebar.button(label, key=f"nav_{entry['page']}", help=help_text):
-            st.switch_page(entry["page"])
+        st.sidebar.page_link(
+            entry["page"],
+            label=entry["label"],
+            icon=entry["icon"],
+            use_container_width=True,
+        )
 
     st.sidebar.markdown("<hr style='border:1px solid #bbb;margin:0.5em 0;'>", unsafe_allow_html=True)
-    st.sidebar.markdown("<div class='sidebar-section'><span style='font-size:1.1em;'>⭐ Favoris</span></div>", unsafe_allow_html=True)
+    st.sidebar.markdown("<div class='sidebar-section'><span style='font-size:1.1em;'>Favoris</span></div>", unsafe_allow_html=True)
     favoris = st.session_state.get(FAVORIS_KEY, [])
     if not favoris:
         st.sidebar.caption("Aucun favori.")
     else:
         for fav in favoris:
-            label = f"⭐ {fav}"
+            label = f"{fav}"
             help_text = f"Ouvrir le favori {fav}"
             if st.sidebar.button(label, key=f"fav_{fav}", help=help_text):
                 st.session_state.viewing_note = fav
                 st.switch_page("pages/4_Note.py")
 
     st.sidebar.markdown("<hr style='border:1px solid #bbb;margin:0.5em 0;'>", unsafe_allow_html=True)
-    st.sidebar.markdown("<div class='sidebar-section'><span style='font-size:1.1em;'>🕑 Historique</span></div>", unsafe_allow_html=True)
+    st.sidebar.markdown("<div class='sidebar-section'><span style='font-size:1.1em;'>Historique</span></div>", unsafe_allow_html=True)
     historique = st.session_state.get(HISTO_KEY, [])
     if len(historique) > MAX_HISTORY_ITEMS:
         historique = historique[-MAX_HISTORY_ITEMS:]
@@ -407,7 +409,7 @@ def render_side_menu():
             abs_idx = len(historique) - 1 - idx
             h_hash = hashlib.md5(f"{h}_{abs_idx}".encode()).hexdigest()[:8]
             short_name = os.path.basename(h)
-            label = f"🕑 {short_name}"
+            label = f"{short_name}"
             help_text = f"Ouvrir l'historique {h}"
             key_view = f"histo_{abs_idx}_{h_hash}"
             st.sidebar.markdown("<span class='sidebar-history-marker' style='display:none'></span>", unsafe_allow_html=True)

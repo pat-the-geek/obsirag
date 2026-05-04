@@ -76,6 +76,10 @@ APP_DATA_DIR="$(_env_val APP_DATA_DIR)"
 MLX_CHAT_MODEL="$(_env_val MLX_CHAT_MODEL)"
 MLX_CHAT_MODEL="${MLX_CHAT_MODEL:-mlx-community/Qwen2.5-7B-Instruct-4bit}"
 OLLAMA_EMBED_MODEL="$(_env_val OLLAMA_EMBED_MODEL)"
+OLLAMA_BASE_URL="$(_env_val OLLAMA_BASE_URL)"
+OLLAMA_BASE_URL="${OLLAMA_BASE_URL:-http://localhost:11434/v1}"
+OLLAMA_CHAT_MODEL="$(_env_val OLLAMA_CHAT_MODEL)"
+OLLAMA_CHAT_MODEL="${OLLAMA_CHAT_MODEL:-qwen2.5:7b}"
 EMBEDDING_MODEL="$(_env_val EMBEDDING_MODEL)"
 EMBEDDING_MODEL="${EMBEDDING_MODEL:-paraphrase-multilingual-MiniLM-L12-v2}"
 EURIA_URL="$(_env_val EURIA_URL)"
@@ -158,6 +162,10 @@ cat > "$API_PLIST_DST" <<PLIST
     <string>${LOG_LEVEL}</string>
     <key>MLX_CHAT_MODEL</key>
     <string>${MLX_CHAT_MODEL}</string>
+    <key>OLLAMA_BASE_URL</key>
+    <string>${OLLAMA_BASE_URL}</string>
+    <key>OLLAMA_CHAT_MODEL</key>
+    <string>${OLLAMA_CHAT_MODEL}</string>
     <key>OLLAMA_EMBED_MODEL</key>
     <string>${OLLAMA_EMBED_MODEL}</string>
     <key>EMBEDDING_MODEL</key>
@@ -244,6 +252,10 @@ cat > "$AUTOLEARN_PLIST_DST" <<PLIST
         <string>${LOG_LEVEL}</string>
         <key>MLX_CHAT_MODEL</key>
         <string>${MLX_CHAT_MODEL}</string>
+        <key>OLLAMA_BASE_URL</key>
+        <string>${OLLAMA_BASE_URL}</string>
+        <key>OLLAMA_CHAT_MODEL</key>
+        <string>${OLLAMA_CHAT_MODEL}</string>
         <key>OLLAMA_EMBED_MODEL</key>
         <string>${OLLAMA_EMBED_MODEL}</string>
         <key>EMBEDDING_MODEL</key>

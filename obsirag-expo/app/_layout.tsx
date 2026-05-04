@@ -1,5 +1,7 @@
 import { Stack } from 'expo-router';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { Feather } from '@expo/vector-icons';
+import { useFonts } from 'expo-font';
 import { Component, ReactNode, useEffect, useState } from 'react';
 import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
@@ -59,6 +61,7 @@ function RootFallbackShell({ mode }: { mode: 'loading' | 'error' }) {
 function RootLayoutContent() {
   const [queryClient] = useState(() => new QueryClient());
   const [tokenBootstrapComplete, setTokenBootstrapComplete] = useState(false);
+  const [fontsLoaded] = useFonts(Feather.font);
   const setAccessToken = useAppStore((state) => state.setAccessToken);
   const theme = useAppTheme();
 
@@ -92,7 +95,7 @@ function RootLayoutContent() {
     };
   }, [setAccessToken]);
 
-  if (!tokenBootstrapComplete) {
+  if (!tokenBootstrapComplete || !fontsLoaded) {
     return <RootFallbackShell mode="loading" />;
   }
 

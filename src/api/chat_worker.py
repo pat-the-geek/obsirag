@@ -2,9 +2,8 @@ from __future__ import annotations
 
 import json
 import sys
-from typing import Any
 
-from src.ai.mlx_client import MlxClient
+from src.ai.ollama_client import OllamaClient
 from src.ai.rag import RAGPipeline
 from src.config import settings
 from src.database.chroma_store import ChromaStore
@@ -12,11 +11,11 @@ from src.logger import configure_logging
 from src.metrics import MetricsRecorder
 
 
-def _build_runtime() -> tuple[MlxClient, RAGPipeline]:
+def _build_runtime() -> tuple[OllamaClient, RAGPipeline]:
     configure_logging(settings.log_level, settings.log_dir)
     metrics = MetricsRecorder(lambda: settings.data_dir / "stats" / "metrics.json")
     chroma = ChromaStore()
-    llm = MlxClient()
+    llm = OllamaClient()
     rag = RAGPipeline(chroma, llm, metrics=metrics)
     return llm, rag
 

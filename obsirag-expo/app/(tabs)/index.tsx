@@ -25,6 +25,7 @@ type HeroBadge = {
 export default function DashboardScreen() {
   const router = useRouter();
   const [noteQuery, setNoteQuery] = useState('');
+  const [heroImageFailed, setHeroImageFailed] = useState(false);
   const { backendUrl, useMockServer } = useServerConfig();
   const { data, isLoading, isRefetching, refetch, isError, error } = useSystemStatus({ refetchIntervalMs: 1200 });
   const noteSearch = useNoteSearch(noteQuery);
@@ -82,14 +83,20 @@ export default function DashboardScreen() {
   return (
     <Screen refreshing={isRefetching} onRefresh={refetch}>
       <View style={styles.heroCard}>
-        <Image source={appIcon} style={styles.heroImage} resizeMode="contain" />
+        {!heroImageFailed ? (
+          <Image source={appIcon} style={styles.heroImage} resizeMode="contain" onError={() => setHeroImageFailed(true)} />
+        ) : (
+          <View style={styles.heroImageFallback}>
+            <Text style={styles.heroImageFallbackText}>OR</Text>
+          </View>
+        )}
         <View style={styles.heroCopy}>
           <Text style={styles.heroEyebrow}>ObsiRAG</Text>
           <Text style={styles.heroTitle}>Dashboard</Text>
           <Text style={styles.heroSubtitle}>Vue d’ensemble du runtime, des recherches rapides et de l’activité de l’auto-learner.</Text>
           <View style={styles.activeModelCard}>
             <Text style={styles.activeModelLabel}>LLM actif ObsiRAG</Text>
-            <Text selectable style={styles.activeModelValue}>LLM MLX: {activeLlmModel}</Text>
+            <Text selectable style={styles.activeModelValue}>LLM Ollama: {activeLlmModel}</Text>
             <Text selectable style={styles.activeModelValue}>LLM Euria: {euriaLlmModel}</Text>
             <Text style={styles.activeModelMeta}>Source runtime: {runtimeSourceLabel}</Text>
             <Text selectable style={styles.activeModelMeta}>Backend: {backendUrl}</Text>
@@ -163,7 +170,7 @@ function buildDashboardBadges(data: NonNullable<ReturnType<typeof useSystemStatu
   return [
     { icon: 'UI', label: 'React 19.1', tone: 'frontend' },
     { icon: 'EX', label: 'Expo 54', tone: 'frontend' },
-    { icon: 'AI', label: `${runtime?.llmProvider ?? 'MLX'} local`, tone: 'ai' },
+    { icon: 'AI', label: `${runtime?.llmProvider ?? 'Ollama'} local`, tone: 'ai' },
     { icon: 'LLM', label: llmName, tone: 'ai' },
     { icon: 'EMB', label: shortModelLabel(runtime?.embeddingModel, 'MiniLM'), tone: 'ai' },
     { icon: 'NER', label: shortModelLabel(runtime?.nerModel, 'xx_ent_wiki_sm'), tone: 'ai' },
@@ -194,7 +201,7 @@ function shortModelLabel(model: string | undefined, fallback: string) {
 function formatActiveModelValue(model: string | undefined) {
   const trimmed = model?.trim();
   if (!trimmed) {
-    return 'Chargement du modèle MLX…';
+    return 'Chargement du modèle Ollama…';
   }
   return trimmed;
 }
@@ -213,13 +220,34 @@ const styles = StyleSheet.create({
     paddingHorizontal: 18,
     paddingVertical: 20,
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     gap: 16,
   },
   heroImage: {
     width: 92,
     height: 92,
     borderRadius: 24,
+    alignSelf: 'flex-start',
+    borderWidth: 1,
+    borderColor: '#decdb8',
+    backgroundColor: '#fffaf2',
+  },
+  heroImageFallback: {
+    width: 92,
+    height: 92,
+    borderRadius: 24,
+    alignSelf: 'flex-start',
+    borderWidth: 1,
+    borderColor: '#decdb8',
+    backgroundColor: '#fffaf2',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  heroImageFallbackText: {
+    color: '#8a562b',
+    fontSize: 24,
+    fontWeight: '800',
+    letterSpacing: 0.8,
   },
   heroCopy: {
     flex: 1,
