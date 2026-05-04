@@ -8,10 +8,8 @@ Couche d'accès ChromaDB.
 from __future__ import annotations
 
 import os
-import subprocess
 import shutil
 import sqlite3
-import sys
 import threading
 import time
 from datetime import datetime
@@ -59,8 +57,6 @@ def _build_embedding_function() -> EmbeddingFunction:
 
 # Durée de validité du cache list_notes() (secondes)
 _LIST_NOTES_TTL = 30
-_NATIVE_API_PROBE_TTL = 300
-_NATIVE_API_PROBE_CACHE: dict[tuple[str, str], tuple[bool, float, str | None]] = {}
 
 
 class ChromaStore:
@@ -99,45 +95,21 @@ class ChromaStore:
         logger.info(f"Collection '{settings.chroma_collection}' prête")
 
     def _probe_native_api_availability(self) -> bool:
-        cache_key = (str(self._persist_dir), settings.chroma_collection)
-        now = time.monotonic()
-        cached = _NATIVE_API_PROBE_CACHE.get(cache_key)
-        if cached is not None and (now - cached[1]) < _NATIVE_API_PROBE_TTL:
-            return cached[0]
+        """Vérifie que la collection ChromaDB déjà ouverte répond correctement.
 
-        project_root = Path(__file__).resolve().parents[2]
-        probe = "\n".join(
-            [
-                "import chromadb",
-                "from src.config import settings",
-                "from src.database.chroma_store import _build_embedding_function",
-                f"client = chromadb.PersistentClient(path={self._persist_dir!r})",
-                "collection = client.get_or_create_collection(",
-                f"    name={settings.chroma_collection!r},",
-                "    embedding_function=_build_embedding_function(),",
-                "    metadata={'hnsw:space': 'cosine'},",
-                ")",
-                "collection.count()",
-                "print('ok')",
-            ]
-        )
-        completed = subprocess.run(
-            [sys.executable, "-c", probe],
-            cwd=str(project_root),
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=120,
-            env={**os.environ, "PYTHONPATH": str(project_root)},
-        )
-        available = completed.returncode == 0
-        detail = (completed.stderr or "").strip() or (completed.stdout or "").strip() or None
-        _NATIVE_API_PROBE_CACHE[cache_key] = (available, now, detail)
-        if not available:
+        On n'ouvre PAS un second process sur le même fichier (segfault HNSW).
+        Si _init_with_recovery a réussi, la collection est utilisable.
+        On fait juste un count() rapide pour confirmer.
+        """
+        try:
+            self._collection.count()
+            return True
+        except Exception as exc:
             logger.warning(
-                "API native Chroma indisponible pour le store persistant; bascule vers les chemins sûrs SQLite/fallback"
+                f"API native Chroma indisponible pour le store persistant: {exc}; "
+                "bascule vers les chemins sûrs SQLite/fallback"
             )
-        return available
+            return False
 
     def native_api_available(self) -> bool:
         return bool(getattr(self, "_native_api_available", True))

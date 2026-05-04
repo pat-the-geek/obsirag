@@ -19,9 +19,12 @@ Pré-requis :
 """
 from __future__ import annotations
 
+import shutil
+import tempfile
 import pytest
 
 from pathlib import Path
+from unittest.mock import patch
 from src.config import settings
 from src.database.chroma_store import ChromaStore
 from src.indexer.pipeline import IndexingPipeline
@@ -91,8 +94,16 @@ def vault_path() -> Path:
 
 
 @pytest.fixture(scope="module")
-def chroma() -> ChromaStore:
-    return ChromaStore()
+def chroma(tmp_path_factory: pytest.TempPathFactory) -> ChromaStore:
+    """ChromaStore isolé dans un répertoire temporaire.
+
+    IMPORTANT: ne PAS utiliser la base de production (settings.chroma_persist_dir)
+    en parallèle avec le service ObsiRAG — cela causerait un accès concurrent
+    à l'index HNSW et une corruption (SIGSEGV).
+    """
+    tmp_dir = tmp_path_factory.mktemp("chroma_live_test")
+    with patch.object(settings, "chroma_persist_dir", str(tmp_dir)):
+        yield ChromaStore()
 
 
 @pytest.fixture(scope="module")
