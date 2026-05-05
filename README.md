@@ -1,7 +1,5 @@
 # ObsiRAG
 
-[![ObsiRAG Expo Quality](https://github.com/pat-the-geek/obsirag/actions/workflows/obsirag-expo-quality.yml/badge.svg)](https://github.com/pat-the-geek/obsirag/actions/workflows/obsirag-expo-quality.yml)
-[![ObsiRAG Expo Web Export Smoke](https://github.com/pat-the-geek/obsirag/actions/workflows/obsirag-expo-web-export-smoke.yml/badge.svg)](https://github.com/pat-the-geek/obsirag/actions/workflows/obsirag-expo-web-export-smoke.yml)
 ![Ollama](https://img.shields.io/badge/Ollama-000000?style=flat&logo=ollama&logoColor=white)
 ![LanceDB](https://img.shields.io/badge/LanceDB-CEFF71?style=flat&logoColor=black)
 
