@@ -170,6 +170,81 @@ Ce smoke test automatise :
 
 Ce test est egalement execute en CI sur les changements touches dans `obsirag-expo/`.
 
+## Serveur MCP local (MVP)
+
+ObsiRAG expose maintenant un **serveur MCP local en mode stdio** pour les clients desktop compatibles (Claude Desktop, Cursor, Copilot, etc.).
+
+### Perimetre actuel
+
+- surface **read-only** uniquement,
+- reutilisation du runtime local existant (`ServiceManager`, `RAGPipeline`, helpers notes/graphe),
+- aucun impact sur le contrat FastAPI <-> Expo.
+
+### Tools exposes
+
+- `obsirag_get_system_status`
+- `obsirag_search_notes`
+- `obsirag_get_note`
+- `obsirag_ask_rag`
+- `obsirag_get_graph_subgraph`
+
+### Lancement local
+
+```bash
+source .venv/bin/activate
+python -m src.mcp.server
+```
+
+Le serveur MCP reutilise la meme configuration `.env` que le backend principal (`VAULT_PATH`, `APP_DATA_DIR`, modeles, etc.).
+
+Fonction exposee :
+
+- `src.mcp.server.main()` demarre le serveur MCP local d'ObsiRAG en transport `stdio`.
+
+### Exemple de configuration client MCP
+
+Commande :
+
+```bash
+/Users/ton_user/path/to/obsirag/.venv/bin/python -m src.mcp.server
+```
+
+Exemple JSON :
+
+```json
+{
+  "mcpServers": {
+    "obsirag": {
+      "command": "/Users/ton_user/path/to/obsirag/.venv/bin/python",
+      "args": ["-m", "src.mcp.server"],
+      "env": {
+        "PYTHONPATH": "/Users/ton_user/path/to/obsirag"
+      },
+      "cwd": "/Users/ton_user/path/to/obsirag"
+    }
+  }
+}
+```
+
+Important :
+
+- Claude Desktop attend des noms d'outils compatibles `^[a-zA-Z0-9_-]{1,64}$`, d'ou les noms `obsirag_*`,
+- le protocole MCP passe sur `stdio`, donc les logs console doivent rester sur `stderr`.
+
+### Validation cible
+
+```bash
+source .venv/bin/activate
+pytest --no-cov tests/test_mcp_server.py tests/test_mcp_runtime.py
+./scripts/validate_local.sh --no-restart
+```
+
+### Limites du MVP
+
+- pas de transport HTTP/SSE,
+- pas de streaming MCP dedie,
+- pas d'outils d'ecriture ou d'administration destructive.
+
 ## Acces reseau local ou Tailscale
 
 Le runtime principal Expo + FastAPI peut etre utilise depuis une autre machine du reseau local ou via Tailscale, a condition d'annoncer une URL publique cohérente au client.

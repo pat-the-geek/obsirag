@@ -10,6 +10,7 @@ import pytest
 from src.api import main as api_main
 from src.api import runtime as api_runtime
 from src.learning import worker as learning_worker
+from src.mcp import server as mcp_server
 
 
 def test_api_main_exports_fastapi_app() -> None:
@@ -24,6 +25,13 @@ def test_api_main_run_module_executes_entrypoint_module() -> None:
         if existing is not None:
             sys.modules["src.api.main"] = existing
     assert "app" in namespace
+
+
+def test_mcp_server_main_runs_stdio() -> None:
+    with patch("src.mcp.server.build_server") as build_server:
+        mcp_server.main()
+
+    build_server.return_value.run.assert_called_once_with(transport="stdio")
 
 
 def test_runtime_startup_store_uses_startup_status_file(tmp_settings) -> None:

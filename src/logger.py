@@ -59,7 +59,8 @@ def configure_logging(log_level: str = "INFO", log_dir: str = "/app/logs") -> No
         "{message}"
     )
 
-    logger.add(sys.stdout, format=fmt_console, level=log_level, colorize=True)
+    # stdout doit rester propre pour les protocoles stdio comme MCP.
+    logger.add(sys.stderr, format=fmt_console, level=log_level, colorize=True)
 
     # Sink mémoire utilisé par l'endpoint API /api/v1/system/logs.
     logger.add(_capture_log_record, level="DEBUG")

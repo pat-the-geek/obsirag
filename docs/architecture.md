@@ -4,13 +4,14 @@ Ce document décrit l'architecture effective du dépôt, les frontières entre m
 
 ## Vue d'ensemble
 
-ObsiRAG repose sur cinq blocs principaux :
+ObsiRAG repose sur six blocs principaux :
 
 1. `ServiceManager` orchestre le cycle de vie global.
 2. `ChromaStore` fournit l'index vectoriel et les accès de récupération.
 3. `RAGPipeline` résout les requêtes utilisateur en séparant désormais mieux retrieval et prompting.
 4. `AutoLearner` traite les notes en arrière-plan pour produire insights, synapses et synthèses.
 5. Le backend FastAPI et le client Expo exposent le chat, la recherche web, le graphe, les insights et le visualiseur de notes.
+6. `src/mcp/` expose une façade MCP stdio locale, read-only, pour les clients desktop compatibles.
 
 ## Flux principal
 
@@ -97,6 +98,20 @@ Responsabilité : exposer les capacités produit réellement utilisées dans le 
 - les réponses de conversation peuvent transporter des sources, une note principale, un `queryOverview`, des `entityContexts` et une provenance explicite,
 - `entityContexts` doit rester le conteneur de référence pour les enrichissements NER du chat: type, notes liées, image éventuelle, ligne de preuve, explication de relation et connaissances web compactes,
 - le graphe doit rester filtrable côté backend par texte, dossier, tag, type et profondeur de sous-graphe.
+
+### `src/mcp/`
+
+Responsabilité : exposer un sous-ensemble MCP local et read-only du produit pour les assistants compatibles.
+
+À préserver :
+
+- la façade MCP doit rester fine et réutiliser les composants existants plutôt que dupliquer la logique FastAPI,
+- l'initialisation du runtime doit continuer à passer par `src/api/runtime.py`,
+- le MVP MCP reste limité aux lectures système/coffre/RAG/graphe, sans mutation de données ni administration destructive,
+- les payloads MCP doivent rester simples, stables et sérialisables pour des clients externes,
+- `src.mcp.server.main()` reste le point d'entrée stdio du serveur MCP local,
+- les noms d'outils MCP doivent rester compatibles avec les contraintes des clients desktop (pas de `.` dans les noms pour Claude Desktop),
+- `stdout` doit rester réservé au flux JSON-RPC MCP ; les logs humains partent sur `stderr`.
 
 ### UI Streamlit héritée, hot reload et stratégie d'import
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -18,6 +19,7 @@ class TestLogger:
 
         mock_logger.remove.assert_called_once()
         assert mock_logger.add.call_count == 5
+        assert mock_logger.add.call_args_list[0].args[0] is sys.stderr
         assert log_dir.exists()
 
     def test_log_token_usage_creates_daily_and_cumulative_stats(self, tmp_path):
