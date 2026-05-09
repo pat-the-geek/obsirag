@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import threading
 import time
+import unicodedata
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -453,16 +454,29 @@ class LanceStore:
         except Exception:
             return []
 
-    def get_chunks_by_file_path(self, file_path: str, limit: int = 2) -> list[dict]:
-        safe = file_path.replace("'", "''")
+    def get_chunks_by_file_path(self, file_path: str, limit: int = 2, *, top_k: int | None = None) -> list[dict]:
+        effective_limit = top_k if top_k is not None else limit
+        # Try both NFC and NFD because macOS filesystem stores filenames in NFD
+        # but user-supplied strings are typically NFC.
+        nfc_fp = unicodedata.normalize("NFC", file_path)
+        nfd_fp = unicodedata.normalize("NFD", file_path)
+        safe = nfc_fp.replace("'", "''")
+        safe_nfd = nfd_fp.replace("'", "''")
         try:
             rows = (
                 self._table.search(query=None)
                 .where(f"file_path = '{safe}'")
-                .limit(limit)
+                .limit(effective_limit)
                 .to_list()
             )
-            return [_row_to_chunk(r, score=0.0) for r in rows][:limit]
+            if not rows and safe_nfd != safe:
+                rows = (
+                    self._table.search(query=None)
+                    .where(f"file_path = '{safe_nfd}'")
+                    .limit(effective_limit)
+                    .to_list()
+                )
+            return [_row_to_chunk(r, score=0.0) for r in rows][:effective_limit]
         except Exception:
             return []
 
@@ -550,7 +564,7 @@ class LanceStore:
 
         seen: dict[str, dict] = {}
         for r in rows:
-            fp = r.get("file_path") or ""
+            fp = unicodedata.normalize("NFC", r.get("file_path") or "")
             if not fp or fp in seen:
                 continue
             seen[fp] = {

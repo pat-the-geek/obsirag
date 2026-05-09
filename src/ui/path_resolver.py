@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import unicodedata
 from pathlib import Path, PurePath
 
 from src.config import settings
@@ -13,9 +14,11 @@ def normalize_vault_relative_path(path_str: str, vault_root: Path | None = None)
     resolved = resolve_vault_path(normalized, vault_root=vault_root)
     root = vault_root or settings.vault
     try:
-        return resolved.relative_to(root).as_posix()
+        result = resolved.relative_to(root).as_posix()
     except ValueError:
-        return Path(normalized).as_posix() if Path(normalized).is_absolute() else PurePath(normalized).as_posix()
+        result = Path(normalized).as_posix() if Path(normalized).is_absolute() else PurePath(normalized).as_posix()
+    # Normalize to NFC so macOS NFD filesystem paths match user-supplied NFC strings.
+    return unicodedata.normalize("NFC", result)
 
 
 def resolve_vault_path(path_str: str, vault_root: Path | None = None) -> Path:
