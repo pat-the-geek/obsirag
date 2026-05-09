@@ -20,6 +20,40 @@ if TYPE_CHECKING:
 class AutoLearnSynapseDiscovery:
     def __init__(self, owner: "AutoLearner") -> None:
         self._owner = owner
+        self._bootstrap_done = False
+
+    def _bootstrap_index_from_disk(self, index: set[str]) -> bool:
+        """Scan existing synapse files and add missing pair_keys to the index.
+
+        Runs once per process to recover from index resets without re-reading
+        all files on every discovery cycle.
+        Returns True if at least one new pair was added.
+        """
+        synapses_dir = self._owner._get_settings().synapses_dir
+        if not synapses_dir.exists():
+            return False
+        added = False
+        for synapse_file in synapses_dir.glob("*.md"):
+            try:
+                content = synapse_file.read_text(encoding="utf-8", errors="replace")
+                explicit_refs = re.findall(
+                    r"^\*\*Note source ([AB]) :\*\* \[\[(.+?)\]\]", content, re.MULTILINE
+                )
+                if len(explicit_refs) < 2:
+                    continue
+                ordered = {label: ref.strip() for label, ref in explicit_refs}
+                ref_a, ref_b = ordered.get("A"), ordered.get("B")
+                if not ref_a or not ref_b:
+                    continue
+                fp_a = ref_a if ref_a.endswith(".md") else ref_a + ".md"
+                fp_b = ref_b if ref_b.endswith(".md") else ref_b + ".md"
+                key = self.synapse_pair_key(fp_a, fp_b)
+                if key not in index:
+                    index.add(key)
+                    added = True
+            except Exception:
+                continue
+        return added
 
     def load_synapse_index(self) -> set[str]:
         file_path = self._owner._get_settings().synapse_index_file
@@ -65,6 +99,15 @@ class AutoLearnSynapseDiscovery:
             return
 
         synapse_index = self._owner._load_synapse_index()
+
+        # First run per process: rebuild the index from physical synapse files so
+        # that a lost/reset synapse_index.json never causes duplicate creation.
+        if not self._bootstrap_done:
+            if self._bootstrap_index_from_disk(synapse_index):
+                self._owner._save_synapse_index(synapse_index)
+                logger.info(f"Synapse index bootstrapped from disk ({len(synapse_index)} paires)")
+            self._bootstrap_done = True
+
         candidates = list(all_notes)
         random.shuffle(candidates)
 
@@ -89,12 +132,15 @@ class AutoLearnSynapseDiscovery:
                     continue
                 try:
                     self._owner._create_synapse_artifact(note_a, note_b_info)
-                    synapse_index.add(pair_key)
-                    self._owner._save_synapse_index(synapse_index)
                     quota -= 1
                     time.sleep(self._owner._SLEEP_BETWEEN_QUESTIONS)
                 except Exception as exc:
                     logger.warning(f"Synapse {file_path_a} ↔ {file_path_b} : {exc}")
+                finally:
+                    # Always mark the pair as seen, even on failure, so a transient
+                    # LLM error doesn't cause an infinite retry loop or duplicate file.
+                    synapse_index.add(pair_key)
+                    self._owner._save_synapse_index(synapse_index)
 
     def build_synapse_artifact_content(
         self,
