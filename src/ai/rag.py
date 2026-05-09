@@ -326,6 +326,9 @@ class RAGPipeline:
         resolved_query = self._resolve_query_with_history(user_query, history)
         self._emit_progress(progress_callback, phase="retrieval", message="Recherche des passages pertinents")
         chunks, intent = self._retrieve(resolved_query, progress_callback=progress_callback)
+        # Always filter investigation conversation chunks — they must never appear
+        # as RAG sources regardless of the exclude_obsirag_generated flag.
+        chunks = self._filter_conversation_chunks(chunks)
         if exclude_obsirag_generated:
             chunks = self._filter_obsirag_generated_chunks(chunks)
         self._emit_progress(
@@ -1043,6 +1046,19 @@ class RAGPipeline:
         progress_callback: Callable[[dict[str, Any]], None] | None = None,
     ) -> tuple[list[dict], str]:
         return self._retrieval_strategy.retrieve(query, progress_callback=progress_callback)
+
+    @staticmethod
+    def _is_conversation_chunk(chunk: dict) -> bool:
+        metadata = chunk.get("metadata") or {}
+        file_path = str(metadata.get("file_path") or chunk.get("file_path") or "").replace("\\", "/")
+        return "/obsirag/conversations/" in file_path or file_path.startswith("obsirag/conversations/")
+
+    def _filter_conversation_chunks(self, chunks: list[dict]) -> list[dict]:
+        filtered = [c for c in chunks if not self._is_conversation_chunk(c)]
+        dropped = len(chunks) - len(filtered)
+        if dropped > 0:
+            logger.info(f"RAG: {dropped} chunk(s) de conversations d'investigation exclus du contexte")
+        return filtered
 
     @staticmethod
     def _is_obsirag_generated_chunk(chunk: dict) -> bool:

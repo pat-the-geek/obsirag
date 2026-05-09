@@ -45,6 +45,11 @@ class _DebouncedHandler(FileSystemEventHandler):
     def _queue(self, path: str, event_type: str) -> None:
         if not path.endswith(".md"):
             return
+        # Investigation conversation notes are managed exclusively by the MCP
+        # investigation tools and must never trigger re-indexing.
+        norm = path.replace("\\", "/")
+        if "/obsirag/conversations/" in norm:
+            return
 
         with self._lock:
             self._pending[path] = event_type
