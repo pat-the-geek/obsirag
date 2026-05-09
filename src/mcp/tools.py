@@ -44,12 +44,13 @@ def register_tools(server: FastMCP) -> None:
     @server.tool(
         name="obsirag_ask_rag",
         description=(
-            "Pose une question RAG au coffre local. "
-            "Par defaut utilise Ollama (LLM local). "
-            "Activer use_euria=true pour utiliser le LLM cloud Euria (plus puissant). "
-            "Activer web_search=true (requiert use_euria=true) pour enrichir la reponse via le web. "
-            "Si la reponse contient suggestEuriaWebSearch=true, ObsiRAG recommande de relancer "
-            "avec use_euria=true et web_search=true car le coffre ne contient pas la reponse."
+            "Pose une question RAG au coffre local (Ollama par defaut). "
+            "Quand le coffre ne contient pas la reponse (sentinelle Ollama), "
+            "ObsiRAG bascule automatiquement sur Euria+recherche web si Euria est configure "
+            "— le champ provider indique quel LLM a repondu ('ollama' ou 'euria+web'). "
+            "Forcer use_euria=true pour utiliser Euria directement sans passer par Ollama. "
+            "Si suggestEuriaWebSearch=true dans la reponse, Euria n'etait pas disponible "
+            "et une relance manuelle avec use_euria=true web_search=true est recommandee."
         ),
         structured_output=True,
     )

@@ -46,6 +46,44 @@ def _build_rag(*, use_euria: bool, web_search: bool):
     return RAGPipeline(svc.chroma, llm, metrics=svc.metrics)
 
 
+def _euria_web_fallback(
+    question: str,
+    normalized_history: list[dict[str, str]],
+    *,
+    exclude_obsirag_generated: bool,
+) -> dict[str, Any] | None:
+    """Retry avec EurIA+web quand la sentinelle Ollama s'est déclenchée.
+
+    Retourne None si EurIA n'est pas configuré ou si l'appel échoue,
+    afin de laisser le caller retourner la réponse sentinel originale.
+    """
+    try:
+        from src.ai.euria_client import EuriaClient
+        from src.ai.rag import RAGPipeline
+        svc = get_service_manager()
+        rag = RAGPipeline(svc.chroma, _WebSearchEuriaClient(EuriaClient()), metrics=svc.metrics)
+        answer, sources = rag.query(
+            question,
+            chat_history=normalized_history,
+            exclude_obsirag_generated=exclude_obsirag_generated,
+        )
+        source_models = _build_source_models(list(sources or []))
+        primary = next((s for s in source_models if s.isPrimary), None)
+        sanitized = sanitize_mermaid_blocks(_sanitize_assistant_answer_text(str(answer or "")))
+        return {
+            "question": question,
+            "answer": sanitized,
+            "sentinel": sanitized.strip().lower() == _SENTINEL_ANSWER.lower(),
+            "suggestEuriaWebSearch": False,
+            "provider": "euria+web",
+            "sourceCount": len(source_models),
+            "sources": [s.model_dump(mode="json") for s in source_models],
+            "primarySource": primary.model_dump(mode="json") if primary is not None else None,
+        }
+    except Exception:
+        return None
+
+
 def _to_json(value: Any) -> Any:
     if hasattr(value, "model_dump"):
         return value.model_dump(mode="json")
@@ -126,10 +164,11 @@ def ask_rag_payload(
         raise ValueError("question must not be empty")
 
     get_service_manager().signal_ui_active()
+    normalized_history = _normalize_history(history)
     rag = _build_rag(use_euria=use_euria, web_search=web_search)
     answer, sources = rag.query(
         safe_question,
-        chat_history=_normalize_history(history),
+        chat_history=normalized_history,
         exclude_obsirag_generated=exclude_obsirag_generated,
     )
     source_models = _build_source_models(list(sources or []))
@@ -137,11 +176,23 @@ def ask_rag_payload(
     sanitized_answer = sanitize_mermaid_blocks(_sanitize_assistant_answer_text(str(answer or "")))
 
     is_sentinel = sanitized_answer.strip().lower() == _SENTINEL_ANSWER.lower()
+
+    # Fallback automatique EurIA+web quand la sentinelle Ollama se déclenche.
+    if is_sentinel and not use_euria:
+        fallback = _euria_web_fallback(
+            safe_question,
+            normalized_history,
+            exclude_obsirag_generated=exclude_obsirag_generated,
+        )
+        if fallback is not None:
+            return fallback
+
     return {
         "question": safe_question,
         "answer": sanitized_answer,
         "sentinel": is_sentinel,
-        "suggestEuriaWebSearch": is_sentinel and not use_euria,
+        "suggestEuriaWebSearch": is_sentinel,
+        "provider": "ollama",
         "sourceCount": len(source_models),
         "sources": [item.model_dump(mode="json") for item in source_models],
         "primarySource": primary_source.model_dump(mode="json") if primary_source is not None else None,
