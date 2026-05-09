@@ -137,10 +137,11 @@ class RetrievalStrategy:
                 chunks_a = self._owner._chroma.search(concept_a, top_k=cfg.search_top_k)
                 chunks_b = self._owner._chroma.search(concept_b, top_k=cfg.search_top_k)
                 chunks_ab = self._owner._chroma.search(f"{concept_a} {concept_b}", top_k=cfg.search_top_k)
+                _DUAL_MIN_SCORE = 0.75
                 seen_ids: set[str] = set()
                 merged: list[dict] = []
                 for chunk in chunks_ab + chunks_a + chunks_b:
-                    if chunk["chunk_id"] not in seen_ids:
+                    if chunk["chunk_id"] not in seen_ids and chunk.get("score", 0) >= _DUAL_MIN_SCORE:
                         seen_ids.add(chunk["chunk_id"])
                         merged.append(chunk)
                 self._emit_progress(

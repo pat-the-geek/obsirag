@@ -506,6 +506,10 @@ class AutoLearner:
             return True
         except Exception as exc:
             logger.warning(f"{error_prefix} {note_meta['file_path']} : {exc}")
+            try:
+                self._mark_processed(note_meta["file_path"])
+            except Exception:
+                pass
             return False
 
     def _finalize_bulk_initial(self) -> None:

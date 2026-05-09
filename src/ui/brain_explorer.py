@@ -84,6 +84,20 @@ def build_centrality_spotlight(notes: list[dict], top_connected: list[dict], lim
             "tags": note.get("tags", []),
         })
 
+    # When all centrality scores are 0 (isolated subgraph, single note), fall back to recency.
+    if not spotlight or all(item["score"] == 0 for item in spotlight):
+        fallback = sorted(notes, key=lambda n: str(n.get("date_modified") or ""), reverse=True)
+        spotlight = [
+            {
+                "file_path": n["file_path"],
+                "title": n.get("title") or n["file_path"],
+                "score": 0.0,
+                "date_modified": n.get("date_modified", "")[:10],
+                "tags": n.get("tags", []),
+            }
+            for n in fallback[:limit]
+        ]
+
     return spotlight
 
 

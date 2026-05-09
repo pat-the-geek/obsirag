@@ -116,6 +116,7 @@ _TRAILING_MARKDOWN_ARTIFACT_LINE_RE = re.compile(
 )
 _SIMPLE_ITALIC_WITH_EXTRA_CLOSING_STARS_RE = re.compile(r"(?<!\*)\*([^*\n]+?)\*{3}(?=$|[\s\).,;:!?])")
 _GLUED_UPPERCASE_TITLE_PREFIX_RE = re.compile(r"\b(DE|DU|DES|LE|LA|LES|ET)(?=[A-ZÀ-ÖØ-Þ]{3,})")
+_NER_TAG_PREFIX_RE = re.compile(r"^(personne|lieu|org|produit|groupe|concept|oeuvre|evenement)/", re.I)
 
 
 def _collapse_repeated_line_blocks(text: str, *, max_block_size: int = 4) -> str:
@@ -1111,8 +1112,15 @@ def _has_meaningful_startup_payload(payload: dict[str, Any]) -> bool:
 
 
 def _infer_ready_startup_payload(indexing_status: dict[str, Any], index_state: dict[str, str]) -> dict[str, Any] | None:
+    db_count = 0
+    try:
+        svc = get_service_manager()
+        db_count = svc.chroma.count_notes()
+    except Exception:
+        pass
     has_runtime_evidence = bool(
         index_state
+        or db_count > 0
         or int(indexing_status.get("processed") or 0) > 0
         or int(indexing_status.get("total") or 0) > 0
         or str(indexing_status.get("current") or "").strip()
@@ -1257,6 +1265,15 @@ def system_status(_: None = Depends(require_api_auth)) -> SystemStatusResponse:
     ensure_service_manager_started()
     indexing_status = _load_indexing_status()
     index_state = _load_index_state()
+
+    svc = get_service_manager()
+    db_note_count = svc.chroma.count_notes()
+    index_note_count = len(index_state)
+    if db_note_count > 0 and abs(db_note_count - index_note_count) > 5:
+        logger.warning(
+            f"system_status: décalage index/DB — {index_note_count} notes dans index_state, "
+            f"{db_note_count} notes dans la base vectorielle (delta={db_note_count - index_note_count:+d})"
+        )
 
     return SystemStatusResponse(
         backendReachable=True,
@@ -4096,7 +4113,7 @@ def _build_graph_payload(
     graph = GraphBuilder().build(filtered_notes)
     filter_options = GraphFilterOptionsModel(
         folders=list(svc.chroma.list_note_folders()),
-        tags=list(svc.chroma.list_note_tags()),
+        tags=[t for t in svc.chroma.list_note_tags() if not _NER_TAG_PREFIX_RE.match(t)],
         types=[option["key"] for option in get_note_type_options()],
     )
     return _graph_to_model(
