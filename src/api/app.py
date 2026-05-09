@@ -117,7 +117,9 @@ _TRAILING_MARKDOWN_ARTIFACT_LINE_RE = re.compile(
 )
 _SIMPLE_ITALIC_WITH_EXTRA_CLOSING_STARS_RE = re.compile(r"(?<!\*)\*([^*\n]+?)\*{3}(?=$|[\s\).,;:!?])")
 _GLUED_UPPERCASE_TITLE_PREFIX_RE = re.compile(r"\b(DE|DU|DES|LE|LA|LES|ET)(?=[A-ZÀ-ÖØ-Þ]{3,})")
-_NER_TAG_PREFIX_RE = re.compile(r"^(personne|lieu|org|produit|groupe|concept|oeuvre|evenement)/", re.I)
+_NER_TAG_PREFIX_RE = re.compile(
+    r"^(personne|person|lieu|org|produit|groupe|concept|oeuvre|evenement|event)/", re.I
+)
 
 
 def _collapse_repeated_line_blocks(text: str, *, max_block_size: int = 4) -> str:

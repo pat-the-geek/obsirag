@@ -4,6 +4,7 @@ import json
 import random
 import re
 import time
+import unicodedata
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -69,7 +70,11 @@ class AutoLearnSynapseDiscovery:
 
     @staticmethod
     def synapse_pair_key(file_path_a: str, file_path_b: str) -> str:
-        return "|||".join(sorted([file_path_a, file_path_b]))
+        # Normalize to NFC so NFD filesystem paths and NFC user-supplied strings
+        # produce the same key and never create duplicate synapse files.
+        a = unicodedata.normalize("NFC", file_path_a)
+        b = unicodedata.normalize("NFC", file_path_b)
+        return "|||".join(sorted([a, b]))
 
     @staticmethod
     def extract_synapse_note_refs(content: str) -> tuple[str | None, str | None]:
@@ -122,6 +127,12 @@ class AutoLearnSynapseDiscovery:
                 top_k=5,
                 threshold=self._owner._get_settings().autolearn_synapse_threshold,
             )
+            # Exclude obsirag-generated artifacts (synapses, insights, synthesis)
+            # from being used as note_b — they produce nonsensical cross-artifact pairs.
+            similar = [
+                s for s in similar
+                if not self._owner._is_obsirag_generated(s["file_path"])
+            ]
 
             for note_b_info in similar:
                 if quota <= 0:
