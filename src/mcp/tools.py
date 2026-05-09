@@ -6,6 +6,9 @@ from mcp.server.fastmcp import FastMCP
 
 from src.mcp.runtime import (
     ask_rag_payload,
+    conversation_continue_payload,
+    conversation_finalize_payload,
+    conversation_start_payload,
     get_graph_subgraph_payload,
     get_note_payload,
     get_system_status_payload,
@@ -68,6 +71,78 @@ def register_tools(server: FastMCP) -> None:
             exclude_obsirag_generated=exclude_obsirag_generated,
             use_euria=use_euria,
             web_search=web_search,
+        )
+
+    @server.tool(
+        name="obsirag_conversation_start",
+        description=(
+            "Crée une conversation d'investigation et exécute le premier tour de question/réponse. "
+            "A utiliser uniquement pour vérifier la qualité d'une réponse de obsirag_ask_rag. "
+            "Une seule conversation active à la fois. "
+            "trigger_reason doit être l'une des valeurs : sentinel_response, low_confidence, "
+            "incomplete_coverage, contradictory_sources, unexpected_primary_source, branch_exploration."
+        ),
+        structured_output=True,
+    )
+    def conversation_start(
+        title: str,
+        triggering_question: str,
+        trigger_reason: str,
+        trigger_explanation: str,
+        initial_rag_response: dict,
+        first_followup_question: str,
+    ) -> dict[str, Any]:
+        """Démarrer une investigation conversationnelle persistée dans le coffre."""
+        return conversation_start_payload(
+            title=title,
+            triggering_question=triggering_question,
+            trigger_reason=trigger_reason,
+            trigger_explanation=trigger_explanation,
+            initial_rag_response=initial_rag_response,
+            first_followup_question=first_followup_question,
+        )
+
+    @server.tool(
+        name="obsirag_conversation_continue",
+        description=(
+            "Ajoute un tour à une conversation d'investigation active. "
+            "Exécute une question RAG et l'appende à la note. "
+            "Maximum 3 tours après obsirag_conversation_start. "
+            "Quand turns_remaining == 0, appeler obsirag_conversation_finalize."
+        ),
+        structured_output=True,
+    )
+    def conversation_continue(
+        conversation_id: str,
+        question: str,
+        reasoning: str,
+    ) -> dict[str, Any]:
+        """Continuer une investigation en ajoutant un tour de Q&R."""
+        return conversation_continue_payload(
+            conversation_id=conversation_id,
+            question=question,
+            reasoning=reasoning,
+        )
+
+    @server.tool(
+        name="obsirag_conversation_finalize",
+        description=(
+            "Clôt définitivement une conversation d'investigation. "
+            "Écrit la synthèse finale dans la note et marque status: closed. "
+            "Doit être appelé avant d'en démarrer une nouvelle."
+        ),
+        structured_output=True,
+    )
+    def conversation_finalize(
+        conversation_id: str,
+        final_synthesis: str,
+        resolved: bool,
+    ) -> dict[str, Any]:
+        """Clôturer une investigation et écrire la synthèse finale."""
+        return conversation_finalize_payload(
+            conversation_id=conversation_id,
+            final_synthesis=final_synthesis,
+            resolved=resolved,
         )
 
     @server.tool(
