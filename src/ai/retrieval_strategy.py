@@ -10,6 +10,14 @@ from loguru import logger
 if TYPE_CHECKING:
     from src.ai.rag import RAGPipeline
 
+# Détecte les requêtes thématiques "A et B" sans mots-clés de relation explicites.
+# Exemples : "pouvoir et responsabilité", "mémoire et identité culturelle".
+# Ces requêtes reçoivent le même traitement de récupération dual que les requêtes relation.
+_DUAL_CONCEPT_RE = re.compile(
+    r"^\s*([\w\s''àâäéèêëîïôùûüç-]{3,40}?)\s+et\s+([\w\s''àâäéèêëîïôùûüç-]{3,40}?)\s*\??\s*$",
+    re.I,
+)
+
 
 class RetrievalStrategy:
     def __init__(self, owner: "RAGPipeline") -> None:
@@ -109,6 +117,39 @@ class RetrievalStrategy:
             chunks = self._owner._retrieve_hybrid_chunks(query, proper_nouns)
             self._emit_progress(progress_callback, f"Recherche hybride terminée ({len(chunks[: cfg.search_top_k])} résultat(s))", chunk_count=len(chunks[: cfg.search_top_k]), retrieval_mode="hybrid")
             return chunks[: cfg.search_top_k], "hybrid"
+
+        # "A et B" without explicit relation keywords → dual-concept split retrieval.
+        # Searches each concept separately + combined so the LLM gets context on both themes.
+        dual_match = _DUAL_CONCEPT_RE.fullmatch(query.strip())
+        if dual_match:
+            concept_a = dual_match.group(1).strip()
+            concept_b = dual_match.group(2).strip()
+            if (
+                len(concept_a.split()) <= 4 and len(concept_b.split()) <= 4
+                and len(concept_a) >= 3 and len(concept_b) >= 3
+            ):
+                logger.info(f"RAG intent=relation (dual-concept): {concept_a!r} / {concept_b!r}")
+                self._emit_progress(
+                    progress_callback,
+                    f"Recherche dual-concept : {concept_a} / {concept_b}",
+                    retrieval_mode="relation",
+                )
+                chunks_a = self._owner._chroma.search(concept_a, top_k=cfg.search_top_k)
+                chunks_b = self._owner._chroma.search(concept_b, top_k=cfg.search_top_k)
+                chunks_ab = self._owner._chroma.search(f"{concept_a} {concept_b}", top_k=cfg.search_top_k)
+                seen_ids: set[str] = set()
+                merged: list[dict] = []
+                for chunk in chunks_ab + chunks_a + chunks_b:
+                    if chunk["chunk_id"] not in seen_ids:
+                        seen_ids.add(chunk["chunk_id"])
+                        merged.append(chunk)
+                self._emit_progress(
+                    progress_callback,
+                    f"Recherche dual-concept terminée ({len(merged[:cfg.search_top_k * 2])} résultat(s))",
+                    chunk_count=len(merged[:cfg.search_top_k * 2]),
+                    retrieval_mode="relation",
+                )
+                return merged[: cfg.search_top_k * 2], "relation"
 
         self._emit_progress(progress_callback, "Recherche sémantique générale", retrieval_mode="general")
         chunks = self._owner._chroma.search(query, top_k=cfg.search_top_k)

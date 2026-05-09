@@ -2185,8 +2185,10 @@ def get_graph_subgraph(
     _: None = Depends(require_api_auth),
 ) -> GraphDataModel:
     note_id = normalize_vault_relative_path(noteId)
+    # Folder filter is applied POST-BFS so BFS can traverse bridge nodes (e.g. synapses)
+    # and still surface co-folder notes that are not directly connected to the anchor.
     payload = _build_graph_payload(
-        selected_folders=folders,
+        selected_folders=[],  # no folder pre-filter; applied post-BFS below
         selected_tags=tags,
         selected_types=noteTypes,
         search_text=searchText,
@@ -2206,6 +2208,14 @@ def get_graph_subgraph(
             neighbors.update(graph.successors(current))
         frontier = neighbors - visited
         visited.update(frontier)
+
+    # Post-BFS folder filter: keep anchor + nodes whose immediate parent folder matches.
+    if folders and "Tous" not in folders:
+        folder_set = set(folders)
+        visited = {
+            n for n in visited
+            if n == note_id or str(Path(n).parent) in folder_set
+        }
 
     subgraph = graph.subgraph(visited).copy()
     return _graph_to_model(
