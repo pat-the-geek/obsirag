@@ -2,6 +2,7 @@
 ServiceManager — point d'entrée unique pour tous les composants ObsiRAG.
 Instancié une seule fois via @st.cache_resource dans l'UI.
 """
+import os
 import time
 import threading
 from datetime import UTC, datetime
@@ -98,6 +99,9 @@ class ServiceManager:
             d.mkdir(parents=True, exist_ok=True)
 
     def _start_background_services(self) -> None:
+        if os.environ.get("OBSIRAG_MCP_MODE"):
+            logger.info("Mode MCP : services en arrière-plan désactivés (pas d'indexation, d'autolearn ni de watcher)")
+            return
         self.watcher.start()
         logger.info("Vault watcher démarré")
 

@@ -1,5 +1,12 @@
 from __future__ import annotations
 
+import os
+
+# Désactive les services background (indexeur, autolearn, watcher) dans le processus MCP.
+# Sans ce flag, ServiceManager démarre un thread _initial_index qui verrouille ChromaDB
+# et bloque les requêtes graph/subgraph jusqu'à la fin de l'indexation complète.
+os.environ.setdefault("OBSIRAG_MCP_MODE", "1")
+
 from mcp.server.fastmcp import FastMCP
 
 from src.mcp.tools import register_tools

@@ -222,7 +222,23 @@ class AnswerPrompting:
                 )
             return intent_hint
         if self._owner._should_use_single_subject_prompt(intent, query):
-            return self.build_single_subject_intent_hint(query)
+            hint = self.build_single_subject_intent_hint(query)
+            if force_study_answer:
+                hint += (
+                    "- Deuxième tentative obligatoire : les extraits ci-dessus contiennent déjà assez de matière pour répondre.\n"
+                    "- Tu DOIS produire une réponse depuis ces notes. Ne réponds PAS par le hard sentinel.\n"
+                    "- Résume ce que les notes disent sur le sujet en 2-4 paragraphes concis.\n"
+                    "- Cite les titres de notes utiles entre [crochets].\n"
+                )
+            return hint
+        if force_study_answer:
+            return (
+                "\n\n**Consigne de travail (2e tentative) :**\n"
+                "- Les extraits ci-dessus contiennent des éléments substantiels sur le sujet demandé.\n"
+                "- Tu DOIS produire une réponse depuis ces notes. Ne réponds PAS par le hard sentinel.\n"
+                "- Résume ce que les notes disent sur le sujet en 2-4 paragraphes concis.\n"
+                "- Cite les titres de notes utiles entre [crochets].\n"
+            )
         return ""
 
     def build_study_intent_hint(self, query: str) -> str:

@@ -662,7 +662,7 @@ class RAGPipeline:
         Cela évite un 2e appel LLM quand une seule note courte a été trouvée —
         cas où la réponse sentinel est probablement correcte.
         """
-        if intent not in {"synthesis", "relation", "hybrid"}:
+        if intent not in {"synthesis", "relation", "hybrid", "general"}:
             return answer
         if not answer or not answer.strip().lower().startswith(_HARD_SENTINEL.rstrip(".")):
             return answer

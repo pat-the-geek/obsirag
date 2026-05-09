@@ -43,19 +43,28 @@ def register_tools(server: FastMCP) -> None:
 
     @server.tool(
         name="obsirag_ask_rag",
-        description="Pose une question RAG simple au coffre local sans creer de conversation persistante.",
+        description=(
+            "Pose une question RAG au coffre local. "
+            "Par defaut utilise Ollama (LLM local). "
+            "Activer use_euria=true pour utiliser le LLM cloud Euria (plus puissant). "
+            "Activer web_search=true (requiert use_euria=true) pour enrichir la reponse via le web."
+        ),
         structured_output=True,
     )
     def ask_rag(
         question: str,
         history: list[dict[str, str]] | None = None,
         exclude_obsirag_generated: bool = False,
+        use_euria: bool = False,
+        web_search: bool = False,
     ) -> dict[str, Any]:
         """Interroger le coffre via le pipeline RAG local d'ObsiRAG."""
         return ask_rag_payload(
             question,
             history=history,
             exclude_obsirag_generated=exclude_obsirag_generated,
+            use_euria=use_euria,
+            web_search=web_search,
         )
 
     @server.tool(

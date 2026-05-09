@@ -19,6 +19,33 @@ from src.api.runtime import get_service_manager
 _SENTINEL_ANSWER = "Cette information n'est pas dans ton coffre."
 
 
+class _WebSearchEuriaClient:
+    """Wrapper autour d'EuriaClient qui active enable_web_search=True sur chaque appel chat()."""
+
+    def __init__(self, inner) -> None:
+        self._inner = inner
+
+    def __getattr__(self, name: str):
+        return getattr(self._inner, name)
+
+    def chat(self, messages, **kwargs):
+        kwargs.setdefault("enable_web_search", True)
+        return self._inner.chat(messages, **kwargs)
+
+
+def _build_rag(*, use_euria: bool, web_search: bool):
+    """Retourne le RAGPipeline approprié selon les options demandées."""
+    svc = get_service_manager()
+    if not use_euria:
+        return svc.rag
+    from src.ai.euria_client import EuriaClient
+    from src.ai.rag import RAGPipeline
+    llm = EuriaClient()
+    if web_search:
+        llm = _WebSearchEuriaClient(llm)
+    return RAGPipeline(svc.chroma, llm, metrics=svc.metrics)
+
+
 def _to_json(value: Any) -> Any:
     if hasattr(value, "model_dump"):
         return value.model_dump(mode="json")
@@ -91,14 +118,16 @@ def ask_rag_payload(
     history: list[dict[str, str]] | None = None,
     *,
     exclude_obsirag_generated: bool = False,
+    use_euria: bool = False,
+    web_search: bool = False,
 ) -> dict[str, Any]:
     safe_question = str(question or "").strip()
     if not safe_question:
         raise ValueError("question must not be empty")
 
-    service_manager = get_service_manager()
-    service_manager.signal_ui_active()
-    answer, sources = service_manager.rag.query(
+    get_service_manager().signal_ui_active()
+    rag = _build_rag(use_euria=use_euria, web_search=web_search)
+    answer, sources = rag.query(
         safe_question,
         chat_history=_normalize_history(history),
         exclude_obsirag_generated=exclude_obsirag_generated,
@@ -144,4 +173,8 @@ def get_graph_subgraph_payload(
         )
     except HTTPException as exc:
         _raise_mcp_error(exc)
-    return _to_json(payload)
+    result = _to_json(payload)
+    # noteOptions contient ~1180 entrées non utiles pour l'appelant MCP — on allège la réponse.
+    if isinstance(result, dict):
+        result.pop("noteOptions", None)
+    return result
