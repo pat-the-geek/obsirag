@@ -47,7 +47,9 @@ def register_tools(server: FastMCP) -> None:
             "Pose une question RAG au coffre local. "
             "Par defaut utilise Ollama (LLM local). "
             "Activer use_euria=true pour utiliser le LLM cloud Euria (plus puissant). "
-            "Activer web_search=true (requiert use_euria=true) pour enrichir la reponse via le web."
+            "Activer web_search=true (requiert use_euria=true) pour enrichir la reponse via le web. "
+            "Si la reponse contient suggestEuriaWebSearch=true, ObsiRAG recommande de relancer "
+            "avec use_euria=true et web_search=true car le coffre ne contient pas la reponse."
         ),
         structured_output=True,
     )

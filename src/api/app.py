@@ -2184,15 +2184,16 @@ def get_graph_subgraph(
     recencyDays: int | None = Query(default=None, ge=1, le=3650),
     _: None = Depends(require_api_auth),
 ) -> GraphDataModel:
+    note_id = normalize_vault_relative_path(noteId)
     payload = _build_graph_payload(
         selected_folders=folders,
         selected_tags=tags,
         selected_types=noteTypes,
         search_text=searchText,
         recency_days=recencyDays,
+        anchor_note_id=note_id,
     )
     graph = _graph_from_model(payload)
-    note_id = normalize_vault_relative_path(noteId)
     if note_id not in graph:
         raise HTTPException(status_code=404, detail="Note not found in graph")
 
@@ -4061,6 +4062,7 @@ def _build_graph_payload(
     selected_types: list[str],
     search_text: str,
     recency_days: int | None,
+    anchor_note_id: str | None = None,
 ) -> GraphDataModel:
     svc = get_service_manager()
     all_notes = _notes_with_graph_context(svc.chroma.list_notes_sorted_by_title())
@@ -4073,6 +4075,14 @@ def _build_graph_payload(
         modified_within_days=recency_days,
         now=datetime.now(),
     )
+    # Toujours inclure la note d'ancrage même si elle est plus vieille que recency_days.
+    # Le filtre temporel s'applique aux voisins, pas au point de départ de la BFS.
+    if anchor_note_id and recency_days is not None:
+        filtered_ids = {n.get("file_path") for n in filtered_notes}
+        if anchor_note_id not in filtered_ids:
+            anchor_records = [n for n in all_notes if n.get("file_path") == anchor_note_id]
+            if anchor_records:
+                filtered_notes = list(filtered_notes) + anchor_records
     graph = GraphBuilder().build(filtered_notes)
     filter_options = GraphFilterOptionsModel(
         folders=list(svc.chroma.list_note_folders()),

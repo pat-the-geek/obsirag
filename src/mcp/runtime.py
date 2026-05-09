@@ -136,10 +136,12 @@ def ask_rag_payload(
     primary_source = next((item for item in source_models if item.isPrimary), None)
     sanitized_answer = sanitize_mermaid_blocks(_sanitize_assistant_answer_text(str(answer or "")))
 
+    is_sentinel = sanitized_answer.strip().lower() == _SENTINEL_ANSWER.lower()
     return {
         "question": safe_question,
         "answer": sanitized_answer,
-        "sentinel": sanitized_answer.strip().lower() == _SENTINEL_ANSWER.lower(),
+        "sentinel": is_sentinel,
+        "suggestEuriaWebSearch": is_sentinel and not use_euria,
         "sourceCount": len(source_models),
         "sources": [item.model_dump(mode="json") for item in source_models],
         "primarySource": primary_source.model_dump(mode="json") if primary_source is not None else None,
