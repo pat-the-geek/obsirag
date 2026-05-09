@@ -43,6 +43,7 @@ from src.api.schemas import (
     AutolearnStatusModel,
     ChatMessageModel,
     ConversationDetailModel,
+    ConversationInvestigationStatsModel,
     ConversationSummaryModel,
     CreateConversationRequest,
     DdgKnowledgeModel,
@@ -1275,6 +1276,13 @@ def system_status(_: None = Depends(require_api_auth)) -> SystemStatusResponse:
             f"{db_note_count} notes dans la base vectorielle (delta={db_note_count - index_note_count:+d})"
         )
 
+    from src.mcp.investigation import get_conversation_stats
+    try:
+        conv_stats_raw = get_conversation_stats()
+        conv_stats = ConversationInvestigationStatsModel(**conv_stats_raw)
+    except Exception:
+        conv_stats = ConversationInvestigationStatsModel()
+
     return SystemStatusResponse(
         backendReachable=True,
         llmAvailable=True,
@@ -1302,6 +1310,7 @@ def system_status(_: None = Depends(require_api_auth)) -> SystemStatusResponse:
                 description="Le backend Expo est demarre et peut servir le client mobile/web.",
             )
         ],
+        conversations=conv_stats,
     )
 
 
