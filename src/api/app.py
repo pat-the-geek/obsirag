@@ -43,6 +43,7 @@ from src.api.schemas import (
     AutolearnStatusModel,
     ChatMessageModel,
     ConversationDetailModel,
+    ConversationInvestigationStatsModel,
     ConversationSummaryModel,
     CreateConversationRequest,
     DdgKnowledgeModel,
@@ -116,7 +117,9 @@ _TRAILING_MARKDOWN_ARTIFACT_LINE_RE = re.compile(
 )
 _SIMPLE_ITALIC_WITH_EXTRA_CLOSING_STARS_RE = re.compile(r"(?<!\*)\*([^*\n]+?)\*{3}(?=$|[\s\).,;:!?])")
 _GLUED_UPPERCASE_TITLE_PREFIX_RE = re.compile(r"\b(DE|DU|DES|LE|LA|LES|ET)(?=[A-ZÀ-ÖØ-Þ]{3,})")
-_NER_TAG_PREFIX_RE = re.compile(r"^(personne|lieu|org|produit|groupe|concept|oeuvre|evenement)/", re.I)
+_NER_TAG_PREFIX_RE = re.compile(
+    r"^(personne|person|lieu|org|produit|groupe|concept|oeuvre|evenement|event)/", re.I
+)
 
 
 def _collapse_repeated_line_blocks(text: str, *, max_block_size: int = 4) -> str:
@@ -1275,6 +1278,13 @@ def system_status(_: None = Depends(require_api_auth)) -> SystemStatusResponse:
             f"{db_note_count} notes dans la base vectorielle (delta={db_note_count - index_note_count:+d})"
         )
 
+    from src.mcp.investigation import get_conversation_stats
+    try:
+        conv_stats_raw = get_conversation_stats()
+        conv_stats = ConversationInvestigationStatsModel(**conv_stats_raw)
+    except Exception:
+        conv_stats = ConversationInvestigationStatsModel()
+
     return SystemStatusResponse(
         backendReachable=True,
         llmAvailable=True,
@@ -1302,6 +1312,7 @@ def system_status(_: None = Depends(require_api_auth)) -> SystemStatusResponse:
                 description="Le backend Expo est demarre et peut servir le client mobile/web.",
             )
         ],
+        conversations=conv_stats,
     )
 
 

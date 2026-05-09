@@ -46,7 +46,7 @@ class IndexingPipeline:
         all_md = {
             str(p.relative_to(vault)): p
             for p in vault.rglob("*.md")
-            if not self._is_internal(p)
+            if not self._is_internal(p) and not self._is_excluded(p)
         }
 
         stats = {"added": 0, "updated": 0, "deleted": 0, "skipped": 0, "errors": 0}
@@ -118,7 +118,7 @@ class IndexingPipeline:
 
     def index_note(self, abs_path: Path) -> None:
         """Indexe (ou re-indexe) une note individuelle."""
-        if self._is_internal(abs_path):
+        if self._is_internal(abs_path) or self._is_excluded(abs_path):
             return
         if not abs_path.exists() or abs_path.suffix != ".md":
             return
@@ -183,6 +183,11 @@ class IndexingPipeline:
             )
             return
 
+        # Frontmatter-based exclusion: skip notes with exclude_from_rag: true
+        if self._check_frontmatter_exclusion(abs_path):
+            logger.debug(f"Note exclue du RAG (exclude_from_rag: true) : {rel_path}")
+            return
+
         note = self._parser.parse(abs_path)
         if note is None:
             return
@@ -212,6 +217,31 @@ class IndexingPipeline:
     def _is_internal(path: Path) -> bool:
         """Les fichiers écrits par ObsiRAG sont indexés comme les autres notes."""
         return False
+
+    @staticmethod
+    def _is_excluded(path: Path) -> bool:
+        """Return True for files that must never be indexed.
+
+        Currently: investigation conversation notes under obsirag/conversations/.
+        These carry exclude_from_rag: true in their frontmatter and are managed
+        exclusively via the MCP investigation tools.
+        """
+        parts = path.parts
+        try:
+            obsirag_idx = next(i for i, p in enumerate(parts) if p == "obsirag")
+            return len(parts) > obsirag_idx + 1 and parts[obsirag_idx + 1] == "conversations"
+        except StopIteration:
+            return False
+
+    def _check_frontmatter_exclusion(self, abs_path: Path) -> bool:
+        """Return True if the note's frontmatter has exclude_from_rag: true."""
+        try:
+            import frontmatter as fm_lib
+            raw = abs_path.read_text(encoding="utf-8", errors="replace")
+            post = fm_lib.loads(raw)
+            return bool(post.get("exclude_from_rag"))
+        except Exception:
+            return False
 
     @staticmethod
     def _file_hash(path: Path) -> str:

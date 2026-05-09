@@ -11,6 +11,9 @@ def test_build_server_registers_expected_tools() -> None:
     tools = asyncio.run(server.list_tools())
     assert {tool.name for tool in tools} == {
         "obsirag_ask_rag",
+        "obsirag_conversation_continue",
+        "obsirag_conversation_finalize",
+        "obsirag_conversation_start",
         "obsirag_get_graph_subgraph",
         "obsirag_get_note",
         "obsirag_get_system_status",

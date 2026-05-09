@@ -199,6 +199,60 @@ def ask_rag_payload(
     }
 
 
+def conversation_start_payload(
+    title: str,
+    triggering_question: str,
+    trigger_reason: str,
+    trigger_explanation: str,
+    initial_rag_response: dict,
+    first_followup_question: str,
+) -> dict[str, Any]:
+    from src.mcp.investigation import start_conversation
+    try:
+        return start_conversation(
+            title=title,
+            triggering_question=triggering_question,
+            trigger_reason=trigger_reason,
+            trigger_explanation=trigger_explanation,
+            initial_rag_response=initial_rag_response,
+            first_followup_question=first_followup_question,
+        )
+    except (ValueError, RuntimeError) as exc:
+        raise ValueError(str(exc)) from exc
+
+
+def conversation_continue_payload(
+    conversation_id: str,
+    question: str,
+    reasoning: str,
+) -> dict[str, Any]:
+    from src.mcp.investigation import continue_conversation
+    try:
+        return continue_conversation(
+            conversation_id=conversation_id,
+            question=question,
+            reasoning=reasoning,
+        )
+    except (ValueError, RuntimeError, LookupError) as exc:
+        raise ValueError(str(exc)) from exc
+
+
+def conversation_finalize_payload(
+    conversation_id: str,
+    final_synthesis: str,
+    resolved: bool,
+) -> dict[str, Any]:
+    from src.mcp.investigation import finalize_conversation
+    try:
+        return finalize_conversation(
+            conversation_id=conversation_id,
+            final_synthesis=final_synthesis,
+            resolved=resolved,
+        )
+    except (ValueError, RuntimeError, LookupError) as exc:
+        raise ValueError(str(exc)) from exc
+
+
 def get_graph_subgraph_payload(
     note_id: str,
     depth: int = 1,

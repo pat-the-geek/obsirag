@@ -60,6 +60,15 @@ class RuntimeInfoModel(BaseModel):
     euriaEnabled: bool = False
 
 
+class ConversationInvestigationStatsModel(BaseModel):
+    active_count: int = 0
+    total_today: int = 0
+    total_all_time: int = 0
+    average_turns: float = 0.0
+    resolution_rate: float = 0.0
+    auto_finalized_count: int = 0
+
+
 class SystemStatusResponse(BaseModel):
     backendReachable: bool
     llmAvailable: bool
@@ -70,6 +79,9 @@ class SystemStatusResponse(BaseModel):
     startup: StartupStatusModel
     runtime: RuntimeInfoModel
     alerts: list[SystemAlertModel] = Field(default_factory=list)
+    conversations: ConversationInvestigationStatsModel = Field(
+        default_factory=ConversationInvestigationStatsModel
+    )
 
 
 class ReindexResponseModel(BaseModel):
