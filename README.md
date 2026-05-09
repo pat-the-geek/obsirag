@@ -5,7 +5,7 @@
 
 ![ObsiRAG logo](https://raw.githubusercontent.com/pat-the-geek/obsirag/main/src/ui/static/android-chrome-512x512.png)
 
-Un système RAG (Retrieval-Augmented Generation) local pour votre coffre Obsidian, tournant nativement en Python sur macOS et utilisant **MLX-LM** (Apple Silicon) comme moteur IA local et **LanceDB** comme base vectorielle.
+Un système RAG (Retrieval-Augmented Generation) local pour votre coffre Obsidian, tournant nativement en Python sur macOS et utilisant **Ollama** comme moteur IA local et **LanceDB** comme base vectorielle.
 
 ---
 
@@ -73,7 +73,7 @@ Vue d'un artefact généré avec question, réponse, tags et provenance.
 
 - [docs/architecture.md](docs/architecture.md) — architecture actuelle, frontières entre modules, invariants et flux runtime
 - [docs/conversation-management.md](docs/conversation-management.md) — gestion des conversations, relances, note dominante, garde-fous anti hors-sujet et formatage des réponses
-- [docs/performances.md](docs/performances.md) — mesures de performances, comparaison MLX/Ollama et recommandations matérielles
+- [docs/performances.md](docs/performances.md) — mesures de performances et recommandations matérielles pour Ollama
 - [docs/performance-roadmap.md](docs/performance-roadmap.md) — feuille de route performance sprintable, gates Go/No-Go Rust et KPIs de pilotage
 - [docs/performance-tracker.md](docs/performance-tracker.md) — suivi d'execution hebdomadaire (statuts, mesures, blocages, decisions)
 - [docs/improvements-report.md](docs/improvements-report.md) — rapport a jour des travaux d'amelioration, validations et impacts produit
@@ -299,7 +299,7 @@ Ce script ne remplace pas un test depuis la machine distante, mais il permet de 
 
 ### Chat avec le coffre
 
-Interface conversationnelle connectée à **MLX-LM** (inférence locale Apple Silicon, sans serveur externe) et au moteur de recherche du coffre. Les requêtes sont traitées en combinant récupération sémantique, synthèse par l'IA, enrichissement NER et, quand nécessaire, une recherche web explicite.
+Interface conversationnelle connectée à **Ollama** (inférence locale) et au moteur de recherche du coffre. Les requêtes sont traitées en combinant récupération sémantique, synthèse par l'IA, enrichissement NER et, quand nécessaire, une recherche web explicite.
 
 #### Comportement conversationnel
 
@@ -411,7 +411,7 @@ Un processus léger tourne en arrière-plan et :
 
 Le système est conçu pour fonctionner **sans pénaliser l'utilisation normale de la machine** : les appels LLM sont espacés (pause configurable entre chaque note et chaque question), le nombre de notes traitées par cycle est limité, et tout tourne dans un thread d'arrière-plan isolé. La machine reste pleinement disponible pendant le traitement.
 
-> Par défaut, le backend API n'autorise plus le chargement MLX en tâche de fond. Pour réactiver l'auto-learner complet, définir `AUTOLEARN_ALLOW_BACKGROUND_LLM=true` dans `.env`.
+> Par défaut, le backend API n'autorise plus les appels LLM en tâche de fond. Pour réactiver l'auto-learner complet, définir `AUTOLEARN_ALLOW_BACKGROUND_LLM=true` dans `.env`.
 
 Pour isoler l'auto-learner du process API, lancer plutôt le worker dédié :
 
@@ -419,9 +419,9 @@ Pour isoler l'auto-learner du process API, lancer plutôt le worker dédié :
 ./scripts/run_autolearn_worker.sh
 ```
 
-Avec ce mode, un crash MLX éventuel du worker n'arrête plus l'API FastAPI.
+Avec ce mode, un crash éventuel du worker n'arrête plus l'API FastAPI.
 
-**Gestion du cycle de vie du modèle LLM :** l'auto-learner charge le modèle MLX au début de chaque cycle et le décharge à la fin si l'interface web est inactive — libérant ainsi la mémoire GPU/Metal entre les cycles. Si l'interface est ouverte, le modèle reste chargé pour répondre immédiatement aux requêtes chat.
+**Gestion du cycle de vie du LLM :** l'auto-learner n'effectue des appels Ollama que pendant ses traitements en arrière-plan. Hors cycle, l'API reste disponible pour le chat sans lancer d'inférences de fond.
 
 #### Traitements automatiques
 
@@ -535,7 +535,7 @@ L'insight est sauvegardé dans `obsirag/insights/YYYY-MM/` avec :
 - La provenance (Web, Coffre, ou Web+Coffre)
 - Une synthèse des sources web lorsque des URLs ont été récupérées et analysées
 
-> **Astuce** : Si une note attendue ne produit pas d'insight, vérifiez qu'elle est bien indexée (bouton "Re-indexer le coffre" dans le chat) et que le modèle MLX est correctement chargé (page Paramètres).
+> **Astuce** : Si une note attendue ne produit pas d'insight, vérifiez qu'elle est bien indexée (bouton "Re-indexer le coffre" dans le chat) et que le backend Ollama est joignable avec le bon modèle (page Paramètres).
 
 ---
 
@@ -690,7 +690,7 @@ Quand vous posez une question dans le chat :
 
 1. La question est elle-même vectorisée
 2. Le store vecteurs identifie les chunks dont le vecteur est le plus proche → **similarité cosinus**
-3. Ces chunks (vos notes) sont injectés comme contexte dans le prompt envoyé à **MLX-LM**
+3. Ces chunks (vos notes) sont injectés comme contexte dans le prompt envoyé à **Ollama**
 4. Le modèle génère une réponse ancrée dans **votre coffre**, pas dans ses seules connaissances pré-entraînées
 
 > C'est ce mécanisme qui permet de retrouver une note sur "les effets des écrans sur le sommeil" en posant la question "comment la lumière bleue affecte-t-elle le repos ?" — sans que ces mots exacts apparaissent dans la note.
@@ -714,10 +714,10 @@ ObsiRAG est conçu pour fonctionner **en tâche de fond sur un MacBook Air M5 16
 Ce délai est intentionnel et s'explique par la mécanique du cycle :
 
 - L'auto-learner se réveille **toutes les 15 minutes** et traite au maximum **3 notes nouvelles** par cycle (full-scan)
-- Le traitement complet d'une note avec MLX-LM (génération des questions + réponses + recherche web) prend de **2 à 5 minutes** selon la complexité du contenu
+- Le traitement complet d'une note avec Ollama (génération des questions + réponses + recherche web) prend de **2 à 5 minutes** selon la complexité du contenu
 - Résultat : 200 notes ÷ 3 notes/cycle × 15 min/cycle ≈ **17 heures** de fonctionnement actif
 
-Ces pauses sont délibérées — elles garantissent que le modèle MLX reste disponible pour le chat en temps réel. Les paramètres `AUTOLEARN_FULLSCAN_PER_RUN` et `AUTOLEARN_INTERVAL_MINUTES` dans `.env` permettent d'accélérer l'amorçage si vous le souhaitez.
+Ces pauses sont délibérées — elles évitent de saturer Ollama et préservent la réactivité du chat en temps réel. Les paramètres `AUTOLEARN_FULLSCAN_PER_RUN` et `AUTOLEARN_INTERVAL_MINUTES` dans `.env` permettent d'accélérer l'amorçage si vous le souhaitez.
 
 > **Sur MacBook :** ObsiRAG se remet automatiquement en marche à la sortie de veille (service launchd) — aucune intervention manuelle n'est nécessaire. L'auto-learner reprend son cycle là où il s'était arrêté, de façon totalement transparente.
 
@@ -727,76 +727,30 @@ Pour les détails de débit, temps de traitement par note et choix du modèle : 
 
 ---
 
-## Modèle IA utilisé via MLX-LM
+## Modèle IA utilisé via Ollama
 
-ObsiRAG utilise **MLX-LM** pour la génération locale, sans serveur externe. Le modèle tourne directement dans le processus Python, exploitant le GPU unifié Apple Silicon via le framework MLX.
-
-### Chargement et déchargement automatiques
-
-Le modèle est géré dynamiquement pour minimiser l'empreinte mémoire :
-
-| Événement | Comportement |
-| --- | --- |
-| **Ouverture de l'interface web** | Chargement immédiat du modèle (~2 s sur M5) |
-| **Utilisation du chat** | Modèle maintenu en mémoire tant que l'UI est active |
-| **Inactivité UI > 2 min** | Déchargement automatique (watchdog toutes les 30 s) |
-| **Début d'un cycle auto-learner** | Chargement automatique si absent |
-| **Fin d'un cycle auto-learner** | Déchargement si l'UI est inactive |
-| **Appel LLM sans modèle chargé** | Chargement à la volée transparent (try-load automatique) |
-
-Ce mécanisme garantit que le modèle ne consomme pas de mémoire GPU/Metal inutilement entre les sessions, tout en restant disponible instantanément dès qu'une requête arrive.
+ObsiRAG utilise **Ollama** pour la génération locale. Le backend FastAPI envoie ses prompts au serveur Ollama configuré, ce qui garde le contrat simple côté API et Expo.
 
 | Usage | Opération | Modèle configuré |
 | --- | --- | --- |
-| **Chat / RAG** | Réponses aux questions sur le coffre | `MLX_CHAT_MODEL` (ex. `mlx-community/Qwen2.5-7B-Instruct-4bit`) |
+| **Chat / RAG** | Réponses aux questions sur le coffre | `OLLAMA_CHAT_MODEL` (ex. `qwen2.5:7b`) |
 | **Génération de questions** | Auto-learner — questions ancrées dans le champ sémantique | Même modèle que le chat |
 | **Synapses & synthèses** | Connexions implicites, synthèse hebdomadaire | Même modèle que le chat |
-| **Embeddings** | Vectorisation des notes et des requêtes | `sentence-transformers` local — `paraphrase-multilingual-MiniLM-L12-v2` (384 dimensions) |
+| **Embeddings** | Vectorisation des notes et des requêtes | `OLLAMA_EMBED_MODEL` (ex. `nomic-embed-text`) ou fallback `sentence-transformers` |
 
-> Un seul modèle de chat suffit pour tout. Configurer `MLX_CHAT_MODEL` dans `.env` avec le nom HuggingFace de la forme `mlx-community/<modele>-4bit`. Le modèle est téléchargé automatiquement au premier démarrage.
+> En pratique, un seul modèle de chat suffit pour tout. Configurer `OLLAMA_BASE_URL` et `OLLAMA_CHAT_MODEL` dans `.env`, puis précharger le modèle voulu avec `ollama pull`.
 
-Les modèles de la communauté `mlx-community` sur HuggingFace sont déjà convertis et quantizés pour MLX — aucune conversion manuelle n'est nécessaire.
-
-### Performances observées (M5, 16 Go)
-
-| Opération | Ollama (avant) | MLX-LM (actuel) | Gain |
-| --- | --- | --- | --- |
-| Génération (tokens/s) | ~13 tok/s | ~27 tok/s | **×2** |
-| Chargement du modèle | 30–60 s | ~2 s | **×20** |
-| Dépendance serveur | Ollama daemon requis | Aucune | ✅ |
-
-### Comparatif court de modèles MLX testés
-
-Mesures indicatives réalisées localement sur **Mac M5 16 Go** avec le pipeline réel d'ObsiRAG.
-
-#### À froid
-
-| Modèle | Prompt | TTFT | Débit | Temps total | Observation |
-| --- | --- | --- | --- | --- | --- |
-| `mlx-community/Qwen2.5-7B-Instruct-4bit` | 1 requête courte | 2,137 s | 27,91 tok/s | 29,21 s | Meilleur équilibre |
-| `mlx-community/Meta-Llama-3.1-8B-Instruct-4bit` | 1 requête courte | 2,234 s | 25,53 tok/s | 47,72 s | Plus lent au premier chargement |
-
-#### À chaud
-
-Mesure sur 3 prompts réels après un prompt d'échauffement distinct pour éviter le biais du cache de réponse.
-
-| Modèle | TTFT moyen | Débit moyen | Temps total moyen | Tokens moyens/réponse | Lecture |
-| --- | --- | --- | --- | --- | --- |
-| `mlx-community/Qwen2.5-7B-Instruct-4bit` | 2,277 s | 27,66 tok/s | 20,04 s | ~525 | Réponses plus riches et plus longues |
-| `mlx-community/Meta-Llama-3.1-8B-Instruct-4bit` | 2,425 s | 25,61 tok/s | 15,04 s | ~311 | Réponses plus courtes, pas plus rapides en débit |
-
-> Conclusion pratique sur cette machine : **Qwen 2.5 7B reste le meilleur défaut pour ObsiRAG**. Llama 3.1 8B n'a pas montré de gain qualitatif net en français et son avantage apparent à chaud vient surtout de réponses plus concises.
-
-Pour reproduire ce test ou comparer d'autres candidats MLX :
+Configuration minimale recommandée :
 
 ```bash
-python scripts/benchmark_model_shortlist.py
+ollama pull qwen2.5:7b
+ollama pull nomic-embed-text
+```
 
-# Exemple avec une shortlist explicite
-python scripts/benchmark_model_shortlist.py \
-  --model mlx-community/Qwen2.5-7B-Instruct-4bit \
-  --model google/gemma-4-e4b \
-  --model mlx-community/Meta-Llama-3.1-8B-Instruct-4bit
+Pour mesurer le débit et la latence du backend Ollama sur votre machine :
+
+```bash
+python scripts/benchmark_ollama_chat20.py
 ```
 
 ---
@@ -807,7 +761,7 @@ python scripts/benchmark_model_shortlist.py \
 | --- | --- |
 | Langage | Python 3.12 |
 | Déploiement | macOS natif (launchd + Python venv) |
-| IA | MLX-LM (Apple Silicon, sans serveur) |
+| IA | Ollama (local, API compatible OpenAI) |
 | Base vectorielle | LanceDB |
 | Embeddings | sentence-transformers — `paraphrase-multilingual-MiniLM-L12-v2` (384 dim, CPU) |
 | Interface | Expo web + FastAPI |
@@ -824,12 +778,12 @@ python scripts/benchmark_model_shortlist.py \
 
 | Paramètre `.env` | Valeur par défaut | Rôle |
 | --- | --- | --- |
-| `AUTOLEARN_ALLOW_BACKGROUND_LLM` | **false** | Autorise explicitement le chargement MLX par l'auto-learner en tâche de fond. À activer seulement si ce runtime est stable sur votre machine. |
+| `AUTOLEARN_ALLOW_BACKGROUND_LLM` | **false** | Autorise explicitement les appels LLM en tâche de fond pour l'auto-learner. À activer seulement si ce runtime est stable sur votre machine. |
 | `AUTOLEARN_INTERVAL_MINUTES` | **15 min** | Fréquence du cycle — l'auto-learner se réveille toutes les 15 minutes |
 | `AUTOLEARN_LOOKBACK_HOURS` | **24 h** | Fenêtre de détection — seules les notes modifiées dans les dernières 24h sont candidates |
 | `AUTOLEARN_MIN_REPROCESS_DAYS` | **7 jours** | Délai de grâce — une note déjà traitée ne sera pas retraitée avant 7 jours |
 
-Le premier cycle démarre **5 minutes après le démarrage de l'application**, pour laisser le temps au modèle MLX de se charger.
+Le premier cycle démarre **5 minutes après le démarrage de l'application**, pour laisser le temps au backend et à l'indexation initiale de se stabiliser.
 
 > Ces trois paramètres permettent d'adapter le comportement selon l'usage : un intervalle plus court (ex. 30 min) pour un coffre très actif, un lookback plus large (ex. 48h) pour rattraper des notes modifiées en dehors des heures habituelles, et un `MIN_REPROCESS_DAYS` plus court si vous souhaitez qu'une note soit ré-enrichie plus fréquemment.
 
@@ -844,7 +798,7 @@ cd obsirag
 
 # Configurer l'environnement
 cp .env.example .env
-# Éditer .env : renseigner VAULT_PATH, MLX_CHAT_MODEL, etc.
+# Éditer .env : renseigner VAULT_PATH, OLLAMA_BASE_URL, OLLAMA_CHAT_MODEL, etc.
 # Pour exposer l'interface legacy optionnelle sur le reseau : STREAMLIT_SERVER_ADDRESS=0.0.0.0
 
 # Installer les dépendances Python et configurer le service
@@ -860,7 +814,7 @@ Les surfaces suivantes sont alors disponibles :
 - API backend Expo : [http://localhost:8000](http://localhost:8000)
 - interface Expo web : [http://localhost:8081](http://localhost:8081)
 
-> Le modèle MLX est téléchargé automatiquement depuis HuggingFace au premier démarrage (~4 Go pour `Qwen2.5-7B-Instruct-4bit`).
+> Vérifiez que le modèle Ollama souhaité est déjà disponible avant le premier démarrage, par exemple `ollama pull qwen2.5:7b`.
 
 `./stop.sh` arrete l'API backend Expo et l'interface Expo web, mais laisse l'auto-learner `launchd` actif.
 

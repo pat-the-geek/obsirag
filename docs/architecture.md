@@ -28,7 +28,7 @@ En exploitation locale, les points d'entrée opératoires sont désormais :
 
 1. les répertoires de données,
 2. `ChromaStore`,
-3. le modèle MLX,
+3. le client Ollama,
 4. `RAGPipeline`,
 5. `IndexingPipeline`,
 6. `GraphBuilder`,
@@ -50,7 +50,7 @@ Une requête suit ce chemin :
 2. `RAGPipeline` résout la question dans le fil si nécessaire,
 3. `RetrievalStrategy` choisit une stratégie de récupération,
 4. `AnswerPrompting` prépare le contexte et les messages,
-5. le backend MLX produit une réponse,
+5. le backend Ollama produit une réponse,
 6. le backend enrichit la réponse avec les contextes d'entités NER et, si le coffre est insuffisant, une synthèse de recherche web,
 7. `RAGPipeline` normalise la sortie et applique les garde-fous.
 

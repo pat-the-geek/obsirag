@@ -12,8 +12,8 @@ Reference roadmap: docs/performance-roadmap.md
 
 ## Sprint en cours
 
-Sprint actif: S4 (Semaines 7-8) — optimisation generation MLX
-Objectif sprint: reduire la latence de generation MLX (hotspot #1 = 99.27%) par KV cache quantifie et pre-chauffe du prompt systeme.
+Sprint actif: S4 (Semaines 7-8) — optimisation generation Ollama
+Objectif sprint: reduire la latence de generation Ollama (hotspot #1 = 99.27%) par KV cache quantifie et pre-chauffe du prompt systeme.
 
 ## Tableau de suivi
 
@@ -27,7 +27,7 @@ Objectif sprint: reduire la latence de generation MLX (hotspot #1 = 99.27%) par 
 | PERF-06 | S2 | Patrick | DONE | Reduction copies/CPU | Hint note dominante: P95 preparation contexte -11.56% | OK |
 | PERF-07 | S2 | Patrick | DONE | Contexte plus efficace | Iteration 2: chars contexte moyen -8.54%, P95 `build_context` -6.63% | OK |
 | PERF-08 | S2 | Patrick | DONE | Throughput learner + | Pause adaptative: throughput estime 20.73 -> 25.03 notes/h (+20.75%) | OK |
-| PERF-09 | S3 | Patrick | DONE | Hotspot #1 valide | Hotspot global = generation MLX (99.27%), meilleur hotspot interne = retrieval (0.69%) | NO-GO Rust app |
+| PERF-09 | S3 | Patrick | DONE | Hotspot #1 valide | Hotspot global = generation Ollama (99.27%), meilleur hotspot interne = retrieval (0.69%) | NO-GO Rust app |
 | PERF-10 | S3 | Patrick | BLOCKED | Prototype x2 composant | Gate PERF-09 negatif: aucun hotspot interne >= 20% | En attente d'un nouveau hotspot |
 | PERF-11 | S4 | Patrick | DONE | KV cache 8-bit: TPS +10% sur P95 | Benchmark PERF-11/12 (AB, n=20): TPS moyen 25.64 tok/s (cache_hit 20/20) | OK |
 | PERF-12 | S4 | Patrick | DONE | Pre-chauffe prompt systeme: TTFT -2s | Benchmark PERF-11/12 (AB, n=20): TTFT moyen 2.451s, P95 3.845s | OK |
@@ -251,7 +251,7 @@ Objectif: definir les regles automatiques d'alerte pour ne pas rater une regress
   - PERF-08 implemente: pause adaptative entre notes du cycle normal (`src/learning/autolearn.py`) pour eviter les 30s d'attente fixes quand une note a deja consomme du temps de traitement.
   - PERF-08 mesure: `scripts/benchmark_perf08_autolearn_pause.py` (100 dernieres notes) -> cycle moyen 173.69s -> 143.84s, throughput estime 20.73 -> 25.03 notes/h (+20.75%).
   - PERF-09 mesure live: `scripts/benchmark_perf09_hotspot.py` sur 5 requetes A + 5 requetes B avec instrumentation par phase (resolve, retrieval, contexte, prompt, generation, post-traitement).
-  - Resultat PERF-09: generation MLX domine 99.27% du temps mesure; meilleur hotspot applicatif interne = retrieval a 0.69%.
+  - Resultat PERF-09: generation Ollama domine 99.27% du temps mesure; meilleur hotspot applicatif interne = retrieval a 0.69%.
   - Decision PERF-09: gate Rust applicatif = NO-GO a ce stade. La latence est principalement portee par l'inference modele deja native, pas par un composant Python interne.
 - Blocages:
   - Aucun blocage actif sur les scenarios baseline apres stabilisation Chroma.

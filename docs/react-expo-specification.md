@@ -29,7 +29,7 @@ La reécriture cible une architecture en 2 couches :
 L'implementation actuelle repose sur :
 
 - Python,
-- MLX-LM sur Apple Silicon,
+- Ollama sur Apple Silicon,
 - LanceDB,
 - acces filesystem direct au vault Obsidian,
 - watchers de fichiers,
@@ -37,7 +37,7 @@ L'implementation actuelle repose sur :
 
 Ces capacites ne doivent pas etre portees telles quelles dans Expo :
 
-- Expo ne doit pas heberger MLX ni LanceDB localement,
+- Expo ne doit pas heberger Ollama ni LanceDB localement,
 - l'app mobile ne doit pas indexer directement un vault Obsidian desktop,
 - les taches longues et le scheduler doivent rester cote serveur.
 
@@ -255,7 +255,7 @@ Option recommandee : conserver le backend Python et l'exposer proprement via Fas
 Pourquoi :
 
 - le coeur ObsiRAG est deja Python,
-- MLX et Chroma y sont naturels,
+- Ollama et Chroma y sont naturels,
 - le cout de reécriture totale backend en Node serait eleve et risqué.
 
 ### 8.3 Contrat global

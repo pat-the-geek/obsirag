@@ -15,7 +15,7 @@ sequenceDiagram
     participant EXPO as Expo Web
     participant SM as ServiceManager<br/>(services.py)
     participant CS as ChromaStore
-    participant MLX as MLXClient
+    participant OLLAMA as OllamaClient
     participant RAG as RAGPipeline
     participant IDX as IndexingPipeline
     participant AL as AutoLearner
@@ -27,7 +27,7 @@ sequenceDiagram
     API->>SM: ServiceManager(settings)
     activate SM
     SM->>CS: ChromaStore(settings)
-    SM->>MLX: MLXClient(settings)
+    SM->>OLLAMA: OllamaClient(settings)
     SM->>RAG: RAGPipeline(chroma, llm)
     SM->>IDX: IndexingPipeline(chroma)
     SM->>AL: AutoLearner(chroma, rag, indexer, ...)
@@ -53,7 +53,7 @@ sequenceDiagram
     participant RS as RetrievalStrategy
     participant CS as ChromaStore
     participant AP as AnswerPrompting
-    participant MLX as MLXClient
+    participant OLLAMA as OllamaClient
     participant ES as EntityServices
     participant WS as WebSearch
 
@@ -72,8 +72,8 @@ sequenceDiagram
     AP->>CS: get_chunks_by_note_title / get_chunks_by_file_path
     CS-->>AP: linked_chunks[]
     AP-->>RAG: messages[]
-    RAG->>MLX: stream(messages)
-    MLX-->>API: tokens / answer
+    RAG->>OLLAMA: stream(messages)
+    OLLAMA-->>API: tokens / answer
     API->>ES: lookup entity contexts(question, answer)
     ES-->>API: entityContexts[]
     opt information absente du coffre
@@ -97,7 +97,7 @@ sequenceDiagram
     participant EC as EntityCache<br/>(WuddaiCache/GeocodeCache)
     participant QA as QuestionAnswering
     participant WE as WebEnrichment
-    participant MLX as MLXClient
+    participant OLLAMA as OllamaClient
     participant AW as ArtifactWriter
     participant CS as ChromaStore
 
@@ -109,13 +109,13 @@ sequenceDiagram
         EC-->>ES: entities[]
         ES-->>AL: tags, entity_images
         AL->>QA: generate_question(text)
-        QA->>MLX: chat(prompt)
-        MLX-->>QA: question
+        QA->>OLLAMA: chat(prompt)
+        OLLAMA-->>QA: question
         QA-->>AL: question
         AL->>WE: fetch_web_context(question)
         WE-->>AL: web_results[]
-        AL->>MLX: chat(synthesize_prompt)
-        MLX-->>AL: insight_text
+        AL->>OLLAMA: chat(synthesize_prompt)
+        OLLAMA-->>AL: insight_text
         AL->>AW: write_insight(note, insight_text, tags)
         AW-->>CS: upsert_chunk(insight)
         AL->>AL: _mark_processed(note)

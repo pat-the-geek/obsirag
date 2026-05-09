@@ -80,8 +80,8 @@ Cette mise a jour contient surtout des ameliorations backend, stockage, learning
 ### Document de sequence simplifie
 
 - Creation de `docs/sequence.md` avec quatre diagrammes Mermaid `sequenceDiagram` :
-  - Demarrage de l'application (ServiceManager → ChromaStore, MLX, RAG, AutoLearner, VaultWatcher).
-  - Requete chat complete (UI → RAGPipeline → RetrievalStrategy → ChromaStore → AnswerPrompting → MLX).
+  - Demarrage de l'application (ServiceManager → ChromaStore, Ollama, RAG, AutoLearner, VaultWatcher).
+  - Requete chat complete (UI → RAGPipeline → RetrievalStrategy → ChromaStore → AnswerPrompting → Ollama).
   - Cycle AutoLearner note par note (EntityServices, EntityCache, QuestionAnswering, WebEnrichment, ArtifactWriter).
   - Evenement VaultWatcher (filesystem → IndexingPipeline → ChromaStore → notification AutoLearner).
 - Reference ajoutee dans la premiere ligne de `docs/architecture.md`.
