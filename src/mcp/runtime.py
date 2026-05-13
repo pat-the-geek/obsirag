@@ -327,6 +327,80 @@ def browse_notes_by_date_payload(
     }
 
 
+def search_notes_semantic_payload(
+    query: str,
+    limit: int = 10,
+    exclude_obsirag_generated: bool = True,
+) -> dict[str, Any]:
+    from pathlib import Path
+    from src.database.lance_store import _is_obsirag_generated_path
+
+    safe_query = str(query or "").strip()
+    if not safe_query:
+        raise ValueError("query must not be empty")
+
+    safe_limit = max(1, min(int(limit), 50))
+    svc = get_service_manager()
+    chunks = svc.chroma.search(safe_query, top_k=safe_limit * 5)
+
+    seen: dict[str, dict] = {}
+    for chunk in chunks:
+        meta = chunk.get("metadata", {})
+        fp = meta.get("file_path", "")
+        if not fp:
+            continue
+        if exclude_obsirag_generated and _is_obsirag_generated_path(fp):
+            continue
+        score = chunk.get("score", 0.0)
+        if fp not in seen or score > seen[fp]["score"]:
+            seen[fp] = {
+                "filePath": fp,
+                "title": meta.get("note_title") or Path(fp).stem,
+                "score": round(score, 4),
+                "excerpt": (chunk.get("text") or "")[:300].strip(),
+                "dateModified": meta.get("date_modified") or None,
+                "tags": [t for t in (meta.get("tags") or "").split(",") if t],
+            }
+
+    results = sorted(seen.values(), key=lambda x: x["score"], reverse=True)[:safe_limit]
+    return {"query": safe_query, "count": len(results), "notes": results}
+
+
+def get_entity_stats_payload(
+    top_n: int = 30,
+    entity_type: str = "all",
+) -> dict[str, Any]:
+    svc = get_service_manager()
+    entity_map = svc.chroma.get_entity_map(top_n=top_n)
+
+    allowed = {"persons", "orgs", "locations", "misc"}
+    if entity_type != "all" and entity_type in allowed:
+        filtered = {entity_type: entity_map.get(entity_type, [])}
+    else:
+        filtered = {k: entity_map.get(k, []) for k in allowed}
+
+    total = sum(len(v) for v in filtered.values())
+    return {"entityType": entity_type, "topN": top_n, "totalEntities": total, "entities": filtered}
+
+
+def list_folder_payload(
+    folder_path: str,
+    limit: int = 50,
+    exclude_obsirag_generated: bool = True,
+) -> dict[str, Any]:
+    safe_folder = str(folder_path or "").strip().strip("/")
+    if not safe_folder:
+        raise ValueError("folder_path must not be empty")
+
+    result = browse_notes_by_date_payload(
+        limit=limit,
+        folders=[safe_folder],
+        exclude_obsirag_generated=exclude_obsirag_generated,
+    )
+    result["folder"] = safe_folder
+    return result
+
+
 def get_graph_subgraph_payload(
     note_id: str,
     depth: int = 1,

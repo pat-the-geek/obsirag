@@ -10,10 +10,13 @@ from src.mcp.runtime import (
     conversation_continue_payload,
     conversation_finalize_payload,
     conversation_start_payload,
+    get_entity_stats_payload,
     get_graph_subgraph_payload,
     get_note_payload,
     get_system_status_payload,
+    list_folder_payload,
     search_notes_payload,
+    search_notes_semantic_payload,
 )
 
 
@@ -77,11 +80,15 @@ def register_tools(server: FastMCP) -> None:
     @server.tool(
         name="obsirag_conversation_start",
         description=(
-            "Crée une conversation d'investigation et exécute le premier tour de question/réponse. "
-            "A utiliser uniquement pour vérifier la qualité d'une réponse de obsirag_ask_rag. "
-            "Une seule conversation active à la fois. "
-            "trigger_reason doit être l'une des valeurs : sentinel_response, low_confidence, "
-            "incomplete_coverage, contradictory_sources, unexpected_primary_source, branch_exploration."
+            "Démarre une investigation conversationnelle multi-tours dans le coffre. "
+            "À utiliser dès qu'une question mérite d'être creusée sous plusieurs angles : "
+            "réponse incomplète ou vague d'obsirag_ask_rag, sources contradictoires, "
+            "concept à explorer en profondeur, sujet que le coffre ne couvre qu'en partie, "
+            "ou branche thématique inattendue à explorer. "
+            "L'investigation est persistée sous forme de note dans le coffre. "
+            "Une seule conversation active à la fois — appeler obsirag_conversation_finalize avant d'en ouvrir une nouvelle. "
+            "trigger_reason : sentinel_response | low_confidence | incomplete_coverage | "
+            "contradictory_sources | unexpected_primary_source | branch_exploration."
         ),
         structured_output=True,
     )
@@ -106,8 +113,10 @@ def register_tools(server: FastMCP) -> None:
     @server.tool(
         name="obsirag_conversation_continue",
         description=(
-            "Ajoute un tour à une conversation d'investigation active. "
-            "Exécute une question RAG et l'appende à la note. "
+            "Poursuit une investigation active avec une nouvelle question RAG. "
+            "Chaque tour doit approfondir un angle différent : chercher des preuves contraires, "
+            "explorer un sous-thème identifié au tour précédent, confirmer une hypothèse, "
+            "ou élargir à un concept connexe dans le coffre. "
             "Maximum 3 tours après obsirag_conversation_start. "
             "Quand turns_remaining == 0, appeler obsirag_conversation_finalize."
         ),
@@ -128,9 +137,10 @@ def register_tools(server: FastMCP) -> None:
     @server.tool(
         name="obsirag_conversation_finalize",
         description=(
-            "Clôt définitivement une conversation d'investigation. "
-            "Écrit la synthèse finale dans la note et marque status: closed. "
-            "Doit être appelé avant d'en démarrer une nouvelle."
+            "Clôt une conversation d'investigation et écrit la synthèse finale dans le coffre. "
+            "Doit toujours être appelé après obsirag_conversation_continue (quand turns_remaining == 0) "
+            "ou pour fermer une investigation incomplète. "
+            "resolved=true si l'investigation a abouti à une conclusion claire, false sinon."
         ),
         structured_output=True,
     )
@@ -173,6 +183,69 @@ def register_tools(server: FastMCP) -> None:
             date_to=date_to,
             folders=folders,
             tags=tags,
+            exclude_obsirag_generated=exclude_obsirag_generated,
+        )
+
+    @server.tool(
+        name="obsirag_search_notes_semantic",
+        description=(
+            "Recherche des notes par similarité sémantique sur le contenu complet (corps + titre). "
+            "Contrairement à obsirag_search_notes (titre/chemin uniquement), cet outil retrouve "
+            "des notes dont le sens est proche de la requête, même sans correspondance lexicale exacte. "
+            "Exemple : 'impact des écrans sur le sommeil' retrouve une note sur la lumière bleue. "
+            "Retourne les notes avec score de similarité et un extrait du passage le plus pertinent. "
+            "exclude_obsirag_generated=true exclut les insights et synapses générés automatiquement."
+        ),
+        structured_output=True,
+    )
+    def search_notes_semantic(
+        query: str,
+        limit: int = 10,
+        exclude_obsirag_generated: bool = True,
+    ) -> dict[str, Any]:
+        """Rechercher des notes par similarité sémantique sur leur contenu."""
+        return search_notes_semantic_payload(
+            query=query,
+            limit=limit,
+            exclude_obsirag_generated=exclude_obsirag_generated,
+        )
+
+    @server.tool(
+        name="obsirag_get_entity_stats",
+        description=(
+            "Retourne les entités nommées les plus fréquentes dans le coffre (personnes, organisations, lieux). "
+            "Permet de cartographier les thèmes principaux : qui est le plus mentionné, quelles organisations, "
+            "quels lieux. entity_type filtre par type : 'persons', 'orgs', 'locations', 'misc', ou 'all'. "
+            "top_n contrôle le nombre d'entités retournées par type (défaut 30, max 100)."
+        ),
+        structured_output=True,
+    )
+    def get_entity_stats(
+        top_n: int = 30,
+        entity_type: str = "all",
+    ) -> dict[str, Any]:
+        """Obtenir la cartographie thématique des entités nommées du coffre."""
+        return get_entity_stats_payload(top_n=top_n, entity_type=entity_type)
+
+    @server.tool(
+        name="obsirag_list_folder",
+        description=(
+            "Liste toutes les notes d'un dossier du coffre, triées par date de modification décroissante. "
+            "folder_path est le chemin relatif du dossier dans le coffre (ex: 'Idees/Épanouissement', 'Journal'). "
+            "Préférer cet outil à obsirag_browse_notes_by_date quand l'intention est d'explorer un dossier précis. "
+            "exclude_obsirag_generated=true exclut les insights et synapses (activé par défaut)."
+        ),
+        structured_output=True,
+    )
+    def list_folder(
+        folder_path: str,
+        limit: int = 50,
+        exclude_obsirag_generated: bool = True,
+    ) -> dict[str, Any]:
+        """Lister toutes les notes d'un dossier du coffre."""
+        return list_folder_payload(
+            folder_path=folder_path,
+            limit=limit,
             exclude_obsirag_generated=exclude_obsirag_generated,
         )
 

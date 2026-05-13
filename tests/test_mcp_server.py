@@ -11,13 +11,17 @@ def test_build_server_registers_expected_tools() -> None:
     tools = asyncio.run(server.list_tools())
     assert {tool.name for tool in tools} == {
         "obsirag_ask_rag",
+        "obsirag_browse_notes_by_date",
         "obsirag_conversation_continue",
         "obsirag_conversation_finalize",
         "obsirag_conversation_start",
+        "obsirag_get_entity_stats",
         "obsirag_get_graph_subgraph",
         "obsirag_get_note",
         "obsirag_get_system_status",
+        "obsirag_list_folder",
         "obsirag_search_notes",
+        "obsirag_search_notes_semantic",
     }
 
 

@@ -379,6 +379,40 @@ class LanceStore:
         ]
         return filtered[:top_k] if filtered else candidates[:top_k]
 
+    def get_entity_map(self, top_n: int = 50) -> dict[str, list[dict]]:
+        """Agrège les entités NER de tous les chunks, retourne top_n par type."""
+        try:
+            rows = (
+                self._table.search(query=None)
+                .select(["ner_persons", "ner_orgs", "ner_locations", "ner_misc"])
+                .limit(100_000)
+                .to_list()
+            )
+        except Exception as exc:
+            logger.warning(f"get_entity_map failed: {exc}")
+            return {}
+
+        counts: dict[str, dict[str, int]] = {
+            "persons": {}, "orgs": {}, "locations": {}, "misc": {}
+        }
+        field_map = {
+            "ner_persons": "persons",
+            "ner_orgs": "orgs",
+            "ner_locations": "locations",
+            "ner_misc": "misc",
+        }
+        for r in rows:
+            for field, key in field_map.items():
+                val = r.get(field) or ""
+                for entity in (e.strip() for e in val.split(",") if e.strip()):
+                    counts[key][entity] = counts[key].get(entity, 0) + 1
+
+        result = {}
+        for key, entity_counts in counts.items():
+            sorted_entities = sorted(entity_counts.items(), key=lambda x: x[1], reverse=True)
+            result[key] = [{"name": name, "count": count} for name, count in sorted_entities[:top_n]]
+        return result
+
     def search_by_tags(self, tags: list[str], top_k: int = settings.search_top_k) -> list[dict]:
         query = " ".join(tags)
         candidates = self.search(query, top_k=top_k * 2)
