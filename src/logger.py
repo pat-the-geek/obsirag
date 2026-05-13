@@ -28,7 +28,7 @@ def _capture_log_record(message) -> None:
     with _LOG_BUFFER_LOCK:
         _LOG_BUFFER.append(
             {
-                "timestamp": record["time"].astimezone(timezone.utc).isoformat(),
+                "timestamp": record["time"].astimezone().isoformat(),
                 "level": str(record["level"].name),
                 "name": str(record.get("name") or ""),
                 "line": int(record.get("line") or 0),

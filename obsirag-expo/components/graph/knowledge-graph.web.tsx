@@ -389,7 +389,7 @@ export function KnowledgeGraph({ data, isActive = true, focusedNodeId, onSelectN
         nodesData.update({
           id: baseNode.id,
           label: shouldShowLabel(baseNode, scaleValue, relatedNodeIds, emphasizedNodeId) ? baseNode.fullLabel : '',
-          borderWidth: isActive ? 5 : isHovered ? 4 : isRelated ? 2.5 + (ambientState?.borderDelta ?? 0) : 1,
+          borderWidth: isActive ? 16 : isHovered ? 12 : isRelated ? 2.5 + (ambientState?.borderDelta ?? 0) : 1,
           value: baseNode.value + (ambientState?.radiusDelta ?? 0),
           color: {
             background: isMuted ? fadeColor(baseNode.color.background, neighborhoodFade.nodeOpacity) : baseNode.color.background,
@@ -406,9 +406,9 @@ export function KnowledgeGraph({ data, isActive = true, focusedNodeId, onSelectN
             size: isActive ? 15 : isHovered ? 14 : 13,
           },
           shadow: isActive
-            ? { enabled: true, color: 'rgba(255,255,255,0.45)', size: 32, x: 0, y: 0 }
+            ? { enabled: true, color: 'rgba(255,255,255,0.85)', size: 100, x: 0, y: 0 }
             : isHovered
-              ? { enabled: true, color: 'rgba(96,165,250,0.32)', size: 24, x: 0, y: 0 }
+              ? { enabled: true, color: 'rgba(96,165,250,0.78)', size: 72, x: 0, y: 0 }
               : ambientState
                 ? { enabled: true, color: fadeColor(baseNode.color.background, ambientState.shadowOpacity), size: ambientState.shadowSize + 12, x: 0, y: 0 }
                 : { enabled: false, color: 'rgba(0,0,0,0.55)', size: 10, x: 0, y: 0 },
@@ -497,13 +497,12 @@ export function KnowledgeGraph({ data, isActive = true, focusedNodeId, onSelectN
       activeNodeId = nodeId;
       applyVisualState();
       network.selectNodes([nodeId]);
-      network.startSimulation();
       const baseScale = Math.max(fitScaleRef.current, MIN_BASE_SCALE);
       network.focus(nodeId, {
-        scale: Math.max(baseScale * 1.1, baseScale * preferredScaleRef.current),
+        scale: Math.max(baseScale * 1.6, baseScale * preferredScaleRef.current),
         locked: false,
         animation: {
-          duration: 420,
+          duration: 800,
           easingFunction: 'easeInOutQuad',
         },
       });
@@ -926,7 +925,7 @@ function buildGraphPerformanceProfile(nodeCount: number) {
 }
 
 function buildAmbientMotionProfile(nodeCount: number) {
-  if (nodeCount > 180) {
+  if (nodeCount > 320) {
     return {
       enabled: false,
       cycleMs: 6400,
@@ -940,30 +939,44 @@ function buildAmbientMotionProfile(nodeCount: number) {
     };
   }
 
+  if (nodeCount > 180) {
+    return {
+      enabled: true,
+      cycleMs: 3000,
+      frameIntervalMs: 60,
+      radiusAmplitude: 2.6,
+      borderAmplitude: 3.2,
+      shadowBase: 18,
+      shadowAmplitude: 68,
+      haloOpacityBase: 0.55,
+      haloOpacityAmplitude: 0.9,
+    };
+  }
+
   if (nodeCount > 96) {
     return {
       enabled: true,
-      cycleMs: 7600,
-      frameIntervalMs: 96,
-      radiusAmplitude: 0.42,
-      borderAmplitude: 0.5,
-      shadowBase: 12,
-      shadowAmplitude: 12,
-      haloOpacityBase: 0.24,
-      haloOpacityAmplitude: 0.26,
+      cycleMs: 2700,
+      frameIntervalMs: 48,
+      radiusAmplitude: 3.6,
+      borderAmplitude: 4.0,
+      shadowBase: 20,
+      shadowAmplitude: 92,
+      haloOpacityBase: 0.65,
+      haloOpacityAmplitude: 1.0,
     };
   }
 
   return {
     enabled: true,
-    cycleMs: 6900,
-    frameIntervalMs: 80,
-    radiusAmplitude: 0.58,
-    borderAmplitude: 0.56,
-    shadowBase: 14,
-    shadowAmplitude: 16,
-    haloOpacityBase: 0.28,
-    haloOpacityAmplitude: 0.32,
+    cycleMs: 2400,
+    frameIntervalMs: 60,
+    radiusAmplitude: 4.8,
+    borderAmplitude: 5.2,
+    shadowBase: 24,
+    shadowAmplitude: 120,
+    haloOpacityBase: 0.7,
+    haloOpacityAmplitude: 1.0,
   };
 }
 

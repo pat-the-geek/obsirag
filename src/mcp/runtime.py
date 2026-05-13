@@ -76,6 +76,7 @@ def _euria_web_fallback(
             "answer": sanitized,
             "sentinel": sanitized.strip().lower() == _SENTINEL_ANSWER.lower(),
             "suggestEuriaWebSearch": False,
+            "web_search_performed": True,
             "provider": "euria+web",
             "sourceCount": len(source_models),
             "sources": [s.model_dump(mode="json") for s in source_models],
@@ -166,17 +167,51 @@ def ask_rag_payload(
 
     get_service_manager().signal_ui_active()
     normalized_history = _normalize_history(history)
-    rag = _build_rag(use_euria=use_euria, web_search=web_search)
-    answer, sources = rag.query(
-        safe_question,
-        chat_history=normalized_history,
-        exclude_obsirag_generated=exclude_obsirag_generated,
-    )
+    euria_failed = False
+    try:
+        rag = _build_rag(use_euria=use_euria, web_search=web_search)
+        answer, sources = rag.query(
+            safe_question,
+            chat_history=normalized_history,
+            exclude_obsirag_generated=exclude_obsirag_generated,
+        )
+    except Exception as _euria_exc:
+        if not use_euria:
+            raise
+        import logging as _logging
+        _logging.getLogger(__name__).warning(f"EurIA indisponible, fallback Ollama : {_euria_exc}")
+        euria_failed = True
+        rag = get_service_manager().rag
+        answer, sources = rag.query(
+            safe_question,
+            chat_history=normalized_history,
+            exclude_obsirag_generated=exclude_obsirag_generated,
+        )
     source_models = _build_source_models(list(sources or []))
     primary_source = next((item for item in source_models if item.isPrimary), None)
     sanitized_answer = sanitize_mermaid_blocks(_sanitize_assistant_answer_text(str(answer or "")))
 
     is_sentinel = sanitized_answer.strip().lower() == _SENTINEL_ANSWER.lower()
+
+    # When Euria returned no local sources, supplement with Ollama retrieval so the
+    # caller always gets vault references regardless of which LLM generated the answer.
+    if use_euria and not euria_failed and not source_models:
+        try:
+            local_rag = get_service_manager().rag
+            _, local_sources = local_rag.query(
+                safe_question,
+                chat_history=normalized_history,
+                exclude_obsirag_generated=exclude_obsirag_generated,
+            )
+            local_source_models = _build_source_models(list(local_sources or []))
+            if local_source_models:
+                source_models = local_source_models
+                primary_source = next((s for s in source_models if s.isPrimary), None)
+                # If local RAG finds matching sources, the sentinel is no longer valid
+                if is_sentinel:
+                    is_sentinel = False
+        except Exception:
+            pass
 
     # Fallback automatique EurIA+web quand la sentinelle Ollama se déclenche.
     if is_sentinel and not use_euria:
@@ -196,13 +231,21 @@ def ask_rag_payload(
             "suggestedFollowup": safe_question[:120],
         }
 
+    if euria_failed:
+        provider_field = "ollama (euria unavailable)"
+    elif use_euria:
+        provider_field = "euria+web" if web_search else "euria"
+    else:
+        provider_field = "ollama"
+
     return {
         "question": safe_question,
         "answer": sanitized_answer,
         "sentinel": is_sentinel,
         "suggestEuriaWebSearch": is_sentinel,
         "suggestStartConversation": suggest_conversation,
-        "provider": "ollama",
+        "web_search_performed": use_euria and web_search and not euria_failed,
+        "provider": provider_field,
         "sourceCount": len(source_models),
         "sources": [item.model_dump(mode="json") for item in source_models],
         "primarySource": primary_source.model_dump(mode="json") if primary_source is not None else None,
@@ -287,7 +330,7 @@ def browse_notes_by_date_payload(
         iso_to = s + "T23:59:59"
 
     folder_prefixes = [f.strip("/") for f in (folders or []) if f.strip()]
-    tag_filter = {t.lower().strip() for t in (tags or []) if t.strip()}
+    tag_filter = {t.lower().strip().lstrip("#") for t in (tags or []) if t.strip()}
 
     svc = get_service_manager()
     # list_notes() retourne déjà trié par date_modified DESC et est mis en cache
@@ -307,8 +350,15 @@ def browse_notes_by_date_payload(
                 continue
 
         if tag_filter:
-            note_tags = {t.lower() for t in note.get("tags", []) if t}
-            if not tag_filter.intersection(note_tags):
+            note_tags = {t.lower().lstrip("#") for t in note.get("tags", []) if t}
+            # Tolerance: exact match OR note tag starts with the requested tag prefix
+            # e.g. filter "IA" matches "IA", "ia", "IA-generative", "intelligence-artificielle" won't,
+            # but "ia-generative" would match prefix "ia".
+            def _tag_matches(req_tag: str, note_tags: set) -> bool:
+                if req_tag in note_tags:
+                    return True
+                return any(nt == req_tag or nt.startswith(req_tag + "-") or req_tag.startswith(nt + "-") for nt in note_tags)
+            if not any(_tag_matches(rt, note_tags) for rt in tag_filter):
                 continue
 
         if iso_from and dm and dm < iso_from:
@@ -337,6 +387,16 @@ def browse_notes_by_date_payload(
     }
 
 
+def _is_wikilink_heavy(text: str) -> bool:
+    """True when more than half the non-empty lines are wikilink list items."""
+    import re as _re
+    lines = [l.strip() for l in text.splitlines() if l.strip()]
+    if not lines:
+        return True
+    wiki_lines = sum(1 for l in lines if _re.match(r"^-?\s*\[\[", l))
+    return wiki_lines / len(lines) > 0.5
+
+
 def search_notes_semantic_payload(
     query: str,
     limit: int = 10,
@@ -362,17 +422,32 @@ def search_notes_semantic_payload(
         if exclude_obsirag_generated and _is_obsirag_generated_path(fp):
             continue
         score = chunk.get("score", 0.0)
-        if fp not in seen or score > seen[fp]["score"]:
+        text = (chunk.get("text") or "").strip()
+        heavy = _is_wikilink_heavy(text)
+
+        if fp not in seen:
             seen[fp] = {
                 "filePath": fp,
                 "title": meta.get("note_title") or Path(fp).stem,
                 "score": round(score, 4),
-                "excerpt": (chunk.get("text") or "")[:300].strip(),
+                "excerpt": text[:300],
                 "dateModified": meta.get("date_modified") or None,
                 "tags": [t for t in (meta.get("tags") or "").split(",") if t],
+                "_prose": not heavy,
             }
+        else:
+            existing = seen[fp]
+            # Upgrade to a higher-scoring chunk
+            if score > existing["score"]:
+                existing["score"] = round(score, 4)
+            # Replace excerpt with a prose chunk even if its score is slightly lower
+            if not existing["_prose"] and not heavy:
+                existing["excerpt"] = text[:300]
+                existing["_prose"] = True
 
     results = sorted(seen.values(), key=lambda x: x["score"], reverse=True)[:safe_limit]
+    for r in results:
+        r.pop("_prose", None)
     return {"query": safe_query, "count": len(results), "notes": results}
 
 
@@ -456,7 +531,9 @@ def get_graph_subgraph_payload(
     except HTTPException as exc:
         _raise_mcp_error(exc)
     result = _to_json(payload)
-    # noteOptions contient ~1180 entrées non utiles pour l'appelant MCP — on allège la réponse.
+    # noteOptions (~1180 entrées) et filterOptions (~500 tags) ne sont pas utiles pour l'appelant MCP.
+    # Utiliser obsirag_get_graph_filters pour récupérer la nomenclature du coffre.
     if isinstance(result, dict):
         result.pop("noteOptions", None)
+        result.pop("filterOptions", None)
     return result

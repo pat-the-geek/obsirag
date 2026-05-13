@@ -92,6 +92,8 @@ class SystemStatusResponse(BaseModel):
     backendReachable: bool
     llmAvailable: bool
     notesIndexed: int
+    userNotesIndexed: int = 0
+    generatedNotesIndexed: int = 0
     chunksIndexed: int
     indexing: IndexingStatusModel
     autolearn: AutolearnStatusModel

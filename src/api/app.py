@@ -1321,10 +1321,20 @@ def system_status(_: None = Depends(require_api_auth)) -> SystemStatusResponse:
     except Exception:
         conv_stats = ConversationInvestigationStatsModel()
 
+    try:
+        _note_views = svc.chroma._get_note_views()
+        _user_count = len(_note_views.get("user_notes") or [])
+        _generated_count = len(_note_views.get("generated_notes") or [])
+    except Exception:
+        _user_count = 0
+        _generated_count = 0
+
     return SystemStatusResponse(
         backendReachable=True,
         llmAvailable=True,
         notesIndexed=len(index_state),
+        userNotesIndexed=_user_count,
+        generatedNotesIndexed=_generated_count,
         chunksIndexed=_count_chunks_fast(),
         indexing=indexing_status,
         autolearn=_resolve_autolearn_status(),
@@ -4167,12 +4177,22 @@ def _related_note_from_note(item: dict) -> RelatedNoteModel:
 
 
 def _related_note_from_link(link: str, svc) -> RelatedNoteModel:
+    link_lower = str(link).strip().lower()
+    link_norm = link_lower.replace("-", " ").replace("_", " ")
+
+    def _link_matches(note: dict) -> bool:
+        title = str(note.get("title") or "").lower()
+        stem = Path(str(note.get("file_path") or "")).stem.lower()
+        if title == link_lower or stem == link_lower:
+            return True
+        if title.replace("-", " ").replace("_", " ") == link_norm:
+            return True
+        if stem.replace("-", " ").replace("_", " ") == link_norm:
+            return True
+        return False
+
     matched = next(
-        (
-            note
-            for note in svc.chroma.list_notes_sorted_by_title()
-            if str(note.get("title") or "").lower() == str(link).lower()
-        ),
+        (note for note in svc.chroma.list_notes_sorted_by_title() if _link_matches(note)),
         None,
     )
     if matched is None:
@@ -4368,7 +4388,15 @@ _mount_expo_web_if_available()
 
 
 _GRAPH_TAG_GARBAGE_RE = re.compile(
-    r"^(\d+|\d{4}(-\d{2}(-\d{2})?)?|[A-Z0-9/\-]{2,8}|\w{1,2})$"
+    r"^("
+    r"\d+"                              # purement numérique
+    r"|\d{4}(-\d{2}(-\d{2})?)?"        # dates ISO
+    r"|\d{1,2}-\w+-\d{4}"             # dates textuelles (11-mars-2026)
+    r"|[A-Z0-9/\-]{2,8}"               # codes/sigles courts tout-caps
+    r"|\w{1,2}"                         # 1-2 caractères
+    r"|[A-Z][a-z]+-[A-Z][a-z]+"        # Prénom-Nom (Sam-Altman)
+    r"|\d[\d\-a-z]+-de-[\w\-]+"        # montants (1-2-milliard-de-dollars)
+    r")$"
 )
 
 
@@ -4382,9 +4410,18 @@ def _is_graph_filter_tag_valid(tag: str) -> bool:
 
 
 def _build_graph_filter_options(svc: Any) -> GraphFilterOptionsModel:
+    from src.database.lance_store import _is_obsirag_generated_path
+    notes = svc.chroma.list_notes()
+    user_tags = sorted({
+        t
+        for note in notes
+        if not _is_obsirag_generated_path(note.get("file_path", ""))
+        for t in note.get("tags", [])
+        if t and _is_graph_filter_tag_valid(t.lstrip("#"))
+    })
     return GraphFilterOptionsModel(
         folders=list(svc.chroma.list_note_folders()),
-        tags=[t for t in svc.chroma.list_note_tags() if _is_graph_filter_tag_valid(t)],
+        tags=user_tags,
         types=[option["key"] for option in get_note_type_options()],
     )
 

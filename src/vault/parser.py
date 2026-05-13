@@ -117,16 +117,32 @@ class NoteParser:
             fm: dict = dict(post.metadata)
             body: str = post.content
 
-            title = fm.get("title") or fm.get("aliases", [None])[0] or file_path.stem
+            title = (
+                fm.get("title")
+                or self._extract_first_h1(body)
+                or fm.get("Titre")
+                or file_path.stem
+                or (fm.get("aliases") or [None])[0]
+            )
             rel_path = str(file_path.relative_to(settings.vault))
 
             date_created = self._parse_fm_date(fm.get("date") or fm.get("created")) \
                 or datetime.fromtimestamp(stat.st_ctime)
             date_modified = datetime.fromtimestamp(stat.st_mtime)
 
+            # Extra frontmatter keys that act as category tags
+            _FM_TAG_KEYS = ("Rubrique", "rubrique", "Categorie", "categorie", "Category", "category", "Domaine", "domaine", "Type")
+            extra_fm_tags = []
+            for _k in _FM_TAG_KEYS:
+                _v = fm.get(_k)
+                if isinstance(_v, str) and _v.strip():
+                    extra_fm_tags.append(_v.strip().lower().replace(" ", "-"))
+                elif isinstance(_v, list):
+                    extra_fm_tags.extend(str(i).strip().lower().replace(" ", "-") for i in _v if str(i).strip())
             tags = list({
-                *[t for t in fm.get("tags", []) if isinstance(t, str)],
+                *[t.lstrip("#") for t in fm.get("tags", []) if isinstance(t, str) and t.lstrip("#")],
                 *self._TAG_RE.findall(body),
+                *extra_fm_tags,
             })
 
             wikilinks = list({m.strip() for m in self._WIKILINK_RE.findall(body)})
@@ -205,6 +221,10 @@ class NoteParser:
             sections.append(NoteSection(title=title, level=level, content=body))
 
         return sections
+
+    def _extract_first_h1(self, body: str) -> Optional[str]:
+        match = re.search(r"^#\s+(.+)$", body, re.MULTILINE)
+        return match.group(1).strip() if match else None
 
     def _parse_fm_date(self, value) -> Optional[datetime]:
         if value is None:

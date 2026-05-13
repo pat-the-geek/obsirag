@@ -3,10 +3,23 @@ Découpage intelligent des notes en chunks pour l'indexation.
 Stratégie hiérarchique : section → paragraphe → mots
 avec préservation du contexte (chevauchement).
 """
+import re
 from dataclasses import dataclass
 
 from src.config import settings
 from src.vault.parser import NoteMetadata, NoteSection
+
+_WIKILINK_ALIAS_RE = re.compile(r"\[\[[^\]|#\n]+?\|([^\]#\n]+?)(?:#[^\]]*?)?\]\]")
+_WIKILINK_PLAIN_RE = re.compile(r"\[\[([^\]|#\n]+?)(?:#[^\]]*?)?\]\]")
+_INLINE_TAG_RE = re.compile(r"(?<!\S)#([A-Za-z0-9_\-/]+)")
+
+
+def _clean_text_for_embedding(text: str) -> str:
+    """Remplace les [[wikilinks]] par leur texte visible et retire les # de balises inline."""
+    text = _WIKILINK_ALIAS_RE.sub(r"\1", text)
+    text = _WIKILINK_PLAIN_RE.sub(r"\1", text)
+    text = _INLINE_TAG_RE.sub(r"\1", text)
+    return text
 
 
 @dataclass
@@ -81,7 +94,7 @@ class TextChunker:
         for section in sections:
             if not section.content.strip():
                 continue
-            for text in self._split_section(section):
+            for text in self._split_section(section, clean=True):
                 chunk = Chunk(
                     text=text,
                     chunk_id=f"{metadata.file_hash}_{global_index}",
@@ -97,13 +110,14 @@ class TextChunker:
 
     # ---- split helpers ----
 
-    def _split_section(self, section: NoteSection) -> list[str]:
-        words = section.content.split()
+    def _split_section(self, section: NoteSection, *, clean: bool = False) -> list[str]:
+        content = _clean_text_for_embedding(section.content) if clean else section.content
+        words = content.split()
         if len(words) <= self.chunk_size:
-            return [section.content.strip()] if section.content.strip() else []
+            return [content.strip()] if content.strip() else []
 
         # Pour les sections très longues, on tente de couper aux sauts de paragraphe
-        paragraphs = [p.strip() for p in section.content.split("\n\n") if p.strip()]
+        paragraphs = [p.strip() for p in content.split("\n\n") if p.strip()]
         if len(paragraphs) > 1:
             return self._merge_paragraphs(paragraphs)
 

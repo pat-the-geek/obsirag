@@ -443,6 +443,10 @@ def start_conversation(
                 "conversation_id": conversation_id,
                 "tags": ["claude-investigation"],
                 "sources_consulted": sources_consulted,
+                "turns_history": [
+                    {"role": "user", "content": first_followup_question},
+                    {"role": "assistant", "content": first_answer[:600]},
+                ],
             },
         )
         _save(note_path, post)
@@ -489,9 +493,10 @@ def continue_conversation(
                 "Appelez obsirag_conversation_finalize pour clôturer la conversation."
             )
 
-        # ---- Call RAG ----
+        # ---- Call RAG with conversation history for contextual continuity ----
         from src.mcp.runtime import ask_rag_payload
-        rag_result = ask_rag_payload(question)
+        turns_history: list = list(post.get("turns_history") or [])
+        rag_result = ask_rag_payload(question, history=turns_history or None)
         answer = str(rag_result.get("answer", ""))[:MAX_ANSWER_LEN]
         sources: list = rag_result.get("sources", [])
         provider: str = rag_result.get("provider", "ollama")
@@ -512,12 +517,16 @@ def continue_conversation(
             sources=sources,
         )
 
+        turns_history.append({"role": "user", "content": question})
+        turns_history.append({"role": "assistant", "content": answer[:600]})
+
         post["turns_count"] = turns_count
         post["turns_remaining"] = turns_remaining
         post["sources_consulted"] = _aggregate_sources(
             list(post.get("sources_consulted") or []),
             sources,
         )
+        post["turns_history"] = turns_history[-6:]  # 3 derniers tours max
         post.content = new_body
         _save(path, post)
 
