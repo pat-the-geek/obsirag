@@ -50,6 +50,7 @@ _NER_TAG_PREFIXES: dict[str, str] = {
 
 _SLEEP_BETWEEN_ENTITIES = 3.0
 _MAX_NOTES_PER_ENTITY = 50
+_MAX_NEW_PER_CYCLE = 50
 
 
 def _normalize(text: str) -> str:
@@ -73,26 +74,53 @@ class EntityNotesGenerator:
         validated = self._validate_with_wuddai(raw_map)
 
         written = 0
+        new_this_cycle = 0
         active_slugs: set[str] = set()
 
-        for official_name, info in validated.items():
+        # Prioritize new entities (no existing note) to fill quota first
+        def _sort_key(item: tuple[str, dict]) -> int:
+            name, _ = item
+            slug = build_ascii_stem(name, max_length=60)
+            return 0 if slug and not (entities_dir / f"{slug}.md").exists() else 1
+
+        sorted_entities = sorted(validated.items(), key=_sort_key)
+
+        for official_name, info in sorted_entities:
             slug = build_ascii_stem(official_name, max_length=60)
             if not slug:
                 continue
             active_slugs.add(slug)
             note_path = entities_dir / f"{slug}.md"
+            is_new = not note_path.exists()
+
+            # Quota: stop creating new notes once limit reached; still update existing
+            if is_new and new_this_cycle >= _MAX_NEW_PER_CYCLE:
+                continue
+
             try:
                 summary = self._generate_summary(official_name, note_path)
                 content = self._render_note(official_name, info, summary)
                 note_path.write_text(content, encoding="utf-8")
                 written += 1
-                if summary:
+                if is_new:
+                    new_this_cycle += 1
+                action = "créée" if is_new else "mise à jour"
+                wuddai_type = info.get("wuddai_type", "?")
+                logger.info(
+                    f"EntityNotes: [{wuddai_type}] '{official_name}' — {action}"
+                    f" ({info.get('count', 0)} notes)"
+                )
+                if is_new and summary:
                     time.sleep(_SLEEP_BETWEEN_ENTITIES)
             except Exception as exc:
                 logger.warning(f"EntityNotes: échec pour '{official_name}': {exc}")
 
         self._cleanup_stale(entities_dir, active_slugs)
-        logger.info(f"EntityNotes: {written} note(s) d'entités écrites dans {entities_dir}")
+        total_existing = len(list(entities_dir.glob("*.md")))
+        logger.info(
+            f"EntityNotes: {written} note(s) écrites ({new_this_cycle} nouvelles) — "
+            f"{total_existing} au total dans {entities_dir}"
+        )
         return written
 
     def _validate_with_wuddai(self, raw_map: dict[str, dict]) -> dict[str, dict]:
