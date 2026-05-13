@@ -23,6 +23,11 @@ class IndexingStatusModel(BaseModel):
 class AutolearnStatusModel(BaseModel):
     active: bool
     managedBy: Literal["none", "worker", "api"] = "none"
+    # workerAlive: le processus worker est en vie (pid répond)
+    workerAlive: bool = False
+    # currentlyExecuting: un cycle est en cours d'exécution maintenant
+    currentlyExecuting: bool = False
+    # running: alias rétrocompatible (= workerAlive)
     running: bool = False
     pid: int | None = None
     note: str = ""
@@ -31,6 +36,8 @@ class AutolearnStatusModel(BaseModel):
     startedAt: str | None = None
     updatedAt: str | None = None
     nextRunAt: str | None = None
+    lastRunStatus: Literal["success", "error", "unknown"] = "unknown"
+    lastRunAt: str | None = None
 
 
 class SystemAlertModel(BaseModel):

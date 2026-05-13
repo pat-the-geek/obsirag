@@ -83,7 +83,7 @@ from src.api.schemas import (
 from src.config import settings
 from src.logger import get_log_buffer
 from src.graph.builder import GraphBuilder
-from src.learning.runtime_state import load_autolearn_runtime_state
+from src.learning.runtime_state import load_autolearn_runtime_state, load_last_run_status
 from src.storage.json_state import JsonStateStore
 from src.storage.safe_read import read_text_file
 from src.ui import brain_explorer
@@ -1174,6 +1174,7 @@ def _count_chunks_fast() -> int:
 def _resolve_autolearn_status(svc: Any | None = None) -> AutolearnStatusModel:
     processing_status = _load_processing_status()
     runtime_status = load_autolearn_runtime_state()
+    last_run = load_last_run_status()
 
     next_run = runtime_status.get("nextRunAt")
     if not next_run and svc is not None:
@@ -1184,10 +1185,15 @@ def _resolve_autolearn_status(svc: Any | None = None) -> AutolearnStatusModel:
         except Exception:
             next_run = None
 
+    worker_alive = bool(runtime_status.get("running", False))
+    currently_executing = bool(processing_status.get("active", False))
+
     return AutolearnStatusModel(
-        active=bool(processing_status.get("active", False)),
+        active=currently_executing,
         managedBy=str(runtime_status.get("managedBy", "none")),
-        running=bool(runtime_status.get("running", False)),
+        workerAlive=worker_alive,
+        currentlyExecuting=currently_executing,
+        running=worker_alive,
         pid=runtime_status.get("pid") if isinstance(runtime_status.get("pid"), int) else None,
         note=str(processing_status.get("note", "")),
         step=str(processing_status.get("step", "")),
@@ -1195,6 +1201,8 @@ def _resolve_autolearn_status(svc: Any | None = None) -> AutolearnStatusModel:
         startedAt=runtime_status.get("startedAt"),
         updatedAt=runtime_status.get("updatedAt"),
         nextRunAt=next_run,
+        lastRunStatus=str(last_run.get("status", "unknown")),
+        lastRunAt=last_run.get("at"),
     )
 
 
@@ -1351,10 +1359,45 @@ def update_features(payload: FeaturesUpdateRequest, _: None = Depends(require_ap
     return FeaturesModel(insightEnabled=payload.insightEnabled, synapseEnabled=payload.synapseEnabled)
 
 
+def _read_worker_log_entries(limit: int = 400) -> list[dict]:
+    """Lit worker.log (format console ANSI), retourne des entrées de log parsées."""
+    import re as _re
+    worker_log = Path(settings.log_dir) / "worker.log"
+    if not worker_log.exists():
+        return []
+    ansi_re = _re.compile(r"\x1b\[[0-9;]*m")
+    # Format console loguru: HH:MM:SS | LEVEL    | module:line — message
+    line_re = _re.compile(r"^(\d{2}:\d{2}:\d{2})\s*\|\s*(\w+)\s*\|\s*([\w\.]+):(\d+)\s*—\s*(.+)$")
+    today = datetime.now().strftime("%Y-%m-%d")
+    entries: list[dict] = []
+    try:
+        text = worker_log.read_text(encoding="utf-8", errors="replace")
+        for raw_line in text.splitlines()[-(limit * 3):]:
+            clean = ansi_re.sub("", raw_line).strip()
+            m = line_re.match(clean)
+            if not m:
+                continue
+            time_str, level, module, line_num, message = m.groups()
+            entries.append({
+                "timestamp": f"{today}T{time_str}+00:00",
+                "level": level.strip(),
+                "name": module,
+                "line": int(line_num),
+                "message": message.strip(),
+                "source": "worker",
+            })
+    except Exception:
+        pass
+    return entries[-limit:]
+
+
 @app.get("/api/v1/system/logs")
 def system_logs(limit: int = 200, _: None = Depends(require_api_auth)) -> list[dict]:
-    entries = get_log_buffer()
-    return entries[-limit:] if len(entries) > limit else entries
+    api_entries = get_log_buffer()
+    worker_entries = _read_worker_log_entries(limit)
+    all_entries = api_entries + worker_entries
+    all_entries.sort(key=lambda e: e.get("timestamp", ""))
+    return all_entries[-limit:] if len(all_entries) > limit else all_entries
 
 
 @app.post("/api/v1/system/reindex", response_model=ReindexResponseModel)

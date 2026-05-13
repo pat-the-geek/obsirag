@@ -27,6 +27,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from loguru import logger
 
 from src.config import settings
+from src.learning.runtime_state import save_last_run_status as _save_last_run_status
 from src.learning.artifact_writer import AutoLearnArtifactWriter
 from src.learning.entity_services import AutoLearnEntityServices
 from src.learning.note_renamer import AutoLearnNoteRenamer
@@ -845,6 +846,9 @@ class AutoLearner:
 
         except Exception as exc:
             logger.error(f"Auto-learner cycle error : {exc}")
+            _save_last_run_status("error")
+        else:
+            _save_last_run_status("success")
         finally:
             try:
                 self._metrics.observe("autolearn_cycle_seconds", time.perf_counter() - cycle_started_at)

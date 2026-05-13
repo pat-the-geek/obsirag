@@ -44,3 +44,19 @@ def save_autolearn_runtime_state(state: dict[str, Any]) -> None:
         "nextRunAt": state.get("nextRunAt"),
     }
     _store().save(snapshot, ensure_ascii=False, indent=2)
+
+
+def _last_run_store() -> JsonStateStore:
+    return JsonStateStore(settings.data_dir / "stats" / "autolearn_last_run.json")
+
+
+def save_last_run_status(status: str) -> None:
+    """Persiste le statut du dernier cycle autolearn (success | error)."""
+    _last_run_store().save({
+        "status": status,
+        "at": datetime.now(UTC).isoformat(),
+    }, ensure_ascii=False, indent=2)
+
+
+def load_last_run_status() -> dict[str, Any]:
+    return _last_run_store().load({"status": "unknown", "at": None})

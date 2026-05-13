@@ -187,11 +187,20 @@ def ask_rag_payload(
         if fallback is not None:
             return fallback
 
+    suggest_conversation = None
+    if is_sentinel or len(source_models) < 3:
+        reason = "sentinel" if is_sentinel else "low_source_count"
+        suggest_conversation = {
+            "reason": reason,
+            "suggestedFollowup": safe_question[:120],
+        }
+
     return {
         "question": safe_question,
         "answer": sanitized_answer,
         "sentinel": is_sentinel,
         "suggestEuriaWebSearch": is_sentinel,
+        "suggestStartConversation": suggest_conversation,
         "provider": "ollama",
         "sourceCount": len(source_models),
         "sources": [item.model_dump(mode="json") for item in source_models],
@@ -392,10 +401,16 @@ def list_folder_payload(
     if not safe_folder:
         raise ValueError("folder_path must not be empty")
 
+    # Navigating explicitly into obsirag/ shows obsirag content by default —
+    # the user knows what they're browsing.
+    effective_exclude = exclude_obsirag_generated
+    if safe_folder == "obsirag" or safe_folder.startswith("obsirag/"):
+        effective_exclude = False
+
     result = browse_notes_by_date_payload(
         limit=limit,
         folders=[safe_folder],
-        exclude_obsirag_generated=exclude_obsirag_generated,
+        exclude_obsirag_generated=effective_exclude,
     )
     result["folder"] = safe_folder
     return result

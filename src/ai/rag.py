@@ -347,6 +347,8 @@ class RAGPipeline:
         chunks = self._filter_conversation_chunks(chunks)
         if exclude_obsirag_generated:
             chunks = self._filter_obsirag_generated_chunks(chunks)
+        else:
+            chunks = self._apply_source_rank_penalty(chunks)
         self._emit_progress(
             progress_callback,
             phase="retrieval",
@@ -1088,6 +1090,26 @@ class RAGPipeline:
         if dropped > 0:
             logger.info(f"RAG autolearn: {dropped} chunk(s) ObsiRAG exclus du contexte")
         return filtered
+
+    _OBSIRAG_SCORE_PENALTY = 0.60
+
+    def _apply_source_rank_penalty(self, chunks: list[dict]) -> list[dict]:
+        """Pondération dégressive pour les notes auto-générées.
+
+        Un score sémantique équivalent donne la priorité à la note source
+        plutôt qu'à la synapse ou l'insight dérivés. Les notes auto-générées
+        restent accessibles si elles sont nettement plus pertinentes.
+        """
+        result = []
+        penalized = 0
+        for chunk in chunks:
+            if self._is_obsirag_generated_chunk(chunk):
+                chunk = {**chunk, "score": round(chunk.get("score", 0.0) * self._OBSIRAG_SCORE_PENALTY, 4)}
+                penalized += 1
+            result.append(chunk)
+        if penalized > 0:
+            logger.debug(f"RAG source penalty: {penalized} chunk(s) auto-générés pénalisés (×{self._OBSIRAG_SCORE_PENALTY})")
+        return sorted(result, key=lambda c: c["score"], reverse=True)
 
     @staticmethod
     def _extract_proper_nouns(query: str) -> list[str]:
