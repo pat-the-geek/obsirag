@@ -202,9 +202,10 @@ class AutoLearner:
             return {
                 "insight_enabled": bool(data.get("insight_enabled", False)),
                 "synapse_enabled": bool(data.get("synapse_enabled", False)),
+                "entity_notes_enabled": bool(data.get("entity_notes_enabled", False)),
             }
         except Exception:
-            return {"insight_enabled": False, "synapse_enabled": False}
+            return {"insight_enabled": False, "synapse_enabled": False, "entity_notes_enabled": False}
 
     @staticmethod
     def _get_settings():
@@ -835,6 +836,13 @@ class AutoLearner:
             else:
                 logger.info("Auto-learner : découverte de synapses désactivée — passe 3 ignorée")
 
+            # Pass 4 — génération des notes d'entités nommées
+            if features["entity_notes_enabled"]:
+                self._set_status(note="Entités", step="Génération des notes d'entités…")
+                self._generate_entity_notes()
+            else:
+                logger.info("Auto-learner : génération de notes d'entités désactivée — passe 4 ignorée")
+
         except Exception as exc:
             logger.error(f"Auto-learner cycle error : {exc}")
         finally:
@@ -1313,6 +1321,10 @@ class AutoLearner:
 
     def _create_synapse_artifact(self, note_a: dict, note_b_info: dict, *, output_path: Path | None = None):
         return self._synapse_discovery.create_synapse_artifact(note_a, note_b_info, output_path=output_path)
+
+    def _generate_entity_notes(self) -> None:
+        from src.learning.entity_notes import EntityNotesGenerator
+        EntityNotesGenerator(self).generate()
 
     # ---- Synthèse hebdomadaire ----
 

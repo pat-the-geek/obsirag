@@ -251,6 +251,7 @@ export type SystemStatus = {
   features?: {
     insightEnabled: boolean;
     synapseEnabled: boolean;
+    entityNotesEnabled: boolean;
   };
 };
 

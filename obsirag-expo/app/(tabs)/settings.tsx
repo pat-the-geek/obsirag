@@ -21,15 +21,20 @@ export default function SettingsScreen() {
   const updateFeatures = useUpdateFeatures();
   const { data: logEntries = [] } = useSystemLogs();
 
-  const insightEnabled = data?.features?.insightEnabled ?? true;
-  const synapseEnabled = data?.features?.synapseEnabled ?? true;
+  const insightEnabled = data?.features?.insightEnabled ?? false;
+  const synapseEnabled = data?.features?.synapseEnabled ?? false;
+  const entityNotesEnabled = data?.features?.entityNotesEnabled ?? false;
 
   const onToggleInsight = (value: boolean) => {
-    updateFeatures.mutate({ insightEnabled: value, synapseEnabled });
+    updateFeatures.mutate({ insightEnabled: value, synapseEnabled, entityNotesEnabled });
   };
 
   const onToggleSynapse = (value: boolean) => {
-    updateFeatures.mutate({ insightEnabled, synapseEnabled: value });
+    updateFeatures.mutate({ insightEnabled, synapseEnabled: value, entityNotesEnabled });
+  };
+
+  const onToggleEntityNotes = (value: boolean) => {
+    updateFeatures.mutate({ insightEnabled, synapseEnabled, entityNotesEnabled: value });
   };
 
   const autolearnLabel = data?.autolearn?.running
@@ -184,6 +189,19 @@ export default function SettingsScreen() {
           <Switch
             value={synapseEnabled}
             onValueChange={onToggleSynapse}
+            disabled={updateFeatures.isPending}
+            trackColor={{ false: theme.colors.border, true: theme.colors.primary }}
+            thumbColor={theme.colors.surface}
+          />
+        </View>
+        <View style={styles.toggleRow}>
+          <View style={styles.toggleCopy}>
+            <Text style={[styles.themeOptionTitle, { color: theme.colors.text, fontSize: scaleFontSize(14, fontScale.scale) }]}>Notes d'entités</Text>
+            <Text style={[styles.themeOptionSubtitle, { color: theme.colors.textMuted, fontSize: scaleFontSize(12, fontScale.scale), lineHeight: scaleLineHeight(18, fontScale.scale) }]}>Crée une note par entité nommée (personnes, orgs, lieux) avec résumé et liens vers toutes les notes qui la mentionnent</Text>
+          </View>
+          <Switch
+            value={entityNotesEnabled}
+            onValueChange={onToggleEntityNotes}
             disabled={updateFeatures.isPending}
             trackColor={{ false: theme.colors.border, true: theme.colors.primary }}
             thumbColor={theme.colors.surface}

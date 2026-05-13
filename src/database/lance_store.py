@@ -112,6 +112,8 @@ def _note_type_for_path(file_path: str) -> str:
         return "synapse"
     if "/obsirag/synthesis/" in normalized or normalized.startswith("obsirag/synthesis/"):
         return "report"
+    if "/obsirag/entities/" in normalized or normalized.startswith("obsirag/entities/"):
+        return "entity"
     return "user"
 
 
@@ -378,6 +380,53 @@ class LanceStore:
             if any(entity_lower in (c["metadata"].get(f) or "").lower() for f in fields)
         ]
         return filtered[:top_k] if filtered else candidates[:top_k]
+
+    def get_entity_to_notes_map(
+        self,
+        min_notes: int = 2,
+        min_chars: int = 4,
+    ) -> dict[str, dict]:
+        """Retourne {entity_name: {type, count, notes:[{file_path,title}]}} en un seul scan."""
+        try:
+            rows = (
+                self._table.search(query=None)
+                .select(["ner_persons", "ner_orgs", "ner_locations", "file_path", "note_title"])
+                .limit(100_000)
+                .to_list()
+            )
+        except Exception as exc:
+            logger.warning(f"get_entity_to_notes_map failed: {exc}")
+            return {}
+
+        field_type = {
+            "ner_persons": "persons",
+            "ner_orgs": "orgs",
+            "ner_locations": "locations",
+        }
+        index: dict[str, dict] = {}
+        for r in rows:
+            fp = unicodedata.normalize("NFC", r.get("file_path") or "")
+            if not fp or _is_obsirag_generated_path(fp):
+                continue
+            title = r.get("note_title") or fp
+            for field, etype in field_type.items():
+                val = r.get(field) or ""
+                for entity in (e.strip() for e in val.split(",") if len(e.strip()) >= min_chars):
+                    if entity not in index:
+                        index[entity] = {"type": etype, "notes_set": {}}
+                    index[entity]["notes_set"][fp] = title
+
+        result = {}
+        for entity_name, info in index.items():
+            notes_set = info["notes_set"]
+            if len(notes_set) < min_notes:
+                continue
+            result[entity_name] = {
+                "type": info["type"],
+                "count": len(notes_set),
+                "notes": [{"file_path": fp, "title": t} for fp, t in notes_set.items()],
+            }
+        return result
 
     def get_entity_map(self, top_n: int = 50) -> dict[str, list[dict]]:
         """Agrège les entités NER de tous les chunks, retourne top_n par type."""

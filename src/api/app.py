@@ -1275,15 +1275,20 @@ def _load_features() -> FeaturesModel:
         return FeaturesModel(
             insightEnabled=bool(data.get("insight_enabled", False)),
             synapseEnabled=bool(data.get("synapse_enabled", False)),
+            entityNotesEnabled=bool(data.get("entity_notes_enabled", False)),
         )
     except Exception:
         return FeaturesModel()
 
 
-def _save_features(insight_enabled: bool, synapse_enabled: bool) -> None:
+def _save_features(insight_enabled: bool, synapse_enabled: bool, entity_notes_enabled: bool = False) -> None:
     p = _features_file()
     p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps({"insight_enabled": insight_enabled, "synapse_enabled": synapse_enabled}))
+    p.write_text(json.dumps({
+        "insight_enabled": insight_enabled,
+        "synapse_enabled": synapse_enabled,
+        "entity_notes_enabled": entity_notes_enabled,
+    }))
 
 
 @app.get("/api/v1/system/status", response_model=SystemStatusResponse)
@@ -1342,7 +1347,7 @@ def system_status(_: None = Depends(require_api_auth)) -> SystemStatusResponse:
 
 @app.patch("/api/v1/system/features", response_model=FeaturesModel)
 def update_features(payload: FeaturesUpdateRequest, _: None = Depends(require_api_auth)) -> FeaturesModel:
-    _save_features(payload.insightEnabled, payload.synapseEnabled)
+    _save_features(payload.insightEnabled, payload.synapseEnabled, payload.entityNotesEnabled)
     return FeaturesModel(insightEnabled=payload.insightEnabled, synapseEnabled=payload.synapseEnabled)
 
 

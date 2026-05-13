@@ -146,6 +146,7 @@ export const mockSystemStatus: SystemStatus = {
   features: {
     insightEnabled: true,
     synapseEnabled: true,
+    entityNotesEnabled: false,
   },
 };
 

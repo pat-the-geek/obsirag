@@ -46,8 +46,8 @@ export function useUpdateFeatures() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: ({ insightEnabled, synapseEnabled }: { insightEnabled: boolean; synapseEnabled: boolean }) =>
-      api.updateFeatures(insightEnabled, synapseEnabled),
+    mutationFn: ({ insightEnabled, synapseEnabled, entityNotesEnabled }: { insightEnabled: boolean; synapseEnabled: boolean; entityNotesEnabled: boolean }) =>
+      api.updateFeatures(insightEnabled, synapseEnabled, entityNotesEnabled),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ['system-status'] });
     },

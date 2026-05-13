@@ -243,6 +243,11 @@ class Settings(BaseSettings):
         return self.vault_obsirag_dir / "conversations"
 
     @property
+    def entities_dir(self) -> Path:
+        """Notes d'entités nommées auto-générées — lisibles dans Obsidian."""
+        return self.vault_obsirag_dir / "entities"
+
+    @property
     def expo_web_dist_dir(self) -> Path:
         """Répertoire du build Expo web à servir via FastAPI lorsqu'il est présent."""
         return Path(self.expo_web_dist_path)

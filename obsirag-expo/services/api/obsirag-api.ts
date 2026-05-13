@@ -135,15 +135,15 @@ export class ObsiRagApi {
     });
   }
 
-  async updateFeatures(insightEnabled: boolean, synapseEnabled: boolean): Promise<SystemStatus['features']> {
+  async updateFeatures(insightEnabled: boolean, synapseEnabled: boolean, entityNotesEnabled: boolean): Promise<SystemStatus['features']> {
     if (this.config.useMockServer) {
-      return { insightEnabled, synapseEnabled };
+      return { insightEnabled, synapseEnabled, entityNotesEnabled };
     }
 
     return this.requestJson<NonNullable<SystemStatus['features']>>('/api/v1/system/features', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ insightEnabled, synapseEnabled }),
+      body: JSON.stringify({ insightEnabled, synapseEnabled, entityNotesEnabled }),
     });
   }
 

@@ -72,11 +72,13 @@ class ConversationInvestigationStatsModel(BaseModel):
 class FeaturesModel(BaseModel):
     insightEnabled: bool = False
     synapseEnabled: bool = False
+    entityNotesEnabled: bool = False
 
 
 class FeaturesUpdateRequest(BaseModel):
     insightEnabled: bool
     synapseEnabled: bool
+    entityNotesEnabled: bool = False
 
 
 class SystemStatusResponse(BaseModel):
