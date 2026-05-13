@@ -263,9 +263,13 @@ class RetrievalStrategy:
         if all(chunk["score"] < 0.42 for chunk in chunks):  # ajusté pour score fusion (sem×0.75)
             keyword_extra: list[dict] = []
             for word in query.split():
-                cleaned = re.sub(r"[^\w]", "", word).lower()
-                if len(cleaned) >= 4 and cleaned not in stop_words:
-                    keyword_extra.extend(self._owner._chroma.search_by_keyword(cleaned, top_k=3))
+                # Génère les termes de recherche : mot entier + sous-parties (WUDD.ai → WUDD, ai)
+                sub_parts = [p for p in re.split(r"[^\w]", word) if len(p) >= 2]
+                search_terms = {re.sub(r"[^\w]", "", word).lower()}
+                search_terms.update(p.lower() for p in sub_parts)
+                for cleaned in search_terms:
+                    if len(cleaned) >= 4 and cleaned not in stop_words:
+                        keyword_extra.extend(self._owner._chroma.search_by_keyword(cleaned, top_k=3))
             if keyword_extra:
                 self._emit_progress(progress_callback, "Fallback mots-clés activé", retrieval_mode="general_kw_fallback")
                 seen_ids: set[str] = set()

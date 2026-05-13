@@ -170,7 +170,9 @@ _META_VAULT_PATTERNS = re.compile(
     r"r[eé]sum[eé]\s*(mon\s+coffre|mes\s+notes?|tout|l.ensemble|le\s+tout)|"
     r"qu.ai[-\s]?je\s+(appris|not[eé]|[eé]crit|produit)\s*[^a-z]|"
     r"cartographi|overview\s+(du\s+coffre|de\s+mes|complet)|"
-    r"(toutes?\s+mes|mes\s+diff[eé]rentes?|l.ensemble\s+de\s+mes)\s+notes?"
+    r"(toutes?\s+mes|mes\s+diff[eé]rentes?|l.ensemble\s+de\s+mes)\s+notes?|"
+    r"mes\s+projets?(\s+[a-zàâäéèêëîïôùûü]+){0,3}\s*\??$|"  # "mes projets IA", "mes projets en cours"
+    r"mes\s+(travaux|initiatives?|d[eé]veloppements?|outils?|applications?|solutions?)"
     r")\b",
     re.I,
 )

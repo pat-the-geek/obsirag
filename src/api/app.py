@@ -4389,13 +4389,10 @@ _mount_expo_web_if_available()
 
 _GRAPH_TAG_GARBAGE_RE = re.compile(
     r"^("
-    r"\d+"                              # purement numérique
-    r"|\d{4}(-\d{2}(-\d{2})?)?"        # dates ISO
-    r"|\d{1,2}-\w+-\d{4}"             # dates textuelles (11-mars-2026)
+    r"\d[\w\-/]*"                       # tout tag commençant par un chiffre (mesures, quantités, dates)
     r"|[A-Z0-9/\-]{2,8}"               # codes/sigles courts tout-caps
     r"|\w{1,2}"                         # 1-2 caractères
     r"|[A-Z][a-z]+-[A-Z][a-z]+"        # Prénom-Nom (Sam-Altman)
-    r"|\d[\d\-a-z]+-de-[\w\-]+"        # montants (1-2-milliard-de-dollars)
     r")$"
 )
 

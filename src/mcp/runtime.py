@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 from fastapi import HTTPException
@@ -214,7 +215,13 @@ def ask_rag_payload(
             pass
 
     # Fallback automatique EurIA+web quand la sentinelle Ollama se déclenche.
-    if is_sentinel and not use_euria:
+    # Gardé uniquement pour les requêtes non-personnelles : les requêtes possessives
+    # (mes projets, mon coffre…) doivent rester dans le corpus local.
+    _PERSONAL_QUERY_RE = re.compile(
+        r"\b(mes\s+\w+|mon\s+\w+|ma\s+\w+|mes\s+projets?|j.ai|je\s+\w+)\b", re.I
+    )
+    euria_fallback_allowed = not _PERSONAL_QUERY_RE.search(safe_question)
+    if is_sentinel and not use_euria and euria_fallback_allowed:
         fallback = _euria_web_fallback(
             safe_question,
             normalized_history,

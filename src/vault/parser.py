@@ -21,6 +21,20 @@ from src.config import settings
 # ---------------------------------------------------------------------------
 _nlp: Optional[spacy.language.Language] = None
 
+# Mots qui ne sont jamais des entités nommées — faux positifs récurrents du modèle NER
+# (têtes de section markdown, mots clés de structure, noms de dossiers, assistants…)
+_NER_PERSON_STOPLIST = frozenset({
+    "notes", "note", "conclusion", "conclusions", "provenance", "comparaison",
+    "impact", "introduction", "résumé", "resume", "analyse", "synthèse", "synthese",
+    "contexte", "objectif", "objectifs", "recommandation", "recommandations",
+    "bilan", "résultats", "resultats", "rapport", "rapports", "section", "chapitre",
+    "partie", "parties", "annexe", "annexes", "sommaire", "table", "tableaux",
+    "siri", "alexa", "cortana", "bixby",  # assistants
+    "gizmodo", "buzzfeed", "mashable",    # médias souvent mal classés
+})
+# Tags inline qui sont des mesures/quantités — à exclure de l'indexation
+_TAG_MEASURE_RE = re.compile(r"^\d")
+
 _DISALLOWED_CONTROL_TRANSLATION = {
     **{code: None for code in range(0x00, 0x20) if code not in (0x09, 0x0A, 0x0D)},
     **{code: None for code in range(0x7F, 0xA0)},
@@ -141,7 +155,7 @@ class NoteParser:
                     extra_fm_tags.extend(str(i).strip().lower().replace(" ", "-") for i in _v if str(i).strip())
             tags = list({
                 *[t.lstrip("#") for t in fm.get("tags", []) if isinstance(t, str) and t.lstrip("#")],
-                *self._TAG_RE.findall(body),
+                *[t for t in self._TAG_RE.findall(body) if not _TAG_MEASURE_RE.match(t)],
                 *extra_fm_tags,
             })
 
@@ -182,12 +196,13 @@ class NoteParser:
                 if not value or len(value) < 2:
                     continue
                 if label == "PER":
-                    ents.persons.append(value)
+                    if value.lower() not in _NER_PERSON_STOPLIST:
+                        ents.persons.append(value)
                 elif label == "ORG":
                     ents.orgs.append(value)
                 elif label in ("LOC", "GPE"):
                     ents.locations.append(value)
-                else:
+                elif label not in ("CARDINAL", "ORDINAL", "PERCENT", "QUANTITY", "MONEY", "TIME", "DATE"):
                     ents.misc.append(value)
             # Déduplique en conservant l'ordre
             ents.persons = list(dict.fromkeys(ents.persons))

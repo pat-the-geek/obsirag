@@ -12,6 +12,7 @@ from src.vault.parser import NoteMetadata, NoteSection
 _WIKILINK_ALIAS_RE = re.compile(r"\[\[[^\]|#\n]+?\|([^\]#\n]+?)(?:#[^\]]*?)?\]\]")
 _WIKILINK_PLAIN_RE = re.compile(r"\[\[([^\]|#\n]+?)(?:#[^\]]*?)?\]\]")
 _INLINE_TAG_RE = re.compile(r"(?<!\S)#([A-Za-z0-9_\-/]+)")
+_LIST_ITEM_RE = re.compile(r"^[\-\*\+]\s+\S", re.MULTILINE)
 
 
 def _clean_text_for_embedding(text: str) -> str:
@@ -20,6 +21,27 @@ def _clean_text_for_embedding(text: str) -> str:
     text = _WIKILINK_PLAIN_RE.sub(r"\1", text)
     text = _INLINE_TAG_RE.sub(r"\1", text)
     return text
+
+
+def _is_structural_only(text: str) -> bool:
+    """True si le chunk est une liste pure sans prose — à exclure de l'index vectoriel.
+
+    Critères combinés :
+    - Au moins 70 % des lignes non-vides sont des items de liste (- X, * X)
+    - Chaque item contient au plus 5 mots (pas de phrase complète)
+    - Moins de 20 mots au total (section trop courte pour être informative seule)
+    """
+    lines = [l.strip() for l in text.splitlines() if l.strip()]
+    if not lines:
+        return True
+    words = text.split()
+    if len(words) > 40:
+        return False
+    list_lines = [l for l in lines if _LIST_ITEM_RE.match(l)]
+    if len(list_lines) / len(lines) < 0.7:
+        return False
+    avg_words = sum(len(l.split()) for l in list_lines) / len(list_lines)
+    return avg_words <= 5
 
 
 @dataclass
@@ -112,6 +134,8 @@ class TextChunker:
 
     def _split_section(self, section: NoteSection, *, clean: bool = False) -> list[str]:
         content = _clean_text_for_embedding(section.content) if clean else section.content
+        if clean and _is_structural_only(content):
+            return []
         words = content.split()
         if len(words) <= self.chunk_size:
             return [content.strip()] if content.strip() else []
