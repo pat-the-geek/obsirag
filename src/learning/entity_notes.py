@@ -69,8 +69,7 @@ class EntityNotesGenerator:
         entities_dir = settings.entities_dir
         entities_dir.mkdir(parents=True, exist_ok=True)
 
-        svc = self._owner._get_service_manager()
-        raw_map = svc.chroma.get_entity_to_notes_map(min_notes=2, min_chars=4)
+        raw_map = self._owner._chroma.get_entity_to_notes_map(min_notes=2, min_chars=4)
         validated = self._validate_with_wuddai(raw_map)
 
         written = 0
@@ -181,8 +180,7 @@ class EntityNotesGenerator:
                     return snippet
 
         try:
-            svc = self._owner._get_service_manager()
-            answer, _ = svc.rag.query(
+            answer, _ = self._owner._rag.query(
                 f"Que dit le coffre sur {entity_name} ? Résume en 3 à 5 phrases.",
                 chat_history=[],
                 exclude_obsirag_generated=True,
