@@ -8,6 +8,7 @@ from fastapi import HTTPException
 from src.ai.mermaid_sanitizer import sanitize_mermaid_blocks
 from src.api.app import (
     _build_source_models,
+    _build_graph_filter_options,
     _sanitize_assistant_answer_text,
     get_graph_subgraph as api_get_graph_subgraph,
     get_note as api_get_note,
@@ -414,6 +415,17 @@ def list_folder_payload(
     )
     result["folder"] = safe_folder
     return result
+
+
+def get_graph_filters_payload() -> dict[str, Any]:
+    """Retourne les options de filtre du graphe (dossiers, tags, types).
+
+    À appeler une seule fois en début de session. Evite ~10 000 tokens de
+    nomenclature dans chaque réponse de sous-graphe.
+    """
+    svc = get_service_manager()
+    opts = _build_graph_filter_options(svc)
+    return _to_json(opts)
 
 
 def get_graph_subgraph_payload(

@@ -11,6 +11,7 @@ from src.mcp.runtime import (
     conversation_finalize_payload,
     conversation_start_payload,
     get_entity_stats_payload,
+    get_graph_filters_payload,
     get_graph_subgraph_payload,
     get_note_payload,
     get_system_status_payload,
@@ -273,3 +274,16 @@ def register_tools(server: FastMCP) -> None:
             search_text=search_text,
             recency_days=recency_days,
         )
+
+    @server.tool(
+        name="obsirag_get_graph_filters",
+        description=(
+            "Retourne les options de filtre du graphe (dossiers, tags, types de notes). "
+            "A appeler une seule fois en debut de session pour obtenir la nomenclature complete. "
+            "Ne construit pas le graphe — appel leger et rapide."
+        ),
+        structured_output=True,
+    )
+    def get_graph_filters() -> dict[str, Any]:
+        """Nomenclature complete du coffre pour filtrer le graphe."""
+        return get_graph_filters_payload()

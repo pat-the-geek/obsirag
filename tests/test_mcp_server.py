@@ -16,6 +16,7 @@ def test_build_server_registers_expected_tools() -> None:
         "obsirag_conversation_finalize",
         "obsirag_conversation_start",
         "obsirag_get_entity_stats",
+        "obsirag_get_graph_filters",
         "obsirag_get_graph_subgraph",
         "obsirag_get_note",
         "obsirag_get_system_status",

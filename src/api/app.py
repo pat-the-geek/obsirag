@@ -1369,6 +1369,10 @@ def _read_worker_log_entries(limit: int = 400) -> list[dict]:
     # Format console loguru: HH:MM:SS | LEVEL    | module:line — message
     line_re = _re.compile(r"^(\d{2}:\d{2}:\d{2})\s*\|\s*(\w+)\s*\|\s*([\w\.]+):(\d+)\s*—\s*(.+)$")
     today = datetime.now().strftime("%Y-%m-%d")
+    # Offset local au format ±HH:MM pour que les timestamps soient comparables aux logs API
+    from datetime import timezone as _tz
+    utc_offset = datetime.now(_tz.utc).astimezone().strftime("%z")
+    tz_suffix = f"{utc_offset[:3]}:{utc_offset[3:]}" if len(utc_offset) == 5 else "+00:00"
     entries: list[dict] = []
     try:
         text = worker_log.read_text(encoding="utf-8", errors="replace")
@@ -1379,7 +1383,7 @@ def _read_worker_log_entries(limit: int = 400) -> list[dict]:
                 continue
             time_str, level, module, line_num, message = m.groups()
             entries.append({
-                "timestamp": f"{today}T{time_str}+00:00",
+                "timestamp": f"{today}T{time_str}{tz_suffix}",
                 "level": level.strip(),
                 "name": module,
                 "line": int(line_num),
@@ -2279,6 +2283,17 @@ def get_graph(
     )
 
 
+@app.get("/api/v1/graph/filters", response_model=GraphFilterOptionsModel)
+def get_graph_filters(_: None = Depends(require_api_auth)) -> GraphFilterOptionsModel:
+    """Retourne les options de filtre du graphe sans construire le graphe complet.
+
+    À appeler une seule fois en début de session — évite de renvoyer ~10 000 tokens
+    de nomenclature dans chaque réponse de sous-graphe.
+    """
+    svc = get_service_manager()
+    return _build_graph_filter_options(svc)
+
+
 @app.get("/api/v1/graph/subgraph", response_model=GraphDataModel)
 def get_graph_subgraph(
     noteId: str = Query(..., min_length=1),
@@ -2324,11 +2339,13 @@ def get_graph_subgraph(
         }
 
     subgraph = graph.subgraph(visited).copy()
+    # filterOptions est omis du sous-graphe pour éviter ~10k tokens de nomenclature
+    # à chaque appel. Utiliser GET /api/v1/graph/filters pour les obtenir une seule fois.
     return _graph_to_model(
         subgraph,
         filtered_notes=_graph_records_from_nodes(payload.nodes, subgraph.nodes),
         all_notes=payload.noteOptions,
-        filter_options=payload.filterOptions,
+        filter_options=GraphFilterOptionsModel(folders=[], tags=[], types=[]),
         total_note_count=payload.metrics.totalNoteCount or len(payload.noteOptions),
     )
 
@@ -4199,12 +4216,9 @@ def _build_graph_payload(
             anchor_records = [n for n in all_notes if n.get("file_path") == anchor_note_id]
             if anchor_records:
                 filtered_notes = list(filtered_notes) + anchor_records
-    graph = GraphBuilder().build(filtered_notes)
-    filter_options = GraphFilterOptionsModel(
-        folders=list(svc.chroma.list_note_folders()),
-        tags=[t for t in svc.chroma.list_note_tags() if not _NER_TAG_PREFIX_RE.match(t)],
-        types=[option["key"] for option in get_note_type_options()],
-    )
+    entity_index = svc.chroma.get_entity_graph_index(min_notes=2, min_chars=4)
+    graph = GraphBuilder().build(filtered_notes, entity_index=entity_index)
+    filter_options = _build_graph_filter_options(svc)
     return _graph_to_model(
         graph,
         filtered_notes=filtered_notes,
@@ -4339,6 +4353,28 @@ def _mount_expo_web_if_available() -> None:
 
 
 _mount_expo_web_if_available()
+
+
+_GRAPH_TAG_GARBAGE_RE = re.compile(
+    r"^(\d+|\d{4}(-\d{2}(-\d{2})?)?|[A-Z0-9/\-]{2,8}|\w{1,2})$"
+)
+
+
+def _is_graph_filter_tag_valid(tag: str) -> bool:
+    """Retourne True si le tag est suffisamment significatif pour apparaître dans filterOptions."""
+    return (
+        not _NER_TAG_PREFIX_RE.match(tag)
+        and not _GRAPH_TAG_GARBAGE_RE.match(tag)
+        and len(tag) >= 3
+    )
+
+
+def _build_graph_filter_options(svc: Any) -> GraphFilterOptionsModel:
+    return GraphFilterOptionsModel(
+        folders=list(svc.chroma.list_note_folders()),
+        tags=[t for t in svc.chroma.list_note_tags() if _is_graph_filter_tag_valid(t)],
+        types=[option["key"] for option in get_note_type_options()],
+    )
 
 
 def _notes_with_graph_context(notes: list[dict]) -> list[dict]:

@@ -428,6 +428,39 @@ class LanceStore:
             }
         return result
 
+    def get_entity_graph_index(self, min_notes: int = 2, min_chars: int = 4) -> dict[str, list[str]]:
+        """Retourne {entity_name → [file_path, ...]} pour les arêtes NER du graphe.
+
+        Seules les entités PER/ORG/LOC apparaissant dans min_notes notes distinctes
+        sont retournées. Les notes auto-générées sont exclues.
+        """
+        try:
+            rows = (
+                self._table.search(query=None)
+                .select(["ner_persons", "ner_orgs", "ner_locations", "file_path"])
+                .limit(100_000)
+                .to_list()
+            )
+        except Exception as exc:
+            logger.warning(f"get_entity_graph_index failed: {exc}")
+            return {}
+
+        index: dict[str, set[str]] = {}
+        for r in rows:
+            fp = unicodedata.normalize("NFC", r.get("file_path") or "")
+            if not fp or _is_obsirag_generated_path(fp):
+                continue
+            for field in ("ner_persons", "ner_orgs", "ner_locations"):
+                val = r.get(field) or ""
+                for entity in (e.strip() for e in val.split(",") if len(e.strip()) >= min_chars):
+                    index.setdefault(entity, set()).add(fp)
+
+        return {
+            entity: list(fps)
+            for entity, fps in index.items()
+            if len(fps) >= min_notes
+        }
+
     def get_entity_map(self, top_n: int = 50) -> dict[str, list[dict]]:
         """Agrège les entités NER de tous les chunks, retourne top_n par type."""
         try:

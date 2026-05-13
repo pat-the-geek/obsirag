@@ -1,8 +1,9 @@
 """
 Constructeur du graphe de connaissances (le "Cerveau").
 
-Deux types d'arêtes :
+Trois types d'arêtes :
   - Structurelles : [[wikilinks]] entre notes
+  - Tags partagés : notes ayant ≥2 tags significatifs en commun
   - Entités NER partagées : notes mentionnant les mêmes personnes / orgs / lieux
 
 Exportation :
@@ -13,7 +14,9 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import threading
+from collections import defaultdict
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -30,6 +33,20 @@ from src.ui.note_badges import get_note_graph_color, get_note_type_meta
 
 
 _pyvis_lock = threading.Lock()
+
+# Tags exclus des arêtes de co-tagging : préfixes NER, nombres purs, dates, codes courts
+_NER_TAG_PREFIX_RE = re.compile(
+    r"^(personne|person|lieu|org|produit|groupe|concept|oeuvre|evenement|event|entity)/", re.I
+)
+_GARBAGE_TAG_RE = re.compile(
+    r"^(\d+|\d{4}(-\d{2}(-\d{2})?)?|[A-Z0-9/\-]{2,8}|\w{1,2})$"
+)
+# Tags apparaissant dans trop de notes sont trop génériques pour créer des arêtes significatives
+_TAG_MAX_NOTE_FREQ = 50
+# Minimum de tags partagés pour créer une arête entre deux notes
+_MIN_SHARED_TAGS = 2
+# Maximum de notes partageant une entité NER (au-delà, l'entité est trop générique)
+_NER_MAX_NOTE_FREQ = 15
 
 
 @contextmanager
@@ -50,8 +67,16 @@ class GraphBuilder:
 
     # ---- API publique ----
 
-    def build(self, notes: list[dict]) -> nx.DiGraph:
-        """Construit le graphe à partir des métadonnées vectorielles."""
+    def build(
+        self,
+        notes: list[dict],
+        entity_index: dict[str, list[str]] | None = None,
+    ) -> nx.DiGraph:
+        """Construit le graphe à partir des métadonnées vectorielles.
+
+        entity_index: {entity_name → [file_path, ...]} pour les arêtes NER.
+        Si None, les arêtes NER sont ignorées.
+        """
         logger.info(f"Construction du graphe ({len(notes)} notes)…")
         g = nx.DiGraph()
 
@@ -74,29 +99,30 @@ class GraphBuilder:
                 size=15,
             )
 
-        note_lookup = {n["file_path"]: n for n in notes}
         title_lookup = {
             (n.get("title") or Path(n["file_path"]).stem).lower(): n["file_path"]
             for n in notes
         }
 
-        # 2. Arêtes structurelles (wikilinks)
+        # 2. Arêtes structurelles (wikilinks [[note]])
+        wikilink_count = 0
         for note in notes:
             for link in note.get("wikilinks", []):
                 target_fp = self._resolve_link(link, title_lookup)
                 if target_fp and target_fp in g.nodes:
                     if not g.has_edge(note["file_path"], target_fp):
-                        g.add_edge(note["file_path"], target_fp, edge_type="wikilink", weight=1)
+                        g.add_edge(note["file_path"], target_fp, edge_type="wikilink", weight=2)
+                        wikilink_count += 1
 
-        # 3. Arêtes sémantiques (entités NER partagées)
-        entity_map: dict[str, list[str]] = {}
-        for note in notes:
-            note_fp = note["file_path"]
-            # Ici on pourrait utiliser les métadonnées NER stockées dans chroma
-            # Pour l'instant on se base sur les wikilinks uniquement
-            # (les entités NER seront exploitées dans une prochaine itération)
+        # 3. Arêtes par tags partagés (≥2 tags significatifs en commun)
+        tag_count = self._add_shared_tag_edges(g, notes)
 
-        # Augmenter la taille des nœuds selon leur degré
+        # 4. Arêtes par co-occurrence d'entités NER validées
+        ner_count = 0
+        if entity_index:
+            ner_count = self._add_ner_edges(g, entity_index)
+
+        # Ajuster la taille des nœuds selon leur degré
         for node in g.nodes():
             degree = g.in_degree(node) + g.out_degree(node)
             g.nodes[node]["size"] = max(10, min(40, 10 + degree * 2))
@@ -106,9 +132,58 @@ class GraphBuilder:
         self._save_json(g)
         logger.info(
             f"Graphe construit : {g.number_of_nodes()} nœuds, "
-            f"{g.number_of_edges()} arêtes"
+            f"{g.number_of_edges()} arêtes "
+            f"(wikilinks={wikilink_count}, tags={tag_count}, ner={ner_count})"
         )
         return g
+
+    @staticmethod
+    def _is_garbage_tag(tag: str) -> bool:
+        return bool(_NER_TAG_PREFIX_RE.match(tag) or _GARBAGE_TAG_RE.match(tag))
+
+    def _add_shared_tag_edges(self, g: nx.DiGraph, notes: list[dict]) -> int:
+        """Ajoute des arêtes entre notes partageant ≥2 tags significatifs."""
+        # Index inversé : tag → {file_paths}
+        tag_to_fps: dict[str, set[str]] = defaultdict(set)
+        for note in notes:
+            fp = note["file_path"]
+            if fp not in g.nodes:
+                continue
+            for tag in note.get("tags", []):
+                if not self._is_garbage_tag(tag):
+                    tag_to_fps[tag].add(fp)
+
+        # Comptage des tags partagés par paire de notes
+        pair_count: dict[tuple[str, str], int] = defaultdict(int)
+        for tag, fps in tag_to_fps.items():
+            fps_list = sorted(fps)
+            if len(fps_list) > _TAG_MAX_NOTE_FREQ:
+                continue  # tag trop générique
+            for i, fp_a in enumerate(fps_list):
+                for fp_b in fps_list[i + 1:]:
+                    pair_count[(fp_a, fp_b)] += 1
+
+        added = 0
+        for (fp_a, fp_b), count in pair_count.items():
+            if count >= _MIN_SHARED_TAGS and not g.has_edge(fp_a, fp_b) and not g.has_edge(fp_b, fp_a):
+                g.add_edge(fp_a, fp_b, edge_type="shared_tag", weight=count)
+                added += 1
+        return added
+
+    def _add_ner_edges(self, g: nx.DiGraph, entity_index: dict[str, list[str]]) -> int:
+        """Ajoute des arêtes entre notes co-mentionnant la même entité NER."""
+        added = 0
+        for entity_name, fps in entity_index.items():
+            # Filtrer aux nœuds présents dans le sous-graphe courant
+            valid_fps = [fp for fp in fps if fp in g.nodes]
+            if len(valid_fps) < 2 or len(valid_fps) > _NER_MAX_NOTE_FREQ:
+                continue
+            for i, fp_a in enumerate(valid_fps):
+                for fp_b in valid_fps[i + 1:]:
+                    if not g.has_edge(fp_a, fp_b) and not g.has_edge(fp_b, fp_a):
+                        g.add_edge(fp_a, fp_b, edge_type="ner_entity", weight=1)
+                        added += 1
+        return added
 
     def to_pyvis_html(self, graph: nx.DiGraph, height: int = 700, obsidian_vault: str = "") -> str:
         """Génère l'HTML interactif Pyvis."""
