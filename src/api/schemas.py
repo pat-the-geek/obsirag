@@ -69,6 +69,16 @@ class ConversationInvestigationStatsModel(BaseModel):
     auto_finalized_count: int = 0
 
 
+class FeaturesModel(BaseModel):
+    insightEnabled: bool = False
+    synapseEnabled: bool = False
+
+
+class FeaturesUpdateRequest(BaseModel):
+    insightEnabled: bool
+    synapseEnabled: bool
+
+
 class SystemStatusResponse(BaseModel):
     backendReachable: bool
     llmAvailable: bool
@@ -82,6 +92,7 @@ class SystemStatusResponse(BaseModel):
     conversations: ConversationInvestigationStatsModel = Field(
         default_factory=ConversationInvestigationStatsModel
     )
+    features: FeaturesModel = Field(default_factory=FeaturesModel)
 
 
 class ReindexResponseModel(BaseModel):

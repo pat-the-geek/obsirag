@@ -45,6 +45,8 @@ from src.api.schemas import (
     ConversationDetailModel,
     ConversationInvestigationStatsModel,
     ConversationSummaryModel,
+    FeaturesModel,
+    FeaturesUpdateRequest,
     CreateConversationRequest,
     DdgKnowledgeModel,
     DetectSynapsesResponseModel,
@@ -1263,6 +1265,27 @@ def get_session(_: None = Depends(require_api_auth)) -> SessionResponse:
     )
 
 
+def _features_file() -> Path:
+    return settings.data_dir / "features.json"
+
+
+def _load_features() -> FeaturesModel:
+    try:
+        data = json.loads(_features_file().read_text())
+        return FeaturesModel(
+            insightEnabled=bool(data.get("insight_enabled", False)),
+            synapseEnabled=bool(data.get("synapse_enabled", False)),
+        )
+    except Exception:
+        return FeaturesModel()
+
+
+def _save_features(insight_enabled: bool, synapse_enabled: bool) -> None:
+    p = _features_file()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps({"insight_enabled": insight_enabled, "synapse_enabled": synapse_enabled}))
+
+
 @app.get("/api/v1/system/status", response_model=SystemStatusResponse)
 def system_status(_: None = Depends(require_api_auth)) -> SystemStatusResponse:
     ensure_service_manager_started()
@@ -1313,7 +1336,14 @@ def system_status(_: None = Depends(require_api_auth)) -> SystemStatusResponse:
             )
         ],
         conversations=conv_stats,
+        features=_load_features(),
     )
+
+
+@app.patch("/api/v1/system/features", response_model=FeaturesModel)
+def update_features(payload: FeaturesUpdateRequest, _: None = Depends(require_api_auth)) -> FeaturesModel:
+    _save_features(payload.insightEnabled, payload.synapseEnabled)
+    return FeaturesModel(insightEnabled=payload.insightEnabled, synapseEnabled=payload.synapseEnabled)
 
 
 @app.get("/api/v1/system/logs")

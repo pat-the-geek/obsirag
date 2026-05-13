@@ -248,6 +248,10 @@ export type SystemStatus = {
     nextRunAt?: string;
   };
   alerts?: SystemAlert[];
+  features?: {
+    insightEnabled: boolean;
+    synapseEnabled: boolean;
+  };
 };
 
 export type ReindexResult = {

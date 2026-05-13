@@ -135,6 +135,18 @@ export class ObsiRagApi {
     });
   }
 
+  async updateFeatures(insightEnabled: boolean, synapseEnabled: boolean): Promise<SystemStatus['features']> {
+    if (this.config.useMockServer) {
+      return { insightEnabled, synapseEnabled };
+    }
+
+    return this.requestJson<NonNullable<SystemStatus['features']>>('/api/v1/system/features', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ insightEnabled, synapseEnabled }),
+    });
+  }
+
   async getLogs(limit = 200): Promise<LogEntry[]> {
     if (this.config.useMockServer) return [];
     return this.requestJson<LogEntry[]>(`/api/v1/system/logs?limit=${limit}`);

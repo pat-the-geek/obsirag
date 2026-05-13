@@ -27,7 +27,6 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from loguru import logger
 
 from src.config import settings
-from src.ai.mlx_client import clear_mlx_cache
 from src.learning.artifact_writer import AutoLearnArtifactWriter
 from src.learning.entity_services import AutoLearnEntityServices
 from src.learning.note_renamer import AutoLearnNoteRenamer
@@ -195,6 +194,17 @@ class AutoLearner:
         self._question_answering = AutoLearnQuestionAnswering(self)
         self._web_enrichment = AutoLearnWebEnrichment(self)
         self._synapse_discovery = AutoLearnSynapseDiscovery(self)
+
+    def _load_feature_flags(self) -> dict[str, bool]:
+        try:
+            p = settings.data_dir / "features.json"
+            data = json.loads(p.read_text())
+            return {
+                "insight_enabled": bool(data.get("insight_enabled", False)),
+                "synapse_enabled": bool(data.get("synapse_enabled", False)),
+            }
+        except Exception:
+            return {"insight_enabled": False, "synapse_enabled": False}
 
     @staticmethod
     def _get_settings():
@@ -513,17 +523,6 @@ class AutoLearner:
             return False
 
     def _finalize_bulk_initial(self) -> None:
-        try:
-            clear_mlx_cache()
-            logger.debug("Cache Metal MLX libéré (fin mode accéléré)")
-        except Exception:
-            pass
-        if not self._ui_active_fn():
-            logger.info("Auto-learner bulk : UI inactif — déchargement du modèle MLX")
-            try:
-                self._rag._llm.unload()
-            except Exception as exc:
-                logger.warning(f"Auto-learner bulk : erreur déchargement modèle : {exc}")
         self.processing_status["bulk_pending_total"] = 0
         self.processing_status["bulk_new_done"] = 0
         try:
@@ -777,6 +776,7 @@ class AutoLearner:
                 logger.warning(f"Auto-learner : backend de recherche non prêt, cycle annulé : {warm_exc}")
                 return
 
+            features = self._load_feature_flags()
             processed_count = 0
             processed_map = self._load_processed()
 
@@ -784,57 +784,62 @@ class AutoLearner:
             min_reprocess_delta = timedelta(days=settings.autolearn_min_reprocess_days)
             cutoff_iso = (_utc_now_naive() - min_reprocess_delta).isoformat()
 
-            # Pass 1 — notes récemment modifiées (hors notes générées par ObsiRAG)
-            recent_filtered = self._recent_cycle_notes(processed_map, cutoff_iso)
-            for note_meta in recent_filtered[: settings.autolearn_max_notes_per_run]:
-                self._wait_for_idle(note_meta.get("title", ""))
-                if self._process_and_mark_note(
-                    note_meta,
-                    sleep_after_note=self._SLEEP_BETWEEN_NOTES,
-                    adaptive_sleep_after_note=True,
-                    error_prefix="Auto-learner : erreur sur",
-                ):
-                    processed_count += 1
+            all_notes: list = []
 
-            # Pass 2 — full-scan progressif : notes jamais traitées ou les plus anciennes
-            all_notes = self._list_user_notes()
-            processed_in_pass1 = {n["file_path"] for n in recent_filtered[: settings.autolearn_max_notes_per_run]}
-            pending = self._fullscan_cycle_notes(
-                all_notes,
-                processed_map,
-                cutoff_iso,
-                processed_in_pass1,
-            )
-            quota = settings.autolearn_fullscan_per_run
-            for note_meta in pending:
-                if quota <= 0:
-                    break
-                self._wait_for_idle(note_meta.get("title", ""))
-                if self._process_and_mark_note(
-                    note_meta,
-                    sleep_after_note=self._SLEEP_BETWEEN_NOTES,
-                    adaptive_sleep_after_note=True,
-                    error_prefix="Auto-learner full-scan : erreur sur",
-                ):
-                    processed_count += 1
-                    quota -= 1
+            if features["insight_enabled"]:
+                # Pass 1 — notes récemment modifiées (hors notes générées par ObsiRAG)
+                recent_filtered = self._recent_cycle_notes(processed_map, cutoff_iso)
+                for note_meta in recent_filtered[: settings.autolearn_max_notes_per_run]:
+                    self._wait_for_idle(note_meta.get("title", ""))
+                    if self._process_and_mark_note(
+                        note_meta,
+                        sleep_after_note=self._SLEEP_BETWEEN_NOTES,
+                        adaptive_sleep_after_note=True,
+                        error_prefix="Auto-learner : erreur sur",
+                    ):
+                        processed_count += 1
 
-            logger.info(f"Auto-learner : {processed_count} note(s) traitée(s)")
+                # Pass 2 — full-scan progressif : notes jamais traitées ou les plus anciennes
+                all_notes = self._list_user_notes()
+                processed_in_pass1 = {n["file_path"] for n in recent_filtered[: settings.autolearn_max_notes_per_run]}
+                pending = self._fullscan_cycle_notes(
+                    all_notes,
+                    processed_map,
+                    cutoff_iso,
+                    processed_in_pass1,
+                )
+                quota = settings.autolearn_fullscan_per_run
+                for note_meta in pending:
+                    if quota <= 0:
+                        break
+                    self._wait_for_idle(note_meta.get("title", ""))
+                    if self._process_and_mark_note(
+                        note_meta,
+                        sleep_after_note=self._SLEEP_BETWEEN_NOTES,
+                        adaptive_sleep_after_note=True,
+                        error_prefix="Auto-learner full-scan : erreur sur",
+                    ):
+                        processed_count += 1
+                        quota -= 1
+
+                logger.info(f"Auto-learner : {processed_count} note(s) traitée(s)")
+            else:
+                logger.info("Auto-learner : génération d'insights désactivée — passes 1 et 2 ignorées")
+                if features["synapse_enabled"]:
+                    all_notes = self._list_user_notes()
 
             # Pass 3 — découverte de synapses (connexions implicites)
-            self._set_status(note="Synapses", step="Découverte de connexions implicites…")
-            self._discover_synapses(all_notes)
+            if features["synapse_enabled"]:
+                self._set_status(note="Synapses", step="Découverte de connexions implicites…")
+                self._discover_synapses(all_notes)
+            else:
+                logger.info("Auto-learner : découverte de synapses désactivée — passe 3 ignorée")
 
         except Exception as exc:
             logger.error(f"Auto-learner cycle error : {exc}")
         finally:
             try:
                 self._metrics.observe("autolearn_cycle_seconds", time.perf_counter() - cycle_started_at)
-            except Exception:
-                pass
-            try:
-                clear_mlx_cache()
-                logger.debug("Cache Metal MLX libéré (fin cycle)")
             except Exception:
                 pass
             self._clear_status()

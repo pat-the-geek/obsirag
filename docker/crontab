@@ -1,0 +1,9 @@
+SHELL=/bin/bash
+PATH=/usr/local/bin:/usr/bin:/bin
+
+# Lance le worker autolearn au démarrage du daemon cron (= démarrage du container).
+# Le script attend 10 s pour laisser l'API initialiser LanceDB en premier.
+@reboot root /app/docker/run-worker.sh >> /app/logs/worker.log 2>&1
+
+# Redémarre le worker s'il a planté.
+*/5 * * * * root /app/docker/check-worker.sh >> /app/logs/worker.log 2>&1

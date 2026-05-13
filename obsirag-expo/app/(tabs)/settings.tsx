@@ -1,11 +1,11 @@
-import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Alert, Pressable, StyleSheet, Switch, Text, View } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 
 import { LogConsole } from '../../components/ui/log-console';
 import { Screen } from '../../components/ui/screen';
 import { SectionCard } from '../../components/ui/section-card';
 import { StatusPill } from '../../components/ui/status-pill';
-import { useReindexData, useSystemLogs, useSystemStatus } from '../../features/system/use-system-status';
+import { useReindexData, useSystemLogs, useSystemStatus, useUpdateFeatures } from '../../features/system/use-system-status';
 import { useAppStore } from '../../store/app-store';
 import { formatFontSizeModeLabel, formatThemeModeLabel, scaleFontSize, scaleLineHeight, useAppFontScale, useAppTheme } from '../../theme/app-theme';
 
@@ -18,7 +18,19 @@ export default function SettingsScreen() {
   const fontScale = useAppFontScale();
   const { data, refetch, isRefetching } = useSystemStatus();
   const reindexData = useReindexData();
+  const updateFeatures = useUpdateFeatures();
   const { data: logEntries = [] } = useSystemLogs();
+
+  const insightEnabled = data?.features?.insightEnabled ?? true;
+  const synapseEnabled = data?.features?.synapseEnabled ?? true;
+
+  const onToggleInsight = (value: boolean) => {
+    updateFeatures.mutate({ insightEnabled: value, synapseEnabled });
+  };
+
+  const onToggleSynapse = (value: boolean) => {
+    updateFeatures.mutate({ insightEnabled, synapseEnabled: value });
+  };
 
   const autolearnLabel = data?.autolearn?.running
     ? data.autolearn.managedBy === 'worker'
@@ -115,7 +127,7 @@ export default function SettingsScreen() {
         <Text style={[styles.bodyText, { color: theme.colors.text, fontSize: scaleFontSize(14, fontScale.scale), lineHeight: scaleLineHeight(20, fontScale.scale) }]}>Provider LLM: {data?.runtime?.llmProvider ?? '-'}</Text>
         <Text style={[styles.bodyText, { color: theme.colors.text, fontSize: scaleFontSize(14, fontScale.scale), lineHeight: scaleLineHeight(20, fontScale.scale) }]}>Modele actif: {data?.runtime?.llmModel ?? 'en attente'}</Text>
         <Text style={[styles.bodyText, { color: theme.colors.text, fontSize: scaleFontSize(14, fontScale.scale), lineHeight: scaleLineHeight(20, fontScale.scale) }]}>Provider Euria: {data?.runtime?.euriaProvider ?? 'Infomaniak'}</Text>
-        <Text style={[styles.bodyText, { color: theme.colors.text, fontSize: scaleFontSize(14, fontScale.scale), lineHeight: scaleLineHeight(20, fontScale.scale) }]}>Modele Euria: {data?.runtime?.euriaModel ?? 'openai/gpt-oss-120b'}</Text>
+        <Text style={[styles.bodyText, { color: theme.colors.text, fontSize: scaleFontSize(14, fontScale.scale), lineHeight: scaleLineHeight(20, fontScale.scale) }]}>Modele Euria: {data?.runtime?.euriaModel ?? 'google/gemma-4-31B-it'}</Text>
         <Text style={[styles.bodyText, { color: theme.colors.text, fontSize: scaleFontSize(14, fontScale.scale), lineHeight: scaleLineHeight(20, fontScale.scale) }]}>Embeddings: {data?.runtime?.embeddingModel ?? '-'}</Text>
         <StatusPill label={autolearnLabel} tone={autolearnTone} />
         <Text style={[styles.bodyText, { color: theme.colors.text, fontSize: scaleFontSize(14, fontScale.scale), lineHeight: scaleLineHeight(20, fontScale.scale) }]}>Gestion auto-learn: {data?.autolearn?.managedBy ?? '-'}</Text>
@@ -149,6 +161,34 @@ export default function SettingsScreen() {
             {reindexData.isPending ? 'Reindexation en cours...' : 'Reindexer les donnees'}
           </Text>
         </Pressable>
+      </SectionCard>
+      <SectionCard title="Génération automatique" subtitle="Active ou désactive la création des artefacts générés par l'auto-learner.">
+        <View style={styles.toggleRow}>
+          <View style={styles.toggleCopy}>
+            <Text style={[styles.themeOptionTitle, { color: theme.colors.text, fontSize: scaleFontSize(14, fontScale.scale) }]}>Insights</Text>
+            <Text style={[styles.themeOptionSubtitle, { color: theme.colors.textMuted, fontSize: scaleFontSize(12, fontScale.scale), lineHeight: scaleLineHeight(18, fontScale.scale) }]}>Création automatique de notes d'insight depuis le web et le coffre</Text>
+          </View>
+          <Switch
+            value={insightEnabled}
+            onValueChange={onToggleInsight}
+            disabled={updateFeatures.isPending}
+            trackColor={{ false: theme.colors.border, true: theme.colors.primary }}
+            thumbColor={theme.colors.surface}
+          />
+        </View>
+        <View style={styles.toggleRow}>
+          <View style={styles.toggleCopy}>
+            <Text style={[styles.themeOptionTitle, { color: theme.colors.text, fontSize: scaleFontSize(14, fontScale.scale) }]}>Synapses</Text>
+            <Text style={[styles.themeOptionSubtitle, { color: theme.colors.textMuted, fontSize: scaleFontSize(12, fontScale.scale), lineHeight: scaleLineHeight(18, fontScale.scale) }]}>Détection automatique de liens implicites entre notes du coffre</Text>
+          </View>
+          <Switch
+            value={synapseEnabled}
+            onValueChange={onToggleSynapse}
+            disabled={updateFeatures.isPending}
+            trackColor={{ false: theme.colors.border, true: theme.colors.primary }}
+            thumbColor={theme.colors.surface}
+          />
+        </View>
       </SectionCard>
       <SectionCard title="Console" subtitle="Logs applicatifs en temps réel.">
         <LogConsole entries={logEntries} />
@@ -241,5 +281,15 @@ const styles = StyleSheet.create({
   },
   buttonText: {
     fontWeight: '700',
+  },
+  toggleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  toggleCopy: {
+    flex: 1,
+    gap: 2,
   },
 });

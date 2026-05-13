@@ -40,3 +40,16 @@ export function useReindexData() {
     },
   });
 }
+
+export function useUpdateFeatures() {
+  const { api } = useServerConfig();
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ insightEnabled, synapseEnabled }: { insightEnabled: boolean; synapseEnabled: boolean }) =>
+      api.updateFeatures(insightEnabled, synapseEnabled),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['system-status'] });
+    },
+  });
+}

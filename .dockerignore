@@ -1,0 +1,49 @@
+# Environnements virtuels
+.venv/
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+
+# Contrôle de version
+.git/
+.gitignore
+
+# Tests et couverture
+tests/
+htmlcov/
+.pytest_cache/
+pytest.ini
+
+# Données runtime (montées en volumes)
+data/
+logs/
+
+# Frontend : node_modules et cache de build
+obsirag-expo/node_modules/
+obsirag-expo/.expo/
+
+# Fichiers sensibles — ne jamais copier dans l'image
+.env
+*.plist
+
+# Scripts macOS / launchd
+install_service.sh
+start.sh
+stop.sh
+status.sh
+run.sh
+
+# Documentation
+docs/
+reports/
+scripts/benchmark_*.py
+scripts/canary_*.py
+scripts/diagnose_*.py
+scripts/export_*.py
+
+# Divers
+*.log
+*.zip
+dist/
+nginx/
+obsirag_icon.svg

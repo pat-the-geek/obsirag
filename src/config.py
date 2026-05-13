@@ -45,7 +45,7 @@ class Settings(BaseSettings):
 
     # API Expo / mobile
     api_access_token: Optional[str] = None
-    api_public_base_url: str = "http://localhost:8000"
+    api_public_base_url: str = "http://localhost:8080"
     expo_web_dist_path: str = str(Path(__file__).resolve().parent.parent / "obsirag-expo" / "dist")
 
     # Euria (Infomaniak)
@@ -58,7 +58,7 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("EURIA_BEARER", "EURIA_API_KEY", "EURIA_TOKEN", "INFOMANIAK_API_KEY"),
     )
     euria_model: str = Field(
-        default="openai/gpt-oss-120b",
+        default="google/gemma-4-31B-it",
         validation_alias=AliasChoices("EURIA_MODEL", "EURIA_LLM_MODEL"),
     )
 

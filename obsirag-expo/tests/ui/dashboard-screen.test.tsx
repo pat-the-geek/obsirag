@@ -64,7 +64,7 @@ describe('dashboard screen', () => {
           nerModel: 'xx_ent_wiki_sm',
           autolearnMode: 'worker',
           euriaProvider: 'Infomaniak',
-          euriaModel: 'openai/gpt-oss-120b',
+          euriaModel: 'google/gemma-4-31B-it',
           euriaEnabled: true,
         },
       },
@@ -88,7 +88,7 @@ describe('dashboard screen', () => {
 
     expect(renderedText).toContain('LLM actif ObsiRAG');
     expect(renderedText).toContain('LLM Local: qwen2.5:7b');
-    expect(renderedText).toContain('LLM Euria: openai/gpt-oss-120b');
+    expect(renderedText).toContain('LLM Euria: google/gemma-4-31B-it');
     expect(renderedText).toContain('Source runtime: API FastAPI live');
     expect(renderedText).toContain('Backend: http://192.168.1.217:8000');
     expect(renderedText).toContain('React 19.1');
@@ -132,7 +132,7 @@ describe('dashboard screen', () => {
           nerModel: 'xx_ent_wiki_sm',
           autolearnMode: 'worker',
           euriaProvider: 'Infomaniak',
-          euriaModel: 'openai/gpt-oss-120b',
+          euriaModel: 'google/gemma-4-31B-it',
           euriaEnabled: true,
         },
       },

@@ -208,7 +208,7 @@ function formatActiveModelValue(model: string | undefined) {
 
 function formatEuriaModelValue(model: string | undefined) {
   const trimmed = model?.trim();
-  return trimmed || 'openai/gpt-oss-120b';
+  return trimmed || 'google/gemma-4-31B-it';
 }
 
 const styles = StyleSheet.create({

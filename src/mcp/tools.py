@@ -6,6 +6,7 @@ from mcp.server.fastmcp import FastMCP
 
 from src.mcp.runtime import (
     ask_rag_payload,
+    browse_notes_by_date_payload,
     conversation_continue_payload,
     conversation_finalize_payload,
     conversation_start_payload,
@@ -143,6 +144,36 @@ def register_tools(server: FastMCP) -> None:
             conversation_id=conversation_id,
             final_synthesis=final_synthesis,
             resolved=resolved,
+        )
+
+    @server.tool(
+        name="obsirag_browse_notes_by_date",
+        description=(
+            "Liste les notes du coffre triées par date de modification décroissante. "
+            "Permet de trouver les N dernières notes modifiées, ou de filtrer sur une période. "
+            "date_from et date_to acceptent le format YYYY-MM-DD ou YYYY-MM-DDTHH:MM:SS. "
+            "folders filtre par dossier (ex: ['Journal', 'Projets/Alpha']). "
+            "tags filtre par tag Obsidian (ex: ['ia', 'lecture']). "
+            "Les notes générées par ObsiRAG (insights, synapses) sont exclues par défaut."
+        ),
+        structured_output=True,
+    )
+    def browse_notes_by_date(
+        limit: int = 10,
+        date_from: str | None = None,
+        date_to: str | None = None,
+        folders: list[str] | None = None,
+        tags: list[str] | None = None,
+        exclude_obsirag_generated: bool = True,
+    ) -> dict[str, Any]:
+        """Parcourir les notes par date, avec filtres optionnels de période, dossier et tag."""
+        return browse_notes_by_date_payload(
+            limit=limit,
+            date_from=date_from,
+            date_to=date_to,
+            folders=folders,
+            tags=tags,
+            exclude_obsirag_generated=exclude_obsirag_generated,
         )
 
     @server.tool(

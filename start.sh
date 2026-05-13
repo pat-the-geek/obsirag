@@ -32,7 +32,7 @@ source ./.env
 set +o allexport
 
 AUTOLEARN_ENABLED="${AUTOLEARN_ENABLED:-true}"
-API_PORT="${OBSIRAG_API_PORT:-8000}"
+API_PORT="${OBSIRAG_API_PORT:-8080}"
 EXPO_PORT="${EXPO_WEB_PORT:-8081}"
 
 _launchd_is_loaded() {
@@ -227,7 +227,7 @@ _patch_plist_env_key() {
 _sync_euria_to_plist() {
   local euria_url="${EURIA_URL:-}"
   local euria_bearer="${EURIA_BEARER:-}"
-  local euria_model="${EURIA_MODEL:-openai/gpt-oss-120b}"
+  local euria_model="${EURIA_MODEL:-google/gemma-4-31B-it}"
   if [ -f "$API_PLIST_DST" ]; then
     _patch_plist_env_key "$API_PLIST_DST" "EURIA_URL" "$euria_url"
     _patch_plist_env_key "$API_PLIST_DST" "EURIA_BEARER" "$euria_bearer"

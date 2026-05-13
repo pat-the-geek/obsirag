@@ -121,10 +121,6 @@ class ServiceManager:
         )
         thread.start()
 
-        self._start_model_watchdog()
-
-    # ---- Gestion du cycle de vie du modèle LLM ----
-
     def signal_ui_active(self) -> None:
         """Marque l'UI comme active.
 
@@ -157,28 +153,6 @@ class ServiceManager:
             and hasattr(self, "learner")
             and self.learner.processing_status.get("active", False)
         )
-
-    def _start_model_watchdog(self) -> None:
-        """Lance un thread de surveillance qui décharge le modèle quand personne ne l'utilise."""
-        def _watch() -> None:
-            while True:
-                time.sleep(30)
-                try:
-                    if (
-                        self.llm.is_loaded()
-                        and not self.is_ui_active()
-                        and not self.is_scheduler_active()
-                    ):
-                        logger.info(
-                            "Watchdog : UI inactif + aucun scheduler actif — libération du client LLM"
-                        )
-                        self.llm.unload()
-                except Exception as exc:
-                    logger.warning(f"Watchdog modèle erreur : {exc}")
-
-        t = threading.Thread(target=_watch, daemon=True, name="model-watchdog")
-        t.start()
-        logger.info("Watchdog modèle démarré")
 
     def _status_store(self) -> JsonStateStore:
         return JsonStateStore(settings.data_dir / "stats" / "service_manager_status.json")

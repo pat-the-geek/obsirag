@@ -3,6 +3,7 @@ streamlit>=1.35.0
 
 # Base de données vectorielle
 chromadb==1.5.6
+lancedb>=0.30.0
 
 # Embeddings locaux multilingues
 # Sentence-Transformers 5.x reste compatible avec le backend d'embeddings local

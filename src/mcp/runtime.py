@@ -253,6 +253,80 @@ def conversation_finalize_payload(
         raise ValueError(str(exc)) from exc
 
 
+def browse_notes_by_date_payload(
+    limit: int = 10,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    folders: list[str] | None = None,
+    tags: list[str] | None = None,
+    exclude_obsirag_generated: bool = True,
+) -> dict[str, Any]:
+    from src.database.lance_store import _is_obsirag_generated_path, _note_type_for_path
+    from pathlib import Path
+
+    safe_limit = max(1, min(int(limit), 100))
+
+    # Normalise date_from / date_to en préfixes ISO comparables à date_modified ("YYYY-MM-DDThh:mm:ss")
+    iso_from: str | None = None
+    iso_to: str | None = None
+    if date_from:
+        s = str(date_from).strip()[:10]  # garde YYYY-MM-DD
+        iso_from = s  # comparaison lexicographique fonctionne sur ISO
+    if date_to:
+        s = str(date_to).strip()[:10]
+        iso_to = s + "T23:59:59"
+
+    folder_prefixes = [f.strip("/") for f in (folders or []) if f.strip()]
+    tag_filter = {t.lower().strip() for t in (tags or []) if t.strip()}
+
+    svc = get_service_manager()
+    # list_notes() retourne déjà trié par date_modified DESC et est mis en cache
+    notes = svc.chroma.list_notes()
+
+    results = []
+    for note in notes:
+        fp: str = note.get("file_path", "")
+        dm: str = note.get("date_modified", "")
+
+        if exclude_obsirag_generated and _is_obsirag_generated_path(fp):
+            continue
+
+        if folder_prefixes:
+            parent = str(Path(fp).parent).strip("/")
+            if not any(parent == pf or parent.startswith(pf + "/") for pf in folder_prefixes):
+                continue
+
+        if tag_filter:
+            note_tags = {t.lower() for t in note.get("tags", []) if t}
+            if not tag_filter.intersection(note_tags):
+                continue
+
+        if iso_from and dm and dm < iso_from:
+            continue
+        if iso_to and dm and dm > iso_to:
+            continue
+
+        results.append({
+            "filePath": fp,
+            "title": note.get("title") or Path(fp).stem,
+            "dateModified": dm or None,
+            "dateCreated": note.get("date_created") or None,
+            "noteType": _note_type_for_path(fp),
+            "tags": note.get("tags", []),
+        })
+
+        if len(results) >= safe_limit:
+            break
+
+    return {
+        "count": len(results),
+        "limit": safe_limit,
+        "dateFrom": date_from or None,
+        "dateTo": date_to or None,
+        "notes": results,
+    }
+
+
 def get_graph_subgraph_payload(
     note_id: str,
     depth: int = 1,

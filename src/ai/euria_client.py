@@ -11,7 +11,7 @@ from src.config import settings
 
 
 class EuriaClient:
-    DEFAULT_MODEL = "openai/gpt-oss-120b"
+    DEFAULT_MODEL = "google/gemma-4-31B-it"
     _RETRY_MAX_TOKENS = 4096
     _WEB_SEARCH_MAX_TOKENS = 12000
 

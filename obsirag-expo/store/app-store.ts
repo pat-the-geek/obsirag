@@ -6,7 +6,7 @@ import type { PersistStorage, StorageValue } from 'zustand/middleware';
 import { normalizeBackendUrlInput } from '../features/auth/backend-url';
 import type { FontSizeMode, ThemeMode } from '../theme/app-theme';
 
-const DEFAULT_BACKEND_URL = normalizeBackendUrlInput(process.env.EXPO_PUBLIC_DEFAULT_BACKEND_URL ?? process.env.API_PUBLIC_BASE_URL ?? '') || 'http://localhost:8000';
+const DEFAULT_BACKEND_URL = normalizeBackendUrlInput(process.env.EXPO_PUBLIC_DEFAULT_BACKEND_URL ?? process.env.API_PUBLIC_BASE_URL ?? '') || 'http://localhost:8080';
 
 function logStorageFailure(operation: 'read' | 'write' | 'delete', error: unknown): void {
   console.error(`App store persistence ${operation} failed. Falling back to in-memory state.`, error);
@@ -18,12 +18,12 @@ function migrateBackendUrl(value: unknown): string {
   }
 
   const trimmedValue = normalizeBackendUrlInput(value);
-  if (trimmedValue === 'http://localhost:8501') {
+  if (trimmedValue === 'http://localhost:8501' || trimmedValue === 'http://localhost:8000') {
     return DEFAULT_BACKEND_URL;
   }
 
-  if (trimmedValue === 'http://127.0.0.1:8501') {
-    return 'http://127.0.0.1:8000';
+  if (trimmedValue === 'http://127.0.0.1:8501' || trimmedValue === 'http://127.0.0.1:8000') {
+    return 'http://127.0.0.1:8080';
   }
 
   return trimmedValue || DEFAULT_BACKEND_URL;
@@ -219,7 +219,7 @@ export const useAppStore = create<AppStoreState>()(
     }),
     {
       name: 'obsirag-expo-store',
-      version: 6,
+      version: 7,
       storage: safeAppStoreStorage,
       migrate: (persistedState) => {
         return sanitizePersistedState(persistedState);

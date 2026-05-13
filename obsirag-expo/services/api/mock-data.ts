@@ -92,7 +92,7 @@ export const mockSystemStatus: SystemStatus = {
     nerModel: 'xx_ent_wiki_sm',
     autolearnMode: 'worker',
     euriaProvider: 'Infomaniak',
-    euriaModel: 'openai/gpt-oss-120b',
+    euriaModel: 'google/gemma-4-31B-it',
     euriaEnabled: true,
   },
   startup: {
@@ -143,6 +143,10 @@ export const mockSystemStatus: SystemStatus = {
       description: 'Le frontend fonctionne actuellement avec des donnees de demonstration.',
     },
   ],
+  features: {
+    insightEnabled: true,
+    synapseEnabled: true,
+  },
 };
 
 export const mockNotes: NoteDetail[] = [
