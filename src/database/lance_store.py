@@ -175,6 +175,8 @@ class LanceStore:
         self._note_views_ts: float = 0.0
         self._count_cache: int | None = None
         self._count_ts: float = 0.0
+        self._entity_graph_index_cache: dict[str, list[str]] | None = None
+        self._entity_graph_index_ts: float = 0.0
 
         logger.info(f"Table LanceDB '{settings.chroma_collection}' prête — {self.count()} chunks")
 
@@ -428,12 +430,18 @@ class LanceStore:
             }
         return result
 
+    _ENTITY_GRAPH_INDEX_TTL = 300  # 5 minutes
+
     def get_entity_graph_index(self, min_notes: int = 2, min_chars: int = 4) -> dict[str, list[str]]:
         """Retourne {entity_name → [file_path, ...]} pour les arêtes NER du graphe.
 
         Seules les entités PER/ORG/LOC apparaissant dans min_notes notes distinctes
         sont retournées. Les notes auto-générées sont exclues.
+        Résultat mis en cache 5 min pour éviter un scan de 100k chunks à chaque appel.
         """
+        now = time.monotonic()
+        if self._entity_graph_index_cache is not None and (now - self._entity_graph_index_ts) < self._ENTITY_GRAPH_INDEX_TTL:
+            return self._entity_graph_index_cache
         try:
             rows = (
                 self._table.search(query=None)
@@ -455,11 +463,14 @@ class LanceStore:
                 for entity in (e.strip() for e in val.split(",") if len(e.strip()) >= min_chars):
                     index.setdefault(entity, set()).add(fp)
 
-        return {
+        result = {
             entity: list(fps)
             for entity, fps in index.items()
             if len(fps) >= min_notes
         }
+        self._entity_graph_index_cache = result
+        self._entity_graph_index_ts = time.monotonic()
+        return result
 
     def get_entity_map(self, top_n: int = 50) -> dict[str, list[dict]]:
         """Agrège les entités NER de tous les chunks, retourne top_n par type."""

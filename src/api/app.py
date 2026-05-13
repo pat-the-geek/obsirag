@@ -1359,26 +1359,37 @@ def update_features(payload: FeaturesUpdateRequest, _: None = Depends(require_ap
     return FeaturesModel(insightEnabled=payload.insightEnabled, synapseEnabled=payload.synapseEnabled)
 
 
+_worker_log_cache: list[dict] = []
+_worker_log_cache_ts: float = 0.0
+_WORKER_LOG_TTL = 15.0  # secondes
+
+
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+_WORKER_LOG_LINE_RE = re.compile(r"^(\d{2}:\d{2}:\d{2})\s*\|\s*(\w+)\s*\|\s*([\w\.]+):(\d+)\s*—\s*(.+)$")
+
+
 def _read_worker_log_entries(limit: int = 400) -> list[dict]:
-    """Lit worker.log (format console ANSI), retourne des entrées de log parsées."""
-    import re as _re
+    """Lit worker.log avec cache 15 s pour ne pas bloquer l'endpoint /system/logs."""
+    global _worker_log_cache, _worker_log_cache_ts
+    now = time.monotonic()
+    if _worker_log_cache and (now - _worker_log_cache_ts) < _WORKER_LOG_TTL:
+        return _worker_log_cache[-limit:]
+
     worker_log = Path(settings.log_dir) / "worker.log"
     if not worker_log.exists():
         return []
-    ansi_re = _re.compile(r"\x1b\[[0-9;]*m")
-    # Format console loguru: HH:MM:SS | LEVEL    | module:line — message
-    line_re = _re.compile(r"^(\d{2}:\d{2}:\d{2})\s*\|\s*(\w+)\s*\|\s*([\w\.]+):(\d+)\s*—\s*(.+)$")
+
     today = datetime.now().strftime("%Y-%m-%d")
-    # Offset local au format ±HH:MM pour que les timestamps soient comparables aux logs API
     from datetime import timezone as _tz
     utc_offset = datetime.now(_tz.utc).astimezone().strftime("%z")
     tz_suffix = f"{utc_offset[:3]}:{utc_offset[3:]}" if len(utc_offset) == 5 else "+00:00"
+
     entries: list[dict] = []
     try:
         text = worker_log.read_text(encoding="utf-8", errors="replace")
         for raw_line in text.splitlines()[-(limit * 3):]:
-            clean = ansi_re.sub("", raw_line).strip()
-            m = line_re.match(clean)
+            clean = _ANSI_RE.sub("", raw_line).strip()
+            m = _WORKER_LOG_LINE_RE.match(clean)
             if not m:
                 continue
             time_str, level, module, line_num, message = m.groups()
@@ -1392,6 +1403,9 @@ def _read_worker_log_entries(limit: int = 400) -> list[dict]:
             })
     except Exception:
         pass
+
+    _worker_log_cache = entries
+    _worker_log_cache_ts = now
     return entries[-limit:]
 
 
@@ -2339,13 +2353,11 @@ def get_graph_subgraph(
         }
 
     subgraph = graph.subgraph(visited).copy()
-    # filterOptions est omis du sous-graphe pour éviter ~10k tokens de nomenclature
-    # à chaque appel. Utiliser GET /api/v1/graph/filters pour les obtenir une seule fois.
     return _graph_to_model(
         subgraph,
         filtered_notes=_graph_records_from_nodes(payload.nodes, subgraph.nodes),
         all_notes=payload.noteOptions,
-        filter_options=GraphFilterOptionsModel(folders=[], tags=[], types=[]),
+        filter_options=payload.filterOptions,
         total_note_count=payload.metrics.totalNoteCount or len(payload.noteOptions),
     )
 

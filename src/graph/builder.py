@@ -42,11 +42,13 @@ _GARBAGE_TAG_RE = re.compile(
     r"^(\d+|\d{4}(-\d{2}(-\d{2})?)?|[A-Z0-9/\-]{2,8}|\w{1,2})$"
 )
 # Tags apparaissant dans trop de notes sont trop génériques pour créer des arêtes significatives
-_TAG_MAX_NOTE_FREQ = 50
+_TAG_MAX_NOTE_FREQ = 20
 # Minimum de tags partagés pour créer une arête entre deux notes
 _MIN_SHARED_TAGS = 2
-# Maximum de notes partageant une entité NER (au-delà, l'entité est trop générique)
-_NER_MAX_NOTE_FREQ = 15
+# Entités NER : connexions significatives seulement (2-5 notes, pas trop génériques)
+_NER_MAX_NOTE_FREQ = 5
+# Plafond global d'arêtes tag+NER pour garder le graphe renderable
+_MAX_DERIVED_EDGES = 500
 
 
 @contextmanager
@@ -115,12 +117,13 @@ class GraphBuilder:
                         wikilink_count += 1
 
         # 3. Arêtes par tags partagés (≥2 tags significatifs en commun)
-        tag_count = self._add_shared_tag_edges(g, notes)
+        tag_count = self._add_shared_tag_edges(g, notes, budget=_MAX_DERIVED_EDGES)
 
         # 4. Arêtes par co-occurrence d'entités NER validées
         ner_count = 0
         if entity_index:
-            ner_count = self._add_ner_edges(g, entity_index)
+            remaining = max(0, _MAX_DERIVED_EDGES - tag_count)
+            ner_count = self._add_ner_edges(g, entity_index, budget=remaining)
 
         # Ajuster la taille des nœuds selon leur degré
         for node in g.nodes():
@@ -141,9 +144,8 @@ class GraphBuilder:
     def _is_garbage_tag(tag: str) -> bool:
         return bool(_NER_TAG_PREFIX_RE.match(tag) or _GARBAGE_TAG_RE.match(tag))
 
-    def _add_shared_tag_edges(self, g: nx.DiGraph, notes: list[dict]) -> int:
-        """Ajoute des arêtes entre notes partageant ≥2 tags significatifs."""
-        # Index inversé : tag → {file_paths}
+    def _add_shared_tag_edges(self, g: nx.DiGraph, notes: list[dict], budget: int = 500) -> int:
+        """Ajoute des arêtes entre notes partageant ≥2 tags significatifs (plafonné à budget)."""
         tag_to_fps: dict[str, set[str]] = defaultdict(set)
         for note in notes:
             fp = note["file_path"]
@@ -153,33 +155,39 @@ class GraphBuilder:
                 if not self._is_garbage_tag(tag):
                     tag_to_fps[tag].add(fp)
 
-        # Comptage des tags partagés par paire de notes
         pair_count: dict[tuple[str, str], int] = defaultdict(int)
         for tag, fps in tag_to_fps.items():
             fps_list = sorted(fps)
             if len(fps_list) > _TAG_MAX_NOTE_FREQ:
-                continue  # tag trop générique
+                continue
             for i, fp_a in enumerate(fps_list):
                 for fp_b in fps_list[i + 1:]:
                     pair_count[(fp_a, fp_b)] += 1
 
+        # Trier par nombre de tags partagés (les plus forts d'abord)
+        sorted_pairs = sorted(pair_count.items(), key=lambda x: x[1], reverse=True)
         added = 0
-        for (fp_a, fp_b), count in pair_count.items():
+        for (fp_a, fp_b), count in sorted_pairs:
+            if added >= budget:
+                break
             if count >= _MIN_SHARED_TAGS and not g.has_edge(fp_a, fp_b) and not g.has_edge(fp_b, fp_a):
                 g.add_edge(fp_a, fp_b, edge_type="shared_tag", weight=count)
                 added += 1
         return added
 
-    def _add_ner_edges(self, g: nx.DiGraph, entity_index: dict[str, list[str]]) -> int:
-        """Ajoute des arêtes entre notes co-mentionnant la même entité NER."""
+    def _add_ner_edges(self, g: nx.DiGraph, entity_index: dict[str, list[str]], budget: int = 300) -> int:
+        """Ajoute des arêtes entre notes co-mentionnant la même entité NER (plafonné à budget)."""
         added = 0
         for entity_name, fps in entity_index.items():
-            # Filtrer aux nœuds présents dans le sous-graphe courant
+            if added >= budget:
+                break
             valid_fps = [fp for fp in fps if fp in g.nodes]
             if len(valid_fps) < 2 or len(valid_fps) > _NER_MAX_NOTE_FREQ:
                 continue
             for i, fp_a in enumerate(valid_fps):
                 for fp_b in valid_fps[i + 1:]:
+                    if added >= budget:
+                        break
                     if not g.has_edge(fp_a, fp_b) and not g.has_edge(fp_b, fp_a):
                         g.add_edge(fp_a, fp_b, edge_type="ner_entity", weight=1)
                         added += 1
