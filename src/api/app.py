@@ -1186,11 +1186,14 @@ def _resolve_autolearn_status(svc: Any | None = None) -> AutolearnStatusModel:
             next_run = None
 
     worker_alive = bool(runtime_status.get("running", False))
+    # workerEnabled = worker est vivant (le worker tourne via cron, pas via l'API)
+    worker_enabled = worker_alive
     currently_executing = bool(processing_status.get("active", False))
 
     return AutolearnStatusModel(
         active=currently_executing,
         managedBy=str(runtime_status.get("managedBy", "none")),
+        workerEnabled=worker_enabled,
         workerAlive=worker_alive,
         currentlyExecuting=currently_executing,
         running=worker_alive,

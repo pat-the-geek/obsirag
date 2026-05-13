@@ -693,12 +693,14 @@ class RAGPipeline:
             return answer
         if len(context.strip()) < 300:
             return answer
-        # PERF-15b : exige au moins 2 notes distinctes pour justifier un 2e appel LLM
+        # PERF-15b : exige au moins 2 notes distinctes, sauf pour "general" où
+        # qwen7b sur-refuse — 1 source riche suffit pour justifier un 2e appel.
         distinct_sources = len({line.lstrip("#").strip().split("\n")[0]
                                  for line in context.split("## ")
                                  if line.strip()})
-        if distinct_sources < 2:
-            logger.debug("[retry_synthesis] skipped — source unique dans le contexte")
+        min_distinct = 1 if intent == "general" else 2
+        if distinct_sources < min_distinct:
+            logger.debug(f"[retry_synthesis] skipped — {distinct_sources} source(s), min={min_distinct}")
             return answer
 
         retry_messages = self._build_messages(

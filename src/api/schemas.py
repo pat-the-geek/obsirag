@@ -23,6 +23,8 @@ class IndexingStatusModel(BaseModel):
 class AutolearnStatusModel(BaseModel):
     active: bool
     managedBy: Literal["none", "worker", "api"] = "none"
+    # workerEnabled: AUTOLEARN_ALLOW_BACKGROUND_LLM est activé
+    workerEnabled: bool = False
     # workerAlive: le processus worker est en vie (pid répond)
     workerAlive: bool = False
     # currentlyExecuting: un cycle est en cours d'exécution maintenant

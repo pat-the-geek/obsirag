@@ -44,8 +44,8 @@ COPY requirements.txt /tmp/requirements.txt
 RUN grep -Ev '^(mlx-lm|mlx|streamlit)[>=<]' /tmp/requirements.txt > /tmp/requirements-docker.txt \
     && pip install --no-cache-dir -r /tmp/requirements-docker.txt
 
-# Modèle spaCy NER multilingue
-RUN python -m spacy download xx_ent_wiki_sm
+# Modèles spaCy NER — fr_core_news_md (principal) + xx_ent_wiki_sm (fallback multilingue)
+RUN python -m spacy download fr_core_news_md && python -m spacy download xx_ent_wiki_sm
 
 # Pré-téléchargement du modèle d'embedding (~500 MB baked dans l'image).
 # Évite un téléchargement lent au premier démarrage du container.

@@ -28,7 +28,7 @@ class Settings(BaseSettings):
     embedding_model: str = "paraphrase-multilingual-MiniLM-L12-v2"
 
     # NER
-    ner_model: str = "xx_ent_wiki_sm"
+    ner_model: str = "fr_core_news_md"
 
     # WUDD.ai — entités NER officielles
     wuddai_entities_url: str = "http://100.72.122.51:5050"

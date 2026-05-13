@@ -2,7 +2,8 @@
 # Redémarre le worker autolearn s'il ne tourne plus.
 # Exécuté toutes les 5 minutes par cron.
 
-if pgrep -f "src.learning.worker" > /dev/null 2>&1; then
+# Vérifie à la fois le worker python ET le script de démarrage (qui dort 10 s au boot)
+if pgrep -f "src.learning.worker" > /dev/null 2>&1 || pgrep -f "run-worker.sh" > /dev/null 2>&1; then
     exit 0
 fi
 

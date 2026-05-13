@@ -35,6 +35,9 @@ _NER_PERSON_STOPLIST = frozenset({
 })
 # Tags inline qui sont des mesures/quantités — à exclure de l'indexation
 _TAG_MEASURE_RE = re.compile(r"^\d")
+# Lignes de header Markdown — à retirer avant l'extraction NER pour éviter
+# les faux positifs ("## Les impacts" → "Les" classé PER par le modèle)
+_MARKDOWN_HEADER_LINE_RE = re.compile(r"^#{1,6}\s+.*$", re.MULTILINE)
 
 _DISALLOWED_CONTROL_TRANSLATION = {
     **{code: None for code in range(0x00, 0x20) if code not in (0x09, 0x0A, 0x0D)},
@@ -53,7 +56,7 @@ def get_nlp() -> spacy.language.Language:
         except OSError:
             logger.error(
                 f"Modèle spaCy '{settings.ner_model}' introuvable. "
-                "Exécutez : python -m spacy download xx_ent_wiki_sm"
+                "Exécutez : python -m spacy download fr_core_news_md"
             )
             raise
     return _nlp
@@ -192,8 +195,10 @@ class NoteParser:
         ents = NoteEntities()
         try:
             nlp = get_nlp()
+            # Retire les headers Markdown avant NER : "## Les impacts" sinon classe "Les" comme PER
+            clean = _MARKDOWN_HEADER_LINE_RE.sub("", text)
             # Tronquer pour ne pas saturer la mémoire sur les très longues notes
-            doc = nlp(text[:50_000])
+            doc = nlp(clean[:50_000])
             for ent in doc.ents:
                 label = ent.label_
                 value = ent.text.strip()
