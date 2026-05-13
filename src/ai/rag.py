@@ -156,7 +156,22 @@ _TEMPORAL_PATTERNS = [
 ]
 
 _SYNTHESIS_PATTERNS = re.compile(
-    r"\b(synth[eè]se|r[eé]sum[eé]|apprentissages?|que\s+sais-je|ce\s+que\s+j.ai\s+appris|fais\s+le\s+point)\b",
+    r"\b(synth[eè]se|r[eé]sum[eé]|apprentissages?|que\s+sais-je|ce\s+que\s+j.ai\s+appris|fais\s+le\s+point|"
+    r"bilan|vue\s+d.ensemble|panorama|tour\s+d.horizon)\b",
+    re.I,
+)
+
+# Questions portant sur le coffre dans sa globalité — nécessitent un échantillonnage
+# stratifié par dossier plutôt qu'une recherche vectorielle sur un terme abstrait.
+_META_VAULT_PATTERNS = re.compile(
+    r"\b("
+    r"th[eè]mes?\s*(principaux|du\s+coffre|de\s+mes\s+notes?|dans\s+mes\s+notes?)|"
+    r"(quels?\s+sont\s+(mes|les)|de\s+quoi)\s+(parlent?|traitent?|portent?)\s+(mes\s+)?notes?|"
+    r"r[eé]sum[eé]\s*(mon\s+coffre|mes\s+notes?|tout|l.ensemble|le\s+tout)|"
+    r"qu.ai[-\s]?je\s+(appris|not[eé]|[eé]crit|produit)\s*[^a-z]|"
+    r"cartographi|overview\s+(du\s+coffre|de\s+mes|complet)|"
+    r"(toutes?\s+mes|mes\s+diff[eé]rentes?|l.ensemble\s+de\s+mes)\s+notes?"
+    r")\b",
     re.I,
 )
 
@@ -286,6 +301,7 @@ class RAGPipeline:
         self._relation_pattern = _RELATION_PATTERN
         self._entity_patterns = _ENTITY_PATTERNS
         self._synthesis_patterns = _SYNTHESIS_PATTERNS
+        self._meta_vault_patterns = _META_VAULT_PATTERNS
         self._retrieval_strategy = RetrievalStrategy(self)
         self._answer_prompting = AnswerPrompting(self)
         # PERF-14 : gate de backpressure (désactivable via settings.rag_backpressure_enabled)

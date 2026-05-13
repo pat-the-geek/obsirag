@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import re
+from collections import defaultdict
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Any, Callable, cast
 from typing import TYPE_CHECKING
 
@@ -9,6 +11,14 @@ from loguru import logger
 
 if TYPE_CHECKING:
     from src.ai.rag import RAGPipeline
+
+# Stop-words français exclus du calcul de chevauchement lexical
+_LEXICAL_STOP = frozenset({
+    "quels", "quelle", "quelles", "quel", "comment", "pourquoi", "quand",
+    "est", "sont", "ont", "avec", "pour", "dans", "sur", "par", "une",
+    "des", "les", "que", "qui", "elle", "ils", "mais", "donc", "sinon",
+    "aussi", "leur", "leurs", "mes", "mon", "ses", "cette", "tout", "tous",
+})
 
 # Détecte les requêtes thématiques "A et B" sans mots-clés de relation explicites.
 # Exemples : "pouvoir et responsabilité", "mémoire et identité culturelle".
@@ -41,6 +51,88 @@ class RetrievalStrategy:
         except Exception:
             pass
 
+    @staticmethod
+    def _lexical_score(query: str, text: str) -> float:
+        """Score de chevauchement lexical entre la requête et le texte d'un chunk (0.0–1.0)."""
+        query_tokens = {
+            t.lower() for t in re.findall(r"\w{4,}", query)
+            if t.lower() not in _LEXICAL_STOP
+        }
+        if not query_tokens:
+            return 0.0
+        text_lower = text.lower()
+        matched = sum(1 for t in query_tokens if t in text_lower)
+        return matched / len(query_tokens)
+
+    @staticmethod
+    def _score_fuse(chunks: list[dict], query: str, *, semantic_weight: float = 0.75) -> list[dict]:
+        """Combine score cosinus + chevauchement lexical et retrie les chunks."""
+        lex_weight = 1.0 - semantic_weight
+        fused = []
+        for chunk in chunks:
+            sem = chunk.get("score", 0.0)
+            lex = RetrievalStrategy._lexical_score(query, chunk.get("text", ""))
+            fused.append({**chunk, "score": round(sem * semantic_weight + lex * lex_weight, 4)})
+        return sorted(fused, key=lambda c: c["score"], reverse=True)
+
+    def retrieve_meta_vault(
+        self,
+        query: str,
+        progress_callback: Callable[[dict[str, Any]], None] | None = None,
+    ) -> tuple[list[dict], str]:
+        """Échantillonnage stratifié par dossier pour les questions sur le coffre global.
+
+        Au lieu d'une recherche vectorielle sur un mot abstrait ("thèmes"),
+        on sample les notes récentes par dossier pour donner au LLM une vue
+        représentative de la diversité du coffre.
+        """
+        cfg = self._owner._get_settings()
+        self._emit_progress(progress_callback, "Vue d'ensemble du coffre — échantillonnage par dossier", retrieval_mode="meta_vault")
+
+        notes = self._owner._chroma.list_notes()
+        # Exclure les artefacts générés (insights, synapses…)
+        from src.database.lance_store import _is_obsirag_generated_path
+        user_notes = [n for n in notes if not _is_obsirag_generated_path(n.get("file_path", ""))]
+
+        # Grouper par dossier
+        by_folder: dict[str, list[dict]] = defaultdict(list)
+        for note in user_notes:
+            folder = str(Path(note["file_path"]).parent)
+            by_folder[folder].append(note)
+
+        # Échantillonner jusqu'à 2 notes par dossier (les plus récentes)
+        sampled_paths: list[str] = []
+        for folder_notes in by_folder.values():
+            sorted_notes = sorted(
+                folder_notes,
+                key=lambda n: n.get("date_modified") or "",
+                reverse=True,
+            )
+            for note in sorted_notes[:2]:
+                sampled_paths.append(note["file_path"])
+
+        # Récupérer 1 chunk représentatif par note samplée
+        chunks: list[dict] = []
+        seen_paths: set[str] = set()
+        for fp in sampled_paths:
+            if fp in seen_paths or len(chunks) >= cfg.max_context_chunks:
+                break
+            seen_paths.add(fp)
+            note_chunks = self._owner._chroma.get_chunks_by_file_path(fp, limit=1)
+            chunks.extend(note_chunks)
+
+        # Compléter avec une recherche sémantique si peu de dossiers
+        if len(chunks) < cfg.search_top_k:
+            semantic = self._owner._chroma.search(query, top_k=cfg.search_top_k)
+            seen_ids = {c["chunk_id"] for c in chunks}
+            for c in semantic:
+                if c["chunk_id"] not in seen_ids:
+                    chunks.append(c)
+                    seen_ids.add(c["chunk_id"])
+
+        self._emit_progress(progress_callback, f"Échantillonnage terminé ({len(chunks)} notes représentées)", chunk_count=len(chunks), retrieval_mode="meta_vault")
+        return chunks[:cfg.max_context_chunks], "meta_vault"
+
     def retrieve(
         self,
         query: str,
@@ -49,6 +141,12 @@ class RetrievalStrategy:
         cfg = self._owner._get_settings()
         query = self._owner._normalize_query(query)
         self._emit_progress(progress_callback, "Détection de l'intention", query=query)
+
+        # Questions sur le coffre dans sa globalité — échantillonnage stratifié
+        if self._owner._meta_vault_patterns.search(query):
+            logger.info("RAG intent=meta_vault — échantillonnage par dossier")
+            return self.retrieve_meta_vault(query, progress_callback=progress_callback)
+
         tags = self._owner._tag_pattern.findall(query)
         if tags:
             self._emit_progress(progress_callback, "Filtrage par tags", retrieval_mode="tags", tags=len(tags))
@@ -108,7 +206,8 @@ class RetrievalStrategy:
                 self._emit_progress(progress_callback, f"Recherche hybride terminée ({len(chunks[: cfg.search_top_k])} résultat(s))", chunk_count=len(chunks[: cfg.search_top_k]), retrieval_mode="synthesis")
                 return chunks[: cfg.search_top_k], "synthesis"
             self._emit_progress(progress_callback, "Recherche sémantique de synthèse", retrieval_mode="synthesis")
-            chunks = self._owner._chroma.search(query, top_k=cfg.search_top_k)
+            chunks = self._owner._chroma.search(query, top_k=cfg.search_top_k * 2)
+            chunks = self._score_fuse(chunks, query)[:cfg.search_top_k]
             self._emit_progress(progress_callback, f"Recherche synthèse terminée ({len(chunks)} résultat(s))", chunk_count=len(chunks), retrieval_mode="synthesis")
             return chunks, "synthesis"
 
@@ -153,14 +252,15 @@ class RetrievalStrategy:
                 return merged[: cfg.search_top_k * 2], "relation"
 
         self._emit_progress(progress_callback, "Recherche sémantique générale", retrieval_mode="general")
-        chunks = self._owner._chroma.search(query, top_k=cfg.search_top_k)
+        chunks = self._owner._chroma.search(query, top_k=cfg.search_top_k * 2)
+        chunks = self._score_fuse(chunks, query)
         stop_words = {
             "quelles", "quelle", "quel", "quels", "comment", "pourquoi",
             "mesures", "prend", "prend-elle", "assurer", "pour", "dans",
             "avec", "sont", "cette", "avoir", "faire", "être", "les", "des",
             "une", "que", "qui", "sur", "par", "elle", "ils",
         }
-        if all(chunk["score"] < 0.55 for chunk in chunks):
+        if all(chunk["score"] < 0.42 for chunk in chunks):  # ajusté pour score fusion (sem×0.75)
             keyword_extra: list[dict] = []
             for word in query.split():
                 cleaned = re.sub(r"[^\w]", "", word).lower()

@@ -79,9 +79,9 @@ class Settings(BaseSettings):
     # RAG / Chunking
     chunk_size_words: int = 350
     chunk_overlap_words: int = 50
-    search_top_k: int = 8
-    max_context_chunks: int = 6
-    max_context_chars: int = 6000
+    search_top_k: int = 20
+    max_context_chunks: int = 15
+    max_context_chars: int = 16000
     max_chunk_chars: int = 800
     # Plafond de chunks par note — les notes ultra-larges (insights en boucle, etc.)
     # sont tronquées à max_chunks_per_note pour éviter les crashs SIGSEGV sur gros volumes.
