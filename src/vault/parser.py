@@ -4,6 +4,7 @@ Extraction : sections, wikilinks, tags, entités NER.
 """
 import re
 import hashlib
+import unicodedata
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -131,8 +132,11 @@ class NoteParser:
             fm: dict = dict(post.metadata)
             body: str = post.content
 
+            fm_title = fm.get("title")
+            if fm_title and not self._is_title_coherent_with_stem(str(fm_title), file_path.stem):
+                fm_title = None
             title = (
-                fm.get("title")
+                fm_title
                 or self._extract_first_h1(body)
                 or fm.get("Titre")
                 or file_path.stem
@@ -236,6 +240,20 @@ class NoteParser:
             sections.append(NoteSection(title=title, level=level, content=body))
 
         return sections
+
+    @staticmethod
+    def _is_title_coherent_with_stem(title: str, stem: str) -> bool:
+        """True si fm.title partage au moins un mot significatif avec le nom de fichier."""
+        def tokenize(s: str) -> set[str]:
+            norm = "".join(
+                c for c in unicodedata.normalize("NFD", s.lower())
+                if unicodedata.category(c) != "Mn"
+            )
+            return {t for t in re.findall(r"\w+", norm) if len(t) >= 4}
+        stem_tokens = tokenize(stem)
+        if not stem_tokens:
+            return True
+        return bool(tokenize(title) & stem_tokens)
 
     def _extract_first_h1(self, body: str) -> Optional[str]:
         match = re.search(r"^#\s+(.+)$", body, re.MULTILINE)

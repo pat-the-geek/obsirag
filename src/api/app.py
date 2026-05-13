@@ -2174,6 +2174,25 @@ def search_notes(q: str, _: None = Depends(require_api_auth)) -> list[RelatedNot
 def get_note(note_path: str, _: None = Depends(require_api_auth)) -> NoteDetailModel:
     svc = get_service_manager()
     normalized, note = _resolve_note_path_identifier(note_path, svc)
+
+    # Note absente de l'index vectoriel — peut être une note fraîchement créée
+    # (finalize, watcher pas encore passé). On essaie de la lire directement sur disque.
+    if note is None:
+        norm_candidate = normalize_vault_relative_path(note_path)
+        for candidate in [norm_candidate, f"{norm_candidate}.md"] if not norm_candidate.endswith(".md") else [norm_candidate]:
+            candidate_path = resolve_vault_path(candidate)
+            if candidate_path.exists() and candidate_path.is_file():
+                normalized = candidate
+                note = {
+                    "file_path": normalized,
+                    "title": candidate_path.stem,
+                    "date_modified": "",
+                    "date_created": "",
+                    "tags": [],
+                    "wikilinks": [],
+                }
+                break
+
     if note is None:
         raise HTTPException(status_code=404, detail="Note not found")
     abs_path = resolve_vault_path(normalized)

@@ -351,6 +351,7 @@ class RAGPipeline:
             chunks = self._filter_obsirag_generated_chunks(chunks)
         else:
             chunks = self._apply_source_rank_penalty(chunks)
+        chunks = self._apply_score_cutoff(chunks)
         self._emit_progress(
             progress_callback,
             phase="retrieval",
@@ -480,16 +481,17 @@ class RAGPipeline:
         un plafond plus élevé pour les synthèses multi-notes.
         """
         caps = {
-            "general": 640,
-            "general_kw_fallback": 700,
-            "entity": 700,
-            "temporal": 720,
-            "tag": 700,
-            "hybrid": 1100,
-            "synthesis": 1100,
-            "relation": 1200,
+            "general": 1400,
+            "general_kw_fallback": 1400,
+            "entity": 1200,
+            "temporal": 1200,
+            "tag": 1200,
+            "hybrid": 2200,
+            "synthesis": 2400,
+            "relation": 2200,
+            "meta_vault": 2400,
         }
-        return caps.get(intent, 800)
+        return caps.get(intent, 1400)
 
     def _get_linked_chunks_by_note_title(self, note_title: str, limit: int = 2) -> list[dict]:
         return self._chroma.get_chunks_by_note_title(note_title, limit=limit)
@@ -1094,6 +1096,26 @@ class RAGPipeline:
         return filtered
 
     _OBSIRAG_SCORE_PENALTY = 0.60
+    _SCORE_CUTOFF = 0.42
+
+    @staticmethod
+    def _apply_score_cutoff(chunks: list[dict]) -> list[dict]:
+        """Élimine les chunks trop peu pertinents quand de meilleurs sont disponibles.
+
+        N'active le filtre que si au moins un chunk dépasse 0.50 (signal fiable),
+        pour éviter de vider le contexte sur des sujets peu couverts dans le coffre.
+        """
+        if not chunks:
+            return chunks
+        max_score = max(float(c.get("score") or 0.0) for c in chunks)
+        if max_score <= 0.50:
+            return chunks
+        cutoff = RAGPipeline._SCORE_CUTOFF
+        filtered = [c for c in chunks if float(c.get("score") or 0.0) >= cutoff]
+        dropped = len(chunks) - len(filtered)
+        if dropped > 0:
+            logger.info(f"RAG score cutoff: {dropped} chunk(s) éliminés (score < {cutoff})")
+        return filtered if filtered else chunks
 
     def _apply_source_rank_penalty(self, chunks: list[dict]) -> list[dict]:
         """Pondération dégressive pour les notes auto-générées.

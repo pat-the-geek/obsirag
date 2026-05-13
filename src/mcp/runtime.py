@@ -56,14 +56,19 @@ def _euria_web_fallback(
 ) -> dict[str, Any] | None:
     """Retry avec EurIA+web quand la sentinelle Ollama s'est déclenchée.
 
-    Retourne None si EurIA n'est pas configuré ou si l'appel échoue,
-    afin de laisser le caller retourner la réponse sentinel originale.
+    Stratégie en deux temps :
+    1. RAGPipeline+Euria (respecte le contexte local) → réponse enrichie si possible
+    2. Si Euria retourne encore la sentinelle (contrainte du system prompt vault-only),
+       appel Euria direct sans contrainte coffre, web search activé.
+
+    Retourne None si EurIA n'est pas configuré ou si les deux appels échouent.
     """
     try:
         from src.ai.euria_client import EuriaClient
         from src.ai.rag import RAGPipeline
         svc = get_service_manager()
-        rag = RAGPipeline(svc.chroma, _WebSearchEuriaClient(EuriaClient()), metrics=svc.metrics)
+        euria_llm = _WebSearchEuriaClient(EuriaClient())
+        rag = RAGPipeline(svc.chroma, euria_llm, metrics=svc.metrics)
         answer, sources = rag.query(
             question,
             chat_history=normalized_history,
@@ -72,6 +77,33 @@ def _euria_web_fallback(
         source_models = _build_source_models(list(sources or []))
         primary = next((s for s in source_models if s.isPrimary), None)
         sanitized = sanitize_mermaid_blocks(_sanitize_assistant_answer_text(str(answer or "")))
+
+        # Si RAGPipeline+Euria retourne encore la sentinelle c'est que le system prompt vault-only
+        # a contraint le modèle — on appelle Euria directement sans ce bridage.
+        if sanitized.strip().lower() == _SENTINEL_ANSWER.lower():
+            history_msgs = [{"role": m["role"], "content": m["content"]} for m in normalized_history]
+            direct_messages = [
+                {
+                    "role": "system",
+                    "content": (
+                        "Tu es un assistant qui répond en français avec précision. "
+                        "Tu as accès à une recherche web en temps réel. "
+                        "Réponds à la question à partir de tes connaissances et de la recherche web."
+                    ),
+                },
+                *history_msgs,
+                {"role": "user", "content": question},
+            ]
+            direct_answer = euria_llm.chat(direct_messages, enable_web_search=True)
+            direct_sanitized = sanitize_mermaid_blocks(
+                _sanitize_assistant_answer_text(str(direct_answer or ""))
+            )
+            if direct_sanitized and direct_sanitized.strip().lower() != _SENTINEL_ANSWER.lower():
+                sanitized = direct_sanitized
+                # Appel direct = pas de sources coffre — on vide pour cohérence
+                source_models = []
+                primary = None
+
         return {
             "question": question,
             "answer": sanitized,
@@ -395,13 +427,21 @@ def browse_notes_by_date_payload(
 
 
 def _is_wikilink_heavy(text: str) -> bool:
-    """True when more than half the non-empty lines are wikilink list items."""
-    import re as _re
+    """True when the chunk is a structural list rather than prose.
+
+    Détecte à la fois les wikilinks bruts ([[...]]) et les listes nettoyées
+    (après passage dans _clean_text_for_embedding) qui restent des énumérations
+    courtes sans phrases complètes.
+    """
     lines = [l.strip() for l in text.splitlines() if l.strip()]
     if not lines:
         return True
-    wiki_lines = sum(1 for l in lines if _re.match(r"^-?\s*\[\[", l))
-    return wiki_lines / len(lines) > 0.5
+    list_lines = [
+        l for l in lines
+        if re.match(r"^-?\s*\[\[", l)                       # wikilink brut
+        or (re.match(r"^[-\*\+]\s+\S", l) and len(l.split()) <= 7)  # item de liste court (≤7 mots)
+    ]
+    return len(list_lines) / len(lines) > 0.55
 
 
 def search_notes_semantic_payload(
