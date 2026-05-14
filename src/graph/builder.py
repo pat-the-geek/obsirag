@@ -39,7 +39,16 @@ _NER_TAG_PREFIX_RE = re.compile(
     r"^(personne|person|lieu|org|produit|groupe|concept|oeuvre|evenement|event|entity)/", re.I
 )
 _GARBAGE_TAG_RE = re.compile(
-    r"^(\d+|\d{4}(-\d{2}(-\d{2})?)?|[A-Z0-9/\-]{2,8}|\w{1,2})$"
+    r"^("
+    r"\d[\w\-/]*"                                           # chiffre en tête
+    r"|\d{4}(-\d{2}(-\d{2})?)?"                            # dates ISO
+    r"|[A-Z0-9/\-]{2,8}"                                   # sigle tout-caps
+    r"|\w{1,2}"                                             # 1-2 chars
+    r"|(?:de|du|des|en|le|la|les|au|aux|un|une|par|sur|sous|dans|vers|et|ou|avec)-\S+"  # fragment prépositionnel
+    r"|[^/]{31,}"                                           # > 30 chars
+    r"|(?:\w+-){3,}\w+"                                     # 4+ mots tiretés
+    r")$",
+    re.I,
 )
 # Tags apparaissant dans trop de notes sont trop génériques pour créer des arêtes significatives
 _TAG_MAX_NOTE_FREQ = 20
@@ -105,12 +114,18 @@ class GraphBuilder:
             (n.get("title") or Path(n["file_path"]).stem).lower(): n["file_path"]
             for n in notes
         }
+        # Fallback : résolution par stem (nom de fichier sans extension)
+        # Obsidian résout [[NomFichier]] par stem — le titre dans les métadonnées peut différer.
+        stem_lookup = {
+            Path(n["file_path"]).stem.lower(): n["file_path"]
+            for n in notes
+        }
 
         # 2. Arêtes structurelles (wikilinks [[note]])
         wikilink_count = 0
         for note in notes:
             for link in note.get("wikilinks", []):
-                target_fp = self._resolve_link(link, title_lookup)
+                target_fp = self._resolve_link(link, title_lookup, stem_lookup)
                 if target_fp and target_fp in g.nodes:
                     if not g.has_edge(note["file_path"], target_fp):
                         g.add_edge(note["file_path"], target_fp, edge_type="wikilink", weight=2)
@@ -487,8 +502,13 @@ div.vis-network div.vis-navigation div.vis-button:hover {
         )
 
     @staticmethod
-    def _resolve_link(link: str, title_lookup: dict[str, str]) -> str | None:
-        return title_lookup.get(link.lower())
+    def _resolve_link(
+        link: str,
+        title_lookup: dict[str, str],
+        stem_lookup: dict[str, str] | None = None,
+    ) -> str | None:
+        key = link.lower().strip()
+        return title_lookup.get(key) or (stem_lookup.get(key) if stem_lookup else None)
 
     def _save_json(self, graph: nx.DiGraph) -> None:
         try:

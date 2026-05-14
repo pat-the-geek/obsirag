@@ -4411,11 +4411,15 @@ _mount_expo_web_if_available()
 
 _GRAPH_TAG_GARBAGE_RE = re.compile(
     r"^("
-    r"\d[\w\-/]*"                       # tout tag commençant par un chiffre (mesures, quantités, dates)
-    r"|[A-Z0-9/\-]{2,8}"               # codes/sigles courts tout-caps
-    r"|\w{1,2}"                         # 1-2 caractères
-    r"|[A-Z][a-z]+-[A-Z][a-z]+"        # Prénom-Nom (Sam-Altman)
-    r")$"
+    r"\d[\w\-/]*"                                           # tag commençant par un chiffre
+    r"|[A-Z0-9/\-]{2,8}"                                   # codes/sigles courts tout-caps
+    r"|\w{1,2}"                                             # 1-2 caractères
+    r"|[A-Z][a-z]+-[A-Z][a-z]+"                            # Prénom-Nom (Sam-Altman)
+    r"|(?:de|du|des|en|le|la|les|au|aux|un|une|par|sur|sous|dans|vers|et|ou|avec)-\S+"  # fragment prépositionnel
+    r"|[^/]{31,}"                                           # tag > 30 chars (phrases structurelles)
+    r"|(?:\w+-){3,}\w+"                                     # 4+ mots séparés par tirets (ex: quatre-personnes-sur-cinq)
+    r")$",
+    re.I,
 )
 
 
