@@ -4342,6 +4342,7 @@ def _graph_to_model(
         key=lambda item: item.degree,
         reverse=True,
     )[:8]
+    entity_image_index = GraphBuilder._load_entity_image_index()
     return GraphDataModel(
         nodes=[
             GraphNodeModel(
@@ -4352,6 +4353,9 @@ def _graph_to_model(
                 tags=list(data.get("tags") or []),
                 noteType=str(data.get("note_type") or "user"),
                 dateModified=str(data.get("date_modified") or "") or None,
+                imageUrl=entity_image_index.get(GraphBuilder._normalize_title(str(data.get("label") or node_id)))
+                if str(data.get("note_type") or "user") == "entity" and entity_image_index
+                else None,
             )
             for node_id, data in node_items
         ],

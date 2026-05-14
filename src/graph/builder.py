@@ -16,6 +16,7 @@ import json
 import os
 import re
 import threading
+import unicodedata
 from collections import defaultdict
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -91,16 +92,22 @@ class GraphBuilder:
         logger.info(f"Construction du graphe ({len(notes)} notes)…")
         g = nx.DiGraph()
 
+        entity_image_index = self._load_entity_image_index()
+
         # 1. Ajouter les nœuds
         for note in notes:
             fp = note["file_path"]
             folder = str(Path(fp).parent)
             title = note.get("title") or Path(fp).stem
             type_meta = get_note_type_meta(fp)
+            image_url: str | None = None
+            if type_meta["key"] == "entity" and entity_image_index:
+                normalized = self._normalize_title(title)
+                image_url = entity_image_index.get(normalized)
             g.add_node(
                 fp,
                 label=title,
-                title=self._node_tooltip(note),
+                title=self._node_tooltip(note, image_url=image_url),
                 date_modified=note.get("date_modified", ""),
                 tags=note.get("tags", []),
                 folder=folder,
@@ -483,14 +490,47 @@ div.vis-network div.vis-navigation div.vis-button:hover {
     # ---- helpers ----
 
     @staticmethod
-    def _node_tooltip(note: dict) -> str:
+    def _normalize_title(title: str) -> str:
+        text = title.lower().strip()
+        text = unicodedata.normalize("NFD", text)
+        text = "".join(c for c in text if unicodedata.category(c) != "Mn")
+        text = re.sub(r"[^\w\s]", "", text)
+        return re.sub(r"\s+", " ", text).strip()
+
+    @staticmethod
+    def _load_entity_image_index() -> dict[str, str]:
+        cache_file = settings.data_dir / "wuddai_entities_cache.json"
+        if not cache_file.exists():
+            return {}
+        try:
+            data = json.loads(cache_file.read_text(encoding="utf-8"))
+            return {
+                entity["value_normalized"]: entity["image_url"]
+                for entity in data.get("entities", [])
+                if entity.get("image_url") and entity.get("value_normalized")
+            }
+        except Exception:
+            return {}
+
+    @staticmethod
+    def _node_tooltip(note: dict, *, image_url: str | None = None) -> str:
         import html as _html
         tags = ", ".join(note.get("tags", [])[:5])
         date = note.get("date_modified", "")[:10]
         fp = _html.escape(note.get("file_path", ""), quote=True)
         title = _html.escape(note.get("title") or Path(fp).stem or "Note", quote=False)
         type_meta = get_note_type_meta(note.get("file_path", ""))
+        img_html = ""
+        if image_url:
+            escaped_url = _html.escape(image_url, quote=True)
+            img_html = (
+                f'<img src="{escaped_url}" '
+                f'style="width:56px;height:56px;object-fit:cover;border-radius:6px;'
+                f'display:block;margin-bottom:6px;" '
+                f'onerror="this.style.display=\'none\'">'
+            )
         return (
+            f'{img_html}'
             f"<b>{title}</b><br>"
             f"{type_meta['icon']} {type_meta['label']}<br>"
             f"📅 {date}<br>"

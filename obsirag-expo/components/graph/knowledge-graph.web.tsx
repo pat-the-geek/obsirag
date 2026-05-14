@@ -1063,9 +1063,13 @@ function buildNodeTooltipHtml(node: GraphData['nodes'][number]) {
     : '';
   const openAction = `<button type="button" class="obsirag-graph-tooltip__action" data-graph-action="open-node" data-node-id="${escapeHtml(node.id)}">Ouvrir l'element</button>`;
   const synapseAction = `<button type="button" class="obsirag-graph-tooltip__action obsirag-graph-tooltip__action--secondary" data-graph-action="detect-synapses" data-node-id="${escapeHtml(node.id)}">Detecter des synapses</button>`;
+  const imageHtml = node.imageUrl
+    ? `<img src="${escapeHtml(node.imageUrl)}" class="obsirag-graph-tooltip__entity-image" alt="${escapeHtml(node.label)}" onerror="this.style.display='none'" />`
+    : '';
 
   return `
     <div class="obsirag-graph-tooltip__card">
+      ${imageHtml}
       <div class="obsirag-graph-tooltip__title">${escapeHtml(node.label)}</div>
       <div class="obsirag-graph-tooltip__meta">
         <span>${escapeHtml(date)}</span>
@@ -1110,6 +1114,14 @@ function ensureVisTooltipStyles() {
       flex-direction: column;
       gap: 14px;
       padding: 16px;
+    }
+    .obsirag-graph-tooltip__entity-image {
+      width: 56px;
+      height: 56px;
+      object-fit: cover;
+      border-radius: 8px;
+      display: block;
+      align-self: flex-start;
     }
     .obsirag-graph-tooltip__title {
       color: #f8fafc;

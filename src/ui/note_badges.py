@@ -38,6 +38,10 @@ def get_note_type(file_path: str) -> str:
         return "report"
     if "/obsirag/entities/" in normalized or normalized.startswith("obsirag/entities/"):
         return "entity"
+    # Dossiers "Rapports-*" créés par l'utilisateur (Rapports-WUDD-ai, Rapports-Claude, etc.)
+    first_component = normalized.lstrip("/").split("/")[0]
+    if first_component.startswith("rapports"):
+        return "report"
     return "user"
 
 

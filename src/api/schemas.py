@@ -308,6 +308,7 @@ class GraphNodeModel(BaseModel):
     tags: list[str] = Field(default_factory=list)
     noteType: str | None = None
     dateModified: str | None = None
+    imageUrl: str | None = None
 
 
 class GraphEdgeModel(BaseModel):

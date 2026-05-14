@@ -144,6 +144,7 @@ export type GraphNode = {
   tags: string[];
   noteType?: string;
   dateModified?: string;
+  imageUrl?: string | null;
 };
 
 export type GraphEdge = {

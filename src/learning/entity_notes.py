@@ -169,6 +169,7 @@ class EntityNotesGenerator:
             else:
                 result[official_name] = {
                     "wuddai_type": wuddai_type,
+                    "image_url": match.get("image_url"),
                     "count": info["count"],
                     "notes": list(info["notes"]),
                 }
@@ -232,6 +233,8 @@ class EntityNotesGenerator:
         now = datetime.now().strftime("%Y-%m-%d %H:%M")
         slug_tag = build_ascii_stem(entity_name, max_length=40)
 
+        image_url = info.get("image_url") or ""
+
         lines = [
             "---",
             "tags:",
@@ -242,6 +245,12 @@ class EntityNotesGenerator:
             f"entity_name: {entity_name}",
             "---",
             "",
+        ]
+
+        if image_url:
+            lines += [f"![{entity_name}]({image_url})", ""]
+
+        lines += [
             f"# {entity_name}",
             "",
             f"**Type :** {type_label}  ",
