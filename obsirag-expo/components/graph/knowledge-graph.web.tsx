@@ -4,6 +4,8 @@ import { useWindowDimensions } from 'react-native';
 import { DataSet } from 'vis-data';
 import { Network } from 'vis-network';
 
+import noteTypeColors from '../../../shared/note-type-colors.json';
+
 import { GraphData } from '../../types/domain';
 
 type KnowledgeGraphProps = {
@@ -80,13 +82,9 @@ type GraphInteractionEvent = {
 };
 
 const GROUP_COLORS = ['#2a5f95', '#c46a2f', '#4b7f52', '#875f9a', '#5a768d', '#9b4f46'];
-const NOTE_TYPE_COLORS: Record<string, string> = {
-  user: '#60a5fa',
-  report: '#f59e0b',
-  insight: '#facc15',
-  synapse: '#c084fc',
-  entity: '#34d399',
-};
+const NOTE_TYPE_FILL: Record<string, string> = Object.fromEntries(
+  Object.entries(noteTypeColors).map(([k, v]) => [k, v.fill]),
+);
 const MIN_GRAPH_ZOOM = 0.2;
 const MAX_GRAPH_ZOOM = 10;
 const MIN_BASE_SCALE = 0.01;
@@ -729,10 +727,10 @@ function buildPreparedGraph(data: GraphData) {
     ) ? node.label : '',
     title: ' ',
     color: {
-      background: node.noteType ? (NOTE_TYPE_COLORS[node.noteType] ?? '#60a5fa') : (groupColors.get(node.group) ?? '#2a5f95'),
+      background: node.noteType ? (NOTE_TYPE_FILL[node.noteType] ?? '#60a5fa') : (groupColors.get(node.group) ?? '#2a5f95'),
       border: 'rgba(15, 23, 42, 0.82)',
       highlight: {
-        background: node.noteType ? (NOTE_TYPE_COLORS[node.noteType] ?? '#93c5fd') : (groupColors.get(node.group) ?? '#60a5fa'),
+        background: node.noteType ? (NOTE_TYPE_FILL[node.noteType] ?? '#93c5fd') : (groupColors.get(node.group) ?? '#60a5fa'),
         border: '#f8fafc',
       },
     },

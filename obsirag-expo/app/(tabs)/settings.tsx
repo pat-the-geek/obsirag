@@ -1,5 +1,5 @@
 import { Alert, Pressable, StyleSheet, Switch, Text, View } from 'react-native';
-import { Feather } from '@expo/vector-icons';
+import { ZoomIn, ZoomOut } from 'lucide-react-native';
 
 import { LogConsole } from '../../components/ui/log-console';
 import { Screen } from '../../components/ui/screen';
@@ -90,7 +90,7 @@ export default function SettingsScreen() {
               onPress={decreaseFontSize}
               style={[styles.fontSizeButton, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }, !fontScale.canDecrease && styles.optionDisabled]}
             >
-              <Feather name="zoom-out" size={18} color={theme.colors.text} />
+              <ZoomOut size={18} color={theme.colors.text} />
             </Pressable>
             <StatusPill label={`Taille: ${formatFontSizeModeLabel(fontScale.mode)}`} tone="neutral" />
             <Pressable
@@ -100,7 +100,7 @@ export default function SettingsScreen() {
               onPress={increaseFontSize}
               style={[styles.fontSizeButton, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }, !fontScale.canIncrease && styles.optionDisabled]}
             >
-              <Feather name="zoom-in" size={18} color={theme.colors.text} />
+              <ZoomIn size={18} color={theme.colors.text} />
             </Pressable>
           </View>
         </View>

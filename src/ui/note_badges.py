@@ -1,57 +1,28 @@
 from __future__ import annotations
+import json
+from pathlib import Path
 
+_SHARED_COLORS: dict[str, dict[str, str]] = json.loads(
+    (Path(__file__).parent.parent.parent / "shared" / "note-type-colors.json").read_text()
+)
 
-_NOTE_TYPE_STYLES = {
-    "user": {
-        "label": "Note",
-        "icon": "📝",
-        "bg": "rgba(0, 102, 184, 0.12)",
-        "border": "rgba(0, 102, 184, 0.28)",
-        "text": "#0066b8",
-        "graph_fill": "#60a5fa",
-        "graph_border": "#2563eb",
-        "graph_highlight": "#93c5fd",
-    },
-    "report": {
-        "label": "Rapport",
-        "icon": "📋",
-        "bg": "rgba(180, 83, 9, 0.12)",
-        "border": "rgba(180, 83, 9, 0.28)",
-        "text": "#b45309",
-        "graph_fill": "#f59e0b",
-        "graph_border": "#b45309",
-        "graph_highlight": "#fcd34d",
-    },
-    "insight": {
-        "label": "Insight",
-        "icon": "💡",
-        "bg": "rgba(202, 138, 4, 0.12)",
-        "border": "rgba(202, 138, 4, 0.28)",
-        "text": "#a16207",
-        "graph_fill": "#facc15",
-        "graph_border": "#ca8a04",
-        "graph_highlight": "#fde047",
-    },
-    "synapse": {
-        "label": "Synapse",
-        "icon": "⚡",
-        "bg": "rgba(147, 51, 234, 0.12)",
-        "border": "rgba(147, 51, 234, 0.28)",
-        "text": "#7e22ce",
-        "graph_fill": "#c084fc",
-        "graph_border": "#9333ea",
-        "graph_highlight": "#d8b4fe",
-    },
-    "entity": {
-        "label": "Entité",
-        "icon": "🏷️",
-        "bg": "rgba(5, 150, 105, 0.12)",
-        "border": "rgba(5, 150, 105, 0.28)",
-        "text": "#047857",
-        "graph_fill": "#34d399",
-        "graph_border": "#059669",
-        "graph_highlight": "#6ee7b7",
-    },
+_NOTE_TYPE_META: dict[str, dict[str, str]] = {
+    "user":    {"label": "Note",    "icon": "📝", "graph_border": "#2563eb", "graph_highlight": "#93c5fd"},
+    "report":  {"label": "Rapport", "icon": "📋", "graph_border": "#b45309", "graph_highlight": "#fcd34d"},
+    "insight": {"label": "Insight", "icon": "💡", "graph_border": "#ca8a04", "graph_highlight": "#fde047"},
+    "synapse": {"label": "Synapse", "icon": "⚡", "graph_border": "#9333ea", "graph_highlight": "#d8b4fe"},
+    "entity":  {"label": "Entité",  "icon": "🏷️", "graph_border": "#059669", "graph_highlight": "#6ee7b7"},
+}
+
+_NOTE_TYPE_STYLES: dict[str, dict[str, str]] = {
+    k: {
+        **_NOTE_TYPE_META[k],
+        "bg":         _SHARED_COLORS[k]["bg"],
+        "border":     _SHARED_COLORS[k]["border"],
+        "text":       _SHARED_COLORS[k]["text"],
+        "graph_fill": _SHARED_COLORS[k]["fill"],
+    }
+    for k in _NOTE_TYPE_META
 }
 
 _NOTE_TYPE_ORDER = ["user", "report", "insight", "synapse", "entity"]

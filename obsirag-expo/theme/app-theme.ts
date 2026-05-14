@@ -40,6 +40,8 @@ export type AppThemeColors = {
   codeText: string;
   tagSurface: string;
   tagText: string;
+  tagBackground: string;
+  tagPillText: string;
   mediaSurface: string;
   mediaCanvas: string;
   entityPersonSurface: string;
@@ -72,7 +74,7 @@ const lightColors: AppThemeColors = {
   text: '#1f160c',
   textMuted: '#5b4b37',
   textSubtle: '#7a6b59',
-  link: '#1f5da0',
+  link: '#5a8fc2',        // brand-accent-alt
   primary: '#a55233',
   primaryMuted: '#8a3f25',
   primaryText: '#fff8ef',
@@ -81,8 +83,8 @@ const lightColors: AppThemeColors = {
   warningSurface: '#fff0dc',
   warningText: '#8b4d00',
   successSurface: '#eaf7ef',
-  successText: '#1f6a3a',
-  danger: '#b3261e',
+  successText: '#3fb950',   // brand-success
+  danger: '#cd3131',        // brand-danger
   dangerSurface: '#fdecea',
   dangerPillText: '#761915',
   neutralSurface: '#eee8dd',
@@ -96,6 +98,8 @@ const lightColors: AppThemeColors = {
   codeText: '#2d2219',
   tagSurface: '#efe5d6',
   tagText: '#5a4024',
+  tagBackground: '#d8ebff',
+  tagPillText: '#163a56',
   mediaSurface: '#f7f1e7',
   mediaCanvas: '#fffaf3',
   entityPersonSurface: '#cfe8ff',
@@ -145,6 +149,8 @@ const darkColors: AppThemeColors = {
   codeText: '#d8e5f8',
   tagSurface: '#283447',
   tagText: '#c7d9f5',
+  tagBackground: '#27425c',
+  tagPillText: '#a9d0f4',
   mediaSurface: '#182232',
   mediaCanvas: '#0f1826',
   entityPersonSurface: '#1f3a5d',

@@ -6,9 +6,11 @@ import { NoteCard } from '../../../components/notes/note-card';
 import { Screen } from '../../../components/ui/screen';
 import { SectionCard } from '../../../components/ui/section-card';
 import { useNoteDetail } from '../../../features/notes/use-notes';
+import { useAppTheme } from '../../../theme/app-theme';
 
 export default function NoteScreen() {
   const router = useRouter();
+  const { colors } = useAppTheme();
   const params = useLocalSearchParams<{ noteId: string }>();
   const noteId = useMemo(() => (Array.isArray(params.noteId) ? params.noteId[0] : params.noteId), [params.noteId]);
   const { data, isLoading, isRefetching, refetch } = useNoteDetail(noteId);
@@ -30,17 +32,25 @@ export default function NoteScreen() {
       />
       <SectionCard title="Retrolinks">
         {data.backlinks.map((item) => (
-          <Pressable key={item.filePath} style={styles.linkCard} onPress={() => router.push(`/(tabs)/note/${encodeURIComponent(item.filePath)}`)}>
-            <Text style={styles.linkTitle}>{item.title}</Text>
-            <Text style={styles.linkMeta}>{item.filePath}</Text>
+          <Pressable
+            key={item.filePath}
+            style={[styles.linkCard, { backgroundColor: colors.surfaceMuted, borderColor: colors.border }]}
+            onPress={() => router.push(`/(tabs)/note/${encodeURIComponent(item.filePath)}`)}
+          >
+            <Text style={[styles.linkTitle, { color: colors.text }]}>{item.title}</Text>
+            <Text style={[styles.linkMeta, { color: colors.textMuted }]}>{item.filePath}</Text>
           </Pressable>
         ))}
       </SectionCard>
       <SectionCard title="Liens sortants">
         {data.links.map((item) => (
-          <Pressable key={item.filePath} style={styles.linkCard} onPress={() => router.push(`/(tabs)/note/${encodeURIComponent(item.filePath)}`)}>
-            <Text style={styles.linkTitle}>{item.title}</Text>
-            <Text style={styles.linkMeta}>{item.filePath}</Text>
+          <Pressable
+            key={item.filePath}
+            style={[styles.linkCard, { backgroundColor: colors.surfaceMuted, borderColor: colors.border }]}
+            onPress={() => router.push(`/(tabs)/note/${encodeURIComponent(item.filePath)}`)}
+          >
+            <Text style={[styles.linkTitle, { color: colors.text }]}>{item.title}</Text>
+            <Text style={[styles.linkMeta, { color: colors.textMuted }]}>{item.filePath}</Text>
           </Pressable>
         ))}
       </SectionCard>
@@ -52,17 +62,13 @@ const styles = StyleSheet.create({
   linkCard: {
     borderRadius: 14,
     borderWidth: 1,
-    borderColor: '#d8cfc0',
-    backgroundColor: '#f8f3eb',
     padding: 12,
     gap: 4,
   },
   linkTitle: {
-    color: '#1f160c',
     fontWeight: '700',
   },
   linkMeta: {
-    color: '#6f5d49',
     fontSize: 12,
   },
 });

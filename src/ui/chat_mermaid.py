@@ -3,10 +3,53 @@ from __future__ import annotations
 import base64
 import json
 
+# ── Thèmes Mermaid partagés entre fullscreen et preview ───────────────────────
+# Seul fontSize diffère entre les deux rendus (14px vs 13px) — injecté à l'appel.
+_TV_LIGHT_BASE: dict[str, str] = {
+    "fontFamily": "system-ui,-apple-system,'Segoe UI',Helvetica,Arial,sans-serif",
+    "background": "#ffffff",
+    "primaryColor": "#dbeafe",
+    "primaryTextColor": "#1a1a1a",
+    "primaryBorderColor": "#0066b8",
+    "lineColor": "#0066b8",
+    "secondaryColor": "#ffedd5",
+    "tertiaryColor": "#ede9fe",
+    "mainBkg": "#dbeafe",
+    "nodeBorder": "#0066b8",
+    "clusterBkg": "#f0f4ff",
+    "clusterBorder": "#d97706",
+    "titleColor": "#7c3aed",
+    "edgeLabelBackground": "#ffffff",
+}
+
+_TV_DARK_BASE: dict[str, str] = {
+    "fontFamily": "system-ui,-apple-system,'Segoe UI',Helvetica,Arial,sans-serif",
+    "background": "#0d1117",
+    "primaryColor": "#1f3a5f",
+    "primaryTextColor": "#e6edf3",
+    "primaryBorderColor": "#58a6ff",
+    "lineColor": "#58a6ff",
+    "secondaryColor": "#431407",
+    "tertiaryColor": "#2d1b52",
+    "mainBkg": "#1f3a5f",
+    "nodeBorder": "#58a6ff",
+    "clusterBkg": "#161b22",
+    "clusterBorder": "#a371f7",
+    "titleColor": "#a371f7",
+    "edgeLabelBackground": "#0d1117",
+}
+
+
+def _tv_js(base: dict[str, str], font_size: str) -> str:
+    """Serialize a Mermaid theme dict to a JS object literal string."""
+    return json.dumps({**base, "fontSize": font_size})
+
 
 def build_mermaid_fullscreen_html(code: str, idx: int) -> str:
     """Build the standalone fullscreen Mermaid viewer used by the chat."""
     code_json = json.dumps(code)
+    tv_light = _tv_js(_TV_LIGHT_BASE, "14px")
+    tv_dark = _tv_js(_TV_DARK_BASE, "14px")
     return f"""<!DOCTYPE html>
 <html lang="fr">
 <head>
@@ -66,28 +109,8 @@ def build_mermaid_fullscreen_html(code: str, idx: int) -> str:
     return false;
   }}
   var isDark=!window.matchMedia('(prefers-color-scheme:light)').matches;
-  var TV_LIGHT={{
-    fontFamily:"system-ui,-apple-system,'Segoe UI',Helvetica,Arial,sans-serif",fontSize:'14px',
-    background:'#ffffff',
-    primaryColor:'#dbeafe',primaryTextColor:'#1a1a1a',
-    primaryBorderColor:'#0066b8',lineColor:'#0066b8',
-    secondaryColor:'#ffedd5',tertiaryColor:'#ede9fe',
-    mainBkg:'#dbeafe',nodeBorder:'#0066b8',
-    clusterBkg:'#f0f4ff',clusterBorder:'#d97706',
-    titleColor:'#7c3aed',
-    edgeLabelBackground:'#ffffff'
-  }};
-  var TV_DARK={{
-    fontFamily:"system-ui,-apple-system,'Segoe UI',Helvetica,Arial,sans-serif",fontSize:'14px',
-    background:'#0d1117',
-    primaryColor:'#1f3a5f',primaryTextColor:'#e6edf3',
-    primaryBorderColor:'#58a6ff',lineColor:'#58a6ff',
-    secondaryColor:'#431407',tertiaryColor:'#2d1b52',
-    mainBkg:'#1f3a5f',nodeBorder:'#58a6ff',
-    clusterBkg:'#161b22',clusterBorder:'#a371f7',
-    titleColor:'#a371f7',
-    edgeLabelBackground:'#0d1117'
-  }};
+  var TV_LIGHT={tv_light};
+  var TV_DARK={tv_dark};
 
   mermaid.initialize({{
     startOnLoad:false,securityLevel:'loose',theme:'base',
@@ -136,6 +159,8 @@ def build_mermaid_fullscreen_html(code: str, idx: int) -> str:
 def build_mermaid_chat_preview_html(code: str, idx: int) -> str:
     """Build the inline Mermaid preview used inside the chat."""
     code_json = json.dumps(code)
+    tv_light = _tv_js(_TV_LIGHT_BASE, "13px")
+    tv_dark = _tv_js(_TV_DARK_BASE, "13px")
     fullscreen_b64 = base64.b64encode(
         build_mermaid_fullscreen_html(code, idx).encode("utf-8")
     ).decode("ascii")
@@ -172,22 +197,8 @@ def build_mermaid_chat_preview_html(code: str, idx: int) -> str:
     return false;
   }}
   var isDark=!window.matchMedia('(prefers-color-scheme:light)').matches;
-  var TV_LIGHT={{
-    fontFamily:"system-ui,-apple-system,'Segoe UI',Helvetica,Arial,sans-serif",fontSize:'13px',
-    background:'#ffffff',
-    primaryColor:'#dbeafe',primaryTextColor:'#1a1a1a',primaryBorderColor:'#0066b8',lineColor:'#0066b8',
-    secondaryColor:'#ffedd5',tertiaryColor:'#ede9fe',mainBkg:'#dbeafe',
-    nodeBorder:'#0066b8',clusterBkg:'#f0f4ff',clusterBorder:'#d97706',titleColor:'#7c3aed',
-    edgeLabelBackground:'#ffffff'
-  }};
-  var TV_DARK={{
-    fontFamily:"system-ui,-apple-system,'Segoe UI',Helvetica,Arial,sans-serif",fontSize:'13px',
-    background:'#0d1117',
-    primaryColor:'#1f3a5f',primaryTextColor:'#e6edf3',primaryBorderColor:'#58a6ff',lineColor:'#58a6ff',
-    secondaryColor:'#431407',tertiaryColor:'#2d1b52',mainBkg:'#1f3a5f',
-    nodeBorder:'#58a6ff',clusterBkg:'#161b22',clusterBorder:'#a371f7',titleColor:'#a371f7',
-    edgeLabelBackground:'#0d1117'
-  }};
+  var TV_LIGHT={tv_light};
+  var TV_DARK={tv_dark};
   mermaid.initialize({{startOnLoad:false,securityLevel:'loose',theme:'base',
     themeVariables:isDark?TV_DARK:TV_LIGHT}});
   if(hasForbiddenCharacter(CODE)){{

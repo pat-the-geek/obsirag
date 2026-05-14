@@ -39,9 +39,10 @@ type InlineChunk =
   | { type: 'emphasis'; value: string }
   | { type: 'inline-code'; value: string };
 
-export function MarkdownNote({ markdown, onOpenNote, onOpenTag, variant = 'default', tone = 'light', entityHighlights }: MarkdownNoteProps) {
+export function MarkdownNote({ markdown, onOpenNote, onOpenTag, variant = 'default', tone: toneProp, entityHighlights }: MarkdownNoteProps) {
   const activeTheme = useAppTheme();
-  const theme = activeTheme.resolvedMode === tone ? activeTheme : buildAppTheme(tone === 'dark' ? 'dark' : 'light');
+  const tone = toneProp ?? activeTheme.resolvedMode;
+  const theme = activeTheme.resolvedMode === tone ? activeTheme : buildAppTheme(tone);
   const blocks = parseMarkdownBlocks(markdown);
 
   return (

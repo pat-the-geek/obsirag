@@ -11,9 +11,10 @@ type HttpMarkdownImageProps = {
 
 const FALLBACK_ASPECT_RATIO = 16 / 9;
 
-export function HttpMarkdownImage({ alt, src, tone = 'light' }: HttpMarkdownImageProps) {
+export function HttpMarkdownImage({ alt, src, tone: toneProp }: HttpMarkdownImageProps) {
   const activeTheme = useAppTheme();
-  const theme = activeTheme.resolvedMode === tone ? activeTheme : buildAppTheme(tone === 'dark' ? 'dark' : 'light');
+  const tone = toneProp ?? activeTheme.resolvedMode;
+  const theme = activeTheme.resolvedMode === tone ? activeTheme : buildAppTheme(tone);
   const [aspectRatio, setAspectRatio] = useState(FALLBACK_ASPECT_RATIO);
   const [hasError, setHasError] = useState(false);
   const hostname = useMemo(() => {
@@ -65,7 +66,7 @@ export function HttpMarkdownImage({ alt, src, tone = 'light' }: HttpMarkdownImag
           <Image
             source={{ uri: src }}
             resizeMode="contain"
-            style={[styles.image, { backgroundColor: theme.colors.mediaCanvas }]}
+            style={[styles.image, { backgroundColor: theme.colors.mediaCanvas, borderColor: theme.colors.border }]}
             testID="markdown-http-image"
             onError={() => setHasError(true)}
             {...(aspectRatio > 0 ? { aspectRatio } : null)}

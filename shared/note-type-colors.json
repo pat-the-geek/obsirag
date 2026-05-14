@@ -1,0 +1,7 @@
+{
+  "user":    { "fill": "#60a5fa", "bg": "rgba(0,102,184,0.12)",   "border": "rgba(0,102,184,0.28)",   "text": "#0066b8" },
+  "report":  { "fill": "#f59e0b", "bg": "rgba(180,83,9,0.12)",    "border": "rgba(180,83,9,0.28)",    "text": "#b45309" },
+  "insight": { "fill": "#facc15", "bg": "rgba(202,138,4,0.12)",   "border": "rgba(202,138,4,0.28)",   "text": "#a16207" },
+  "synapse": { "fill": "#c084fc", "bg": "rgba(147,51,234,0.12)",  "border": "rgba(147,51,234,0.28)",  "text": "#7e22ce" },
+  "entity":  { "fill": "#34d399", "bg": "rgba(5,150,105,0.12)",   "border": "rgba(5,150,105,0.28)",   "text": "#047857" }
+}

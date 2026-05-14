@@ -34,7 +34,7 @@ class TestNoteBadges:
     def test_get_note_type_options_returns_expected_order(self):
         options = get_note_type_options()
 
-        assert [option["key"] for option in options] == ["user", "report", "insight", "synapse"]
+        assert [option["key"] for option in options] == ["user", "report", "insight", "synapse", "entity"]
         assert options[1]["label"] == "Rapport"
 
     def test_get_note_graph_color_uses_type_palette(self):

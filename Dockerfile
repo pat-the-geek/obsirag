@@ -9,6 +9,8 @@ COPY obsirag-expo/package*.json ./
 RUN npm ci --prefer-offline
 
 COPY obsirag-expo/ ./
+# Tokens partagés : ../../../shared/ depuis components/graph/ = /shared/ dans ce container
+COPY shared/ /shared/
 
 # Export statique (SPA)
 RUN npx expo export --platform web
@@ -55,6 +57,7 @@ SentenceTransformer('paraphrase-multilingual-MiniLM-L12-v2')"
 
 # Sources de l'application
 COPY src/ ./src/
+COPY shared/ ./shared/
 
 # Frontend compilé depuis le builder
 COPY --from=expo-builder /expo/dist ./obsirag-expo/dist/

@@ -90,18 +90,17 @@ jest.mock('react-native-safe-area-context', () => {
   };
 });
 
-jest.mock('@expo/vector-icons', () => {
+jest.mock('lucide-react-native', () => {
   const React = require('react');
   const { Text } = require('react-native');
 
-  function MockIcon(props: Record<string, unknown> & { name?: string }) {
-    return React.createElement(Text, props, props.name ?? 'icon');
+  function MockIcon(props: Record<string, unknown>) {
+    return React.createElement(Text, props, 'icon');
   }
 
-  return {
-    __esModule: true,
-    Feather: MockIcon,
-  };
+  return new Proxy({} as Record<string, typeof MockIcon>, {
+    get: () => MockIcon,
+  });
 });
 
 jest.mock('d3-force', () => {

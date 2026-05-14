@@ -10,6 +10,7 @@ import { StatusPill } from '../../components/ui/status-pill';
 import { useServerConfig } from '../../features/auth/use-server-config';
 import { useNoteSearch } from '../../features/notes/use-notes';
 import { useSystemStatus } from '../../features/system/use-system-status';
+import { useAppTheme } from '../../theme/app-theme';
 import { formatMetadataDate, formatSizeBytes, joinMetadataParts } from '../../utils/format-display';
 
 const appIcon = require('../../assets/app-icon.png');
@@ -24,6 +25,7 @@ type HeroBadge = {
 
 export default function DashboardScreen() {
   const router = useRouter();
+  const { colors } = useAppTheme();
   const [noteQuery, setNoteQuery] = useState('');
   const [heroImageFailed, setHeroImageFailed] = useState(false);
   const { backendUrl, useMockServer } = useServerConfig();
@@ -40,11 +42,11 @@ export default function DashboardScreen() {
 
   if (isError) {
     return (
-      <Screen backgroundColor="#f4f1ea" refreshing={isRefetching} onRefresh={refetch}>
+      <Screen refreshing={isRefetching} onRefresh={refetch}>
         <SystemStartupView
           startup={{
             ready: false,
-            steps: ['Connexion au backend', 'Lecture de l’état du système'],
+            steps: ['Connexion au backend', "Lecture de l’état du système"],
             currentStep: 'Impossible de récupérer le statut du système',
             error: error instanceof Error ? error.message : 'Erreur inconnue',
           }}
@@ -58,7 +60,7 @@ export default function DashboardScreen() {
 
   if (!data.startup?.ready) {
     return (
-      <Screen backgroundColor="#f4f1ea" refreshing={isRefetching} onRefresh={refetch}>
+      <Screen refreshing={isRefetching} onRefresh={refetch}>
         <SystemStartupView
           {...(data.startup ? { startup: data.startup } : {})}
           backendReachable={data.backendReachable}
@@ -80,31 +82,52 @@ export default function DashboardScreen() {
   const runtimeSourceLabel = useMockServer ? 'Donnees mock locales' : 'API FastAPI live';
   const connectionModeLabel = useMockServer ? 'Mode mock' : 'Mode live';
 
+  const badgeSurface: Record<HeroBadgeTone, string> = {
+    frontend: colors.entityPersonSurface,
+    ai: colors.warningSurface,
+    backend: colors.successSurface,
+    runtime: colors.neutralSurface,
+  };
+  const badgeText: Record<HeroBadgeTone, string> = {
+    frontend: colors.entityPersonText,
+    ai: colors.warningText,
+    backend: colors.successText,
+    runtime: colors.neutralText,
+  };
+
   return (
     <Screen refreshing={isRefetching} onRefresh={refetch}>
-      <View style={styles.heroCard}>
+      <View style={[styles.heroCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
         {!heroImageFailed ? (
-          <Image source={appIcon} style={styles.heroImage} resizeMode="contain" onError={() => setHeroImageFailed(true)} />
+          <Image
+            source={appIcon}
+            style={[styles.heroImage, { borderColor: colors.border, backgroundColor: colors.surfaceMuted }]}
+            resizeMode="contain"
+            onError={() => setHeroImageFailed(true)}
+          />
         ) : (
-          <View style={styles.heroImageFallback}>
-            <Text style={styles.heroImageFallbackText}>OR</Text>
+          <View style={[styles.heroImageFallback, { borderColor: colors.border, backgroundColor: colors.surfaceMuted }]}>
+            <Text style={[styles.heroImageFallbackText, { color: colors.primary }]}>OR</Text>
           </View>
         )}
         <View style={styles.heroCopy}>
-          <Text style={styles.heroEyebrow}>ObsiRAG</Text>
-          <Text style={styles.heroTitle}>Dashboard</Text>
-          <Text style={styles.heroSubtitle}>Vue d’ensemble du runtime, des recherches rapides et de l’activité de l’auto-learner.</Text>
-          <View style={styles.activeModelCard}>
-            <Text style={styles.activeModelLabel}>LLM actif ObsiRAG</Text>
-            <Text selectable style={styles.activeModelValue}>LLM Local: {activeLlmModel}</Text>
-            <Text selectable style={styles.activeModelValue}>LLM Euria: {euriaLlmModel}</Text>
-            <Text style={styles.activeModelMeta}>Source runtime: {runtimeSourceLabel}</Text>
-            <Text selectable style={styles.activeModelMeta}>Backend: {backendUrl}</Text>
+          <Text style={[styles.heroEyebrow, { color: colors.primary }]}>ObsiRAG</Text>
+          <Text style={[styles.heroTitle, { color: colors.text }]}>Dashboard</Text>
+          <Text style={[styles.heroSubtitle, { color: colors.textMuted }]}>Vue d'ensemble du runtime, des recherches rapides et de l'activité de l'auto-learner.</Text>
+          <View style={[styles.activeModelCard, { borderColor: colors.border, backgroundColor: colors.surfaceMuted }]}>
+            <Text style={[styles.activeModelLabel, { color: colors.primary }]}>LLM actif ObsiRAG</Text>
+            <Text selectable style={[styles.activeModelValue, { color: colors.text }]}>LLM Local: {activeLlmModel}</Text>
+            <Text selectable style={[styles.activeModelValue, { color: colors.text }]}>LLM Euria: {euriaLlmModel}</Text>
+            <Text style={[styles.activeModelMeta, { color: colors.textMuted }]}>Source runtime: {runtimeSourceLabel}</Text>
+            <Text selectable style={[styles.activeModelMeta, { color: colors.textMuted }]}>Backend: {backendUrl}</Text>
           </View>
           <View style={styles.badgeRow}>
             {stackBadges.map((badge) => (
-              <View key={`${badge.tone}-${badge.label}`} style={[styles.heroBadge, badge.tone === 'frontend' ? styles.heroBadgeFrontend : null, badge.tone === 'ai' ? styles.heroBadgeAi : null, badge.tone === 'backend' ? styles.heroBadgeBackend : null, badge.tone === 'runtime' ? styles.heroBadgeRuntime : null]}>
-                <Text style={[styles.heroBadgeLabel, badge.tone === 'frontend' ? styles.heroBadgeLabelFrontend : null, badge.tone === 'ai' ? styles.heroBadgeLabelAi : null, badge.tone === 'backend' ? styles.heroBadgeLabelBackend : null, badge.tone === 'runtime' ? styles.heroBadgeLabelRuntime : null]}>{badge.icon} {badge.label}</Text>
+              <View
+                key={`${badge.tone}-${badge.label}`}
+                style={[styles.heroBadge, { backgroundColor: badgeSurface[badge.tone], borderColor: colors.border }]}
+              >
+                <Text style={[styles.heroBadgeLabel, { color: badgeText[badge.tone] }]}>{badge.icon} {badge.label}</Text>
               </View>
             ))}
           </View>
@@ -113,9 +136,9 @@ export default function DashboardScreen() {
       <SectionCard title="Etat du systeme" subtitle="Synthese rapide du runtime ObsiRAG expose par le backend.">
         <StatusPill label={data.backendReachable ? 'Backend joignable' : 'Backend indisponible'} tone={data.backendReachable ? 'success' : 'danger'} />
         <StatusPill label={connectionModeLabel} tone={useMockServer ? 'warning' : 'success'} />
-        <Text>Indexation: {indexingStatus}</Text>
-        <Text>Auto-learn: {autolearnStatus}</Text>
-        <Text>Source runtime: {runtimeSourceLabel}</Text>
+        <Text style={{ color: colors.text }}>Indexation: {indexingStatus}</Text>
+        <Text style={{ color: colors.text }}>Auto-learn: {autolearnStatus}</Text>
+        <Text style={{ color: colors.text }}>Source runtime: {runtimeSourceLabel}</Text>
         <SystemStartupView
           {...(data.startup ? { startup: data.startup } : {})}
           backendReachable={data.backendReachable}
@@ -130,17 +153,21 @@ export default function DashboardScreen() {
           value={noteQuery}
           onChangeText={setNoteQuery}
           placeholder="Rechercher une note"
-          placeholderTextColor="#8a7760"
-          style={styles.input}
+          placeholderTextColor={colors.textSubtle}
+          style={[styles.input, { borderColor: colors.border, backgroundColor: colors.surface, color: colors.text }]}
         />
         {(noteSearch.data ?? []).slice(0, 6).map((item) => (
-          <Pressable key={item.filePath} style={styles.quickResult} onPress={() => router.push(`/(tabs)/note/${encodeURIComponent(item.filePath)}`)}>
-            <Text style={styles.quickTitle}>{item.title}</Text>
-            <Text style={styles.quickMeta}>{item.filePath}</Text>
+          <Pressable
+            key={item.filePath}
+            style={[styles.quickResult, { borderColor: colors.border, backgroundColor: colors.surfaceMuted }]}
+            onPress={() => router.push(`/(tabs)/note/${encodeURIComponent(item.filePath)}`)}
+          >
+            <Text style={[styles.quickTitle, { color: colors.text }]}>{item.title}</Text>
+            <Text style={[styles.quickMeta, { color: colors.textMuted }]}>{item.filePath}</Text>
             {joinMetadataParts([
               item.dateModified ? `Modifie le ${formatMetadataDate(item.dateModified)}` : null,
               formatSizeBytes(item.sizeBytes),
-            ]) ? <Text style={styles.quickMeta}>{joinMetadataParts([
+            ]) ? <Text style={[styles.quickMeta, { color: colors.textMuted }]}>{joinMetadataParts([
               item.dateModified ? `Modifie le ${formatMetadataDate(item.dateModified)}` : null,
               formatSizeBytes(item.sizeBytes),
             ])}</Text> : null}
@@ -215,8 +242,6 @@ const styles = StyleSheet.create({
   heroCard: {
     borderRadius: 28,
     borderWidth: 1,
-    borderColor: '#decdb8',
-    backgroundColor: '#fbf5ea',
     paddingHorizontal: 18,
     paddingVertical: 20,
     flexDirection: 'row',
@@ -229,8 +254,6 @@ const styles = StyleSheet.create({
     borderRadius: 24,
     alignSelf: 'flex-start',
     borderWidth: 1,
-    borderColor: '#decdb8',
-    backgroundColor: '#fffaf2',
   },
   heroImageFallback: {
     width: 92,
@@ -238,13 +261,10 @@ const styles = StyleSheet.create({
     borderRadius: 24,
     alignSelf: 'flex-start',
     borderWidth: 1,
-    borderColor: '#decdb8',
-    backgroundColor: '#fffaf2',
     alignItems: 'center',
     justifyContent: 'center',
   },
   heroImageFallbackText: {
-    color: '#8a562b',
     fontSize: 24,
     fontWeight: '800',
     letterSpacing: 0.8,
@@ -254,46 +274,38 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   heroEyebrow: {
-    color: '#8a562b',
     fontSize: 12,
     fontWeight: '800',
     letterSpacing: 0.9,
     textTransform: 'uppercase',
   },
   heroTitle: {
-    color: '#1f160c',
     fontSize: 28,
     fontWeight: '800',
   },
   heroSubtitle: {
-    color: '#6f5d49',
     fontSize: 14,
     lineHeight: 20,
   },
   activeModelCard: {
     borderRadius: 16,
     borderWidth: 1,
-    borderColor: '#e4cfb1',
-    backgroundColor: '#fffaf2',
     paddingHorizontal: 12,
     paddingVertical: 10,
     gap: 4,
   },
   activeModelLabel: {
-    color: '#8a562b',
     fontSize: 11,
     fontWeight: '800',
     letterSpacing: 0.6,
     textTransform: 'uppercase',
   },
   activeModelValue: {
-    color: '#1f160c',
     fontSize: 14,
     lineHeight: 20,
     fontWeight: '700',
   },
   activeModelMeta: {
-    color: '#6f5d49',
     fontSize: 12,
     lineHeight: 18,
     fontWeight: '600',
@@ -310,61 +322,26 @@ const styles = StyleSheet.create({
     paddingHorizontal: 9,
     paddingVertical: 5,
   },
-  heroBadgeFrontend: {
-    backgroundColor: '#edf6ff',
-    borderColor: '#bfd9ee',
-  },
-  heroBadgeAi: {
-    backgroundColor: '#fff3df',
-    borderColor: '#edcc96',
-  },
-  heroBadgeBackend: {
-    backgroundColor: '#eef8ef',
-    borderColor: '#c4dfc8',
-  },
-  heroBadgeRuntime: {
-    backgroundColor: '#f6efe9',
-    borderColor: '#dfcbbb',
-  },
   heroBadgeLabel: {
     fontSize: 11,
     fontWeight: '700',
   },
-  heroBadgeLabelFrontend: {
-    color: '#23557d',
-  },
-  heroBadgeLabelAi: {
-    color: '#8a4f0a',
-  },
-  heroBadgeLabelBackend: {
-    color: '#2f6a39',
-  },
-  heroBadgeLabelRuntime: {
-    color: '#6f4a2b',
-  },
   input: {
     borderWidth: 1,
-    borderColor: '#d8cfc0',
     borderRadius: 14,
-    backgroundColor: '#ffffff',
     paddingHorizontal: 14,
     paddingVertical: 12,
-    color: '#1f160c',
   },
   quickResult: {
     borderRadius: 14,
     borderWidth: 1,
-    borderColor: '#e0d5c7',
-    backgroundColor: '#f8f3eb',
     padding: 12,
     gap: 4,
   },
   quickTitle: {
-    color: '#1f160c',
     fontWeight: '700',
   },
   quickMeta: {
-    color: '#6f5d49',
     fontSize: 12,
   },
 });

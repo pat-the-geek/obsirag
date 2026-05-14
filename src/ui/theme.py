@@ -21,53 +21,46 @@ import streamlit as st
 from src.ui.html_embed import run_inline_script
 
 
-# ── Palette Dark+ (inspirée Claude Code Dark / VS Code Dark+) ─────────────────
-# Fond : bleu-nuit profond, texte blanc cassé, accents bleus vifs.
-# Police : system-ui — même mise en page que Light+, juste les couleurs changent.
+# ── Palette Dark+ (dérivée des brand tokens en version sombre) ────────────────
 _D = {
-    "bg":         "#0d1117",   # bleu-nuit GitHub / Claude Code dark
-    "bg2":        "#161b22",   # sidebar / cards
-    "bg3":        "#21262d",   # code blocks, inputs
-    "text":       "#e6edf3",   # blanc cassé très lisible
-    "text_dim":   "#8b949e",   # gris moyen
-    "accent":     "#58a6ff",   # bleu clair vif (GitHub dark accent)
-    "accent_dim": "#1f3a5f",   # bleu foncé discret pour hover/focus
-    "border":     "#30363d",   # bordure subtile
-    "input_bg":   "#0d1117",
-    "code_fg":    "#79c0ff",   # bleu-cyan pour le code
-    "tag_bg":     "#1f3a5f",
-    "btn_fg":     "#e6edf3",
-    "metric_val": "#58a6ff",
+    "bg":         "#0f0d0a",
+    "bg2":        "#1a160f",
+    "bg3":        "#241e15",
+    "text":       "#ede8e0",
+    "text_dim":   "#9e8a74",
+    "accent":     "#c97a52",   # brand-accent éclairci pour dark
+    "accent_dim": "#3d2418",
+    "border":     "#3a3028",
+    "input_bg":   "#0f0d0a",
+    "code_fg":    "#79c0ff",
+    "tag_bg":     "#3d2418",
+    "btn_fg":     "#ede8e0",
+    "metric_val": "#c97a52",
     "warn":       "#d29922",
     "err":        "#f85149",
-    "ok":         "#3fb950",
-    # Même police sistema que Light+ — cohérence de mise en page
+    "ok":         "#3fb950",   # brand-success
     "font":       "system-ui, -apple-system, 'Segoe UI', 'Inter', Helvetica, Arial, sans-serif",
     "font_code":  "'Menlo', 'Consolas', 'Courier New', monospace",
 }
 
-# ── Palette Light+ (inspirée Claude Code / VS Code Light+) ─────────────────────
-# Fond : blanc pur + gris très fin, à la manière du shell Claude Code.
-# Police : system-ui (SF Pro macOS, Segoe UI Windows) — jamais monospace
-# sauf pour les blocs de code inline/block.
+# ── Palette Light+ (alignée sur les brand tokens) ──────────────────────────────
 _L = {
-    "bg":         "#ffffff",
-    "bg2":        "#f7f7f7",   # sidebar / cards — très léger
-    "bg3":        "#efefef",   # code blocks, tags
-    "text":       "#1a1a1a",   # quasi-noir, lecture confortable
-    "text_dim":   "#6b7280",   # slate-500
-    "accent":     "#0066b8",   # bleu VS Code Light+ exact
-    "accent_dim": "#e8f1fb",   # survol / focus subtil
-    "border":     "#e2e2e2",   # ultra-discret comme Claude Code
-    "input_bg":   "#ffffff",
-    "code_fg":    "#a31515",   # rouge VS Code Light+ pour strings
-    "tag_bg":     "#e8f1fb",
-    "btn_fg":     "#1a1a1a",
-    "metric_val": "#0066b8",
-    "warn":       "#795e26",
-    "err":        "#cd3131",
-    "ok":         "#008000",
-    # Police sans-serif système : SF Pro (macOS), Segoe UI (Windows)
+    "bg":         "#f6f2ea",   # brand-bg
+    "bg2":        "#fffdf9",   # brand-surface
+    "bg3":        "#efe9dd",
+    "text":       "#1f160c",   # brand-text
+    "text_dim":   "#5b4b37",   # brand-text-muted
+    "accent":     "#a55233",   # brand-accent
+    "accent_dim": "#f0e6dc",
+    "border":     "#d7cbb8",   # brand-border
+    "input_bg":   "#fffdf9",
+    "code_fg":    "#a31515",
+    "tag_bg":     "#f0e6dc",
+    "btn_fg":     "#1f160c",
+    "metric_val": "#a55233",
+    "warn":       "#8b4d00",   # brand-warning
+    "err":        "#cd3131",   # brand-danger
+    "ok":         "#3fb950",   # brand-success
     "font":       "system-ui, -apple-system, 'Segoe UI', 'Inter', Helvetica, Arial, sans-serif",
     "font_code":  "'Menlo', 'Consolas', 'Courier New', monospace",
 }

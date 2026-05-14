@@ -1,5 +1,6 @@
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
 
+import { useAppTheme } from '../../theme/app-theme';
 import type { LogEntry } from '../../types/domain';
 
 type LogConsoleProps = {
@@ -7,20 +8,22 @@ type LogConsoleProps = {
 };
 
 export function LogConsole({ entries }: LogConsoleProps) {
+  const { colors } = useAppTheme();
+
   if (!entries.length) {
     return (
-      <View style={styles.emptyState}>
-        <Text style={styles.emptyText}>Aucun log disponible.</Text>
+      <View style={[styles.emptyState, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+        <Text style={[styles.emptyText, { color: colors.textMuted }]}>Aucun log disponible.</Text>
       </View>
     );
   }
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+    <ScrollView style={[styles.container, { backgroundColor: colors.background, borderColor: colors.border }]} contentContainerStyle={styles.content}>
       {entries.map((entry, index) => (
         <View key={`${entry.timestamp}-${entry.level}-${index}`} style={styles.row}>
-          <Text style={styles.meta}>{entry.timestamp} [{entry.level}] {entry.name}:{entry.line}</Text>
-          <Text style={styles.message}>{entry.message}</Text>
+          <Text style={[styles.meta, { color: colors.textMuted }]}>{entry.timestamp} [{entry.level}] {entry.name}:{entry.line}</Text>
+          <Text style={[styles.message, { color: colors.text }]}>{entry.message}</Text>
         </View>
       ))}
     </ScrollView>
@@ -32,8 +35,6 @@ const styles = StyleSheet.create({
     maxHeight: 260,
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#d8cfc0',
-    backgroundColor: '#0f1115',
   },
   content: {
     padding: 12,
@@ -43,23 +44,18 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   meta: {
-    color: '#9bb4d3',
     fontSize: 11,
   },
   message: {
-    color: '#e8edf6',
     fontSize: 12,
     lineHeight: 18,
   },
   emptyState: {
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#d8cfc0',
-    backgroundColor: '#f8f3eb',
     padding: 12,
   },
   emptyText: {
-    color: '#6f5d49',
     fontSize: 12,
   },
 });

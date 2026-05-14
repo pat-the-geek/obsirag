@@ -1,28 +1,33 @@
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
+import { buildAppTheme, useAppTheme } from '../../theme/app-theme';
+
 type TagPillProps = {
   label: string;
   onPress?: () => void;
   tone?: 'light' | 'dark';
 };
 
-export function TagPill({ label, onPress, tone = 'light' }: TagPillProps) {
+export function TagPill({ label, onPress, tone }: TagPillProps) {
+  const appTheme = useAppTheme();
+  const { colors } = tone ? buildAppTheme(tone) : appTheme;
+
   const content = (
     <>
-      <Text style={[styles.hash, tone === 'dark' ? styles.hashDark : styles.hashLight]}>#</Text>
-      <Text style={[styles.text, tone === 'dark' ? styles.textDark : styles.textLight]}>{label}</Text>
+      <Text style={[styles.hash, { color: colors.tagPillText }]}>#</Text>
+      <Text style={[styles.text, { color: colors.tagPillText }]}>{label}</Text>
     </>
   );
 
   if (onPress) {
     return (
-      <Pressable testID="tag-pill" style={[styles.base, tone === 'dark' ? styles.baseDark : styles.baseLight]} onPress={onPress}>
+      <Pressable testID="tag-pill" style={[styles.base, { backgroundColor: colors.tagBackground }]} onPress={onPress}>
         {content}
       </Pressable>
     );
   }
 
-  return <View style={[styles.base, tone === 'dark' ? styles.baseDark : styles.baseLight]}>{content}</View>;
+  return <View style={[styles.base, { backgroundColor: colors.tagBackground }]}>{content}</View>;
 }
 
 const styles = StyleSheet.create({
@@ -35,30 +40,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 6,
   },
-  baseLight: {
-    backgroundColor: '#d8ebff',
-  },
-  baseDark: {
-    backgroundColor: '#27425c',
-  },
   hash: {
     fontSize: 12,
     fontWeight: '800',
   },
-  hashLight: {
-    color: '#315b7d',
-  },
-  hashDark: {
-    color: '#a9d0f4',
-  },
   text: {
     fontSize: 12,
     fontWeight: '700',
-  },
-  textLight: {
-    color: '#17324a',
-  },
-  textDark: {
-    color: '#e7f2ff',
   },
 });

@@ -1,0 +1,12 @@
+{
+  "brand-bg":          "#f6f2ea",
+  "brand-surface":     "#fffdf9",
+  "brand-accent":      "#a55233",
+  "brand-accent-alt":  "#5a8fc2",
+  "brand-text":        "#1f160c",
+  "brand-text-muted":  "#5b4b37",
+  "brand-border":      "#d7cbb8",
+  "brand-success":     "#3fb950",
+  "brand-danger":      "#cd3131",
+  "brand-warning":     "#8b4d00"
+}
