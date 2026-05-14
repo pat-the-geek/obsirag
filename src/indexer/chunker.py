@@ -14,6 +14,11 @@ _WIKILINK_PLAIN_RE = re.compile(r"\[\[([^\]|#\n]+?)(?:#[^\]]*?)?\]\]")
 _INLINE_TAG_RE = re.compile(r"(?<!\S)#([A-Za-z0-9_\-/]+)")
 _LIST_ITEM_RE = re.compile(r"^[\-\*\+]\s+\S", re.MULTILINE)
 
+# Nombre minimal de mots après nettoyage pour qu'un chunk soit indexé.
+# Les sections qui ne contiennent qu'un ou deux wikilinks (ex: [[intelligence artificielle (IA)]])
+# deviennent des phrases de 3-7 mots qui polluent les scores sémantiques.
+_MIN_CHUNK_WORDS = 8
+
 
 def _clean_text_for_embedding(text: str) -> str:
     """Remplace les [[wikilinks]] par leur texte visible et retire les # de balises inline."""
@@ -135,6 +140,8 @@ class TextChunker:
     def _split_section(self, section: NoteSection, *, clean: bool = False) -> list[str]:
         content = _clean_text_for_embedding(section.content) if clean else section.content
         if clean and _is_structural_only(content):
+            return []
+        if clean and len(content.split()) < _MIN_CHUNK_WORDS:
             return []
         words = content.split()
         if len(words) <= self.chunk_size:
