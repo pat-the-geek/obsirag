@@ -138,10 +138,16 @@ class NoteParser:
             fm_title = fm.get("title")
             if fm_title and not self._is_title_coherent_with_stem(str(fm_title), file_path.stem):
                 fm_title = None
+            h1_title = self._extract_first_h1(body)
+            if h1_title and not self._is_title_coherent_with_stem(h1_title, file_path.stem):
+                h1_title = None
+            titre_title = fm.get("Titre")
+            if titre_title and not self._is_title_coherent_with_stem(str(titre_title), file_path.stem):
+                titre_title = None
             title = (
                 fm_title
-                or self._extract_first_h1(body)
-                or fm.get("Titre")
+                or h1_title
+                or titre_title
                 or file_path.stem
                 or (fm.get("aliases") or [None])[0]
             )
