@@ -252,9 +252,19 @@ class NoteParser:
 
         return sections
 
+    # Stems datés (YYYY-MM-DD_slug) ou slugs URL (3+ tirets) : le titre frontmatter
+    # est généralement meilleur que le stem — on ne peut pas les comparer.
+    _SLUG_STEM_RE = re.compile(r"^\d{4}-\d{2}-\d{2}_|(?:[^/]*-){3}")
+
     @staticmethod
     def _is_title_coherent_with_stem(title: str, stem: str) -> bool:
-        """True si fm.title partage au moins un mot significatif avec le nom de fichier."""
+        """True si fm.title partage au moins un mot significatif avec le nom de fichier.
+
+        Les stems de type slug URL ou préfixés par une date sont exemptés :
+        le titre frontmatter est toujours considéré cohérent pour ces fichiers.
+        """
+        if NoteParser._SLUG_STEM_RE.search(stem):
+            return True  # stem = slug URL → on fait confiance au frontmatter
         def tokenize(s: str) -> set[str]:
             norm = "".join(
                 c for c in unicodedata.normalize("NFD", s.lower())

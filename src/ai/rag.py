@@ -1529,7 +1529,10 @@ class RAGPipeline:
         filtered: list[dict] = []
         for chunk in chunks:
             title_hits, text_hits, score = self._chunk_term_rank(chunk, focus_tokens)
-            if title_hits > 0 or text_hits >= 2 or (text_hits >= 1 and score >= 0.72):
+            # Bypass lexical : un score sémantique ≥ 0.73 suffit même sans match textuel.
+            # Corrige la disparité semantic-search vs RAG sur les requêtes conceptuelles
+            # (ex: nLPD/Cloud Act en français sans le sigle dans les 400 premiers chars).
+            if title_hits > 0 or text_hits >= 2 or (text_hits >= 1 and score >= 0.65) or score >= 0.73:
                 filtered.append(chunk)
 
         if filtered:

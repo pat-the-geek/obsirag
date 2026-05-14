@@ -126,7 +126,7 @@ class GraphBuilder:
         for note in notes:
             for link in note.get("wikilinks", []):
                 target_fp = self._resolve_link(link, title_lookup, stem_lookup)
-                if target_fp and target_fp in g.nodes:
+                if target_fp and target_fp in g.nodes and target_fp != note["file_path"]:
                     if not g.has_edge(note["file_path"], target_fp):
                         g.add_edge(note["file_path"], target_fp, edge_type="wikilink", weight=2)
                         wikilink_count += 1
