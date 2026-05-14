@@ -669,6 +669,8 @@ function labelForType(noteType: string) {
       return 'Insight';
     case 'synapse':
       return 'Synapse';
+    case 'entity':
+      return 'Entité';
     default:
       return noteType;
   }

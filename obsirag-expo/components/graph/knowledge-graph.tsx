@@ -56,6 +56,7 @@ const NOTE_TYPE_COLORS: Record<string, string> = {
   report: '#f59e0b',
   insight: '#facc15',
   synapse: '#c084fc',
+  entity: '#34d399',
 };
 const AnimatedLine = Animated.createAnimatedComponent(Line);
 const AnimatedCircle = Animated.createAnimatedComponent(Circle);

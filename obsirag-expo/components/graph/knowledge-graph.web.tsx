@@ -85,6 +85,7 @@ const NOTE_TYPE_COLORS: Record<string, string> = {
   report: '#f59e0b',
   insight: '#facc15',
   synapse: '#c084fc',
+  entity: '#34d399',
 };
 const MIN_GRAPH_ZOOM = 0.2;
 const MAX_GRAPH_ZOOM = 10;
