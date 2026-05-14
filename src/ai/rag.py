@@ -353,6 +353,7 @@ class RAGPipeline:
         else:
             chunks = self._apply_source_rank_penalty(chunks)
         chunks = self._apply_score_cutoff(chunks)
+        chunks = self._apply_folder_diversity_cap(chunks)
         self._emit_progress(
             progress_callback,
             phase="retrieval",
@@ -1119,6 +1120,37 @@ class RAGPipeline:
         if dropped > 0:
             logger.info(f"RAG score cutoff: {dropped} chunk(s) éliminés (score < {cutoff})")
         return filtered if filtered else chunks
+
+    _FOLDER_DIVERSITY_CAP = 0.40  # fraction maximale d'un seul dossier racine
+
+    @staticmethod
+    def _apply_folder_diversity_cap(chunks: list[dict]) -> list[dict]:
+        """Empêche un dossier de monopoliser le contexte RAG.
+
+        Si un dossier représente plus de 40 % des chunks, les excédentaires
+        (scores les plus bas) sont retirés pour laisser place aux autres dossiers.
+        N'agit qu'à partir de 6 chunks pour ne pas pénaliser les corpus étroits.
+        """
+        if len(chunks) < 6:
+            return chunks
+        cap = max(1, int(len(chunks) * RAGPipeline._FOLDER_DIVERSITY_CAP))
+        folder_counts: dict[str, int] = {}
+        kept: list[dict] = []
+        deferred: list[dict] = []
+        for chunk in chunks:  # déjà triés score décroissant
+            fp = ((chunk.get("metadata") or {}).get("file_path") or "").replace("\\", "/").lstrip("/")
+            folder = fp.split("/")[0] if fp else "_unknown"
+            if folder_counts.get(folder, 0) < cap:
+                folder_counts[folder] = folder_counts.get(folder, 0) + 1
+                kept.append(chunk)
+            else:
+                deferred.append(chunk)
+        if deferred:
+            logger.info(
+                f"RAG folder diversity: {len(deferred)} chunk(s) écartés "
+                f"(cap {int(RAGPipeline._FOLDER_DIVERSITY_CAP * 100)}% par dossier)"
+            )
+        return kept
 
     def _apply_source_rank_penalty(self, chunks: list[dict]) -> list[dict]:
         """Pondération dégressive pour les notes auto-générées.
