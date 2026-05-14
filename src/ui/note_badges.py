@@ -42,9 +42,19 @@ _NOTE_TYPE_STYLES = {
         "graph_border": "#9333ea",
         "graph_highlight": "#d8b4fe",
     },
+    "entity": {
+        "label": "Entité",
+        "icon": "🏷️",
+        "bg": "rgba(5, 150, 105, 0.12)",
+        "border": "rgba(5, 150, 105, 0.28)",
+        "text": "#047857",
+        "graph_fill": "#34d399",
+        "graph_border": "#059669",
+        "graph_highlight": "#6ee7b7",
+    },
 }
 
-_NOTE_TYPE_ORDER = ["user", "report", "insight", "synapse"]
+_NOTE_TYPE_ORDER = ["user", "report", "insight", "synapse", "entity"]
 
 
 def get_note_type(file_path: str) -> str:
@@ -55,6 +65,8 @@ def get_note_type(file_path: str) -> str:
         return "synapse"
     if "/obsirag/synthesis/" in normalized or normalized.startswith("obsirag/synthesis/"):
         return "report"
+    if "/obsirag/entities/" in normalized or normalized.startswith("obsirag/entities/"):
+        return "entity"
     return "user"
 
 

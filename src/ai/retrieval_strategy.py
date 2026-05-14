@@ -28,6 +28,14 @@ _DUAL_CONCEPT_RE = re.compile(
     re.I,
 )
 
+# Termes exclus de la détection de couverture multi-concept (mots fonctionnels).
+_CONCEPT_COVERAGE_STOP = frozenset({
+    "quels", "quelle", "quelles", "quel", "comment", "pourquoi", "quand",
+    "selon", "notes", "parle", "coffre", "cherche", "trouve", "avoir", "faire",
+    "entre", "comme", "aussi", "votre", "notre", "apres", "avant", "depuis",
+    "sujet", "sujets", "fiche", "point", "type", "types", "quoi", "cette",
+})
+
 
 class RetrievalStrategy:
     def __init__(self, owner: "RAGPipeline") -> None:
@@ -423,10 +431,54 @@ class RetrievalStrategy:
         self._emit_progress(progress_callback, f"Hybrid retrieval terminé ({len(cast(list[dict], chunks))} résultat(s))")
         return chunks
 
+    def _multi_concept_note_keys(self, query: str, chunks: list[dict]) -> set[str]:
+        """Retourne les note_keys qui couvrent le mieux chaque concept de la requête.
+
+        Si ≥2 concepts distincts sont chacun mieux couverts par des notes différentes,
+        la réponse contiendra ≥2 clés — signal que le contexte doit rester diversifié.
+        """
+        concept_tokens = {
+            self._owner._normalize_match_text(t)
+            for t in re.findall(r"\b\w{5,}\b", query)
+            if self._owner._normalize_match_text(t) not in _CONCEPT_COVERAGE_STOP
+        }
+        if len(concept_tokens) <= 1:
+            return set()
+
+        best_note_per_concept: dict[str, str] = {}
+        for token in concept_tokens:
+            best_note: str | None = None
+            best_score = -1.0
+            for chunk in chunks:
+                note_key = self._owner._chunk_note_key(chunk)
+                if not note_key:
+                    continue
+                metadata = chunk.get("metadata") or {}
+                title = self._owner._normalize_match_text(metadata.get("note_title") or "")
+                text = self._owner._normalize_match_text((chunk.get("text") or "")[:600])
+                if token in title + " " + text:
+                    score = float(chunk.get("score") or 0.0)
+                    if score > best_score:
+                        best_score = score
+                        best_note = note_key
+            if best_note:
+                best_note_per_concept[token] = best_note
+
+        return set(best_note_per_concept.values())
+
     def prepare_context_chunks(self, chunks: list[dict], query: str, intent: str) -> list[dict]:
         cfg = self._owner._get_settings()
         if not self._owner._should_focus_dominant_note(intent, query):
             return chunks
+
+        # Requête multi-concept : chaque concept est mieux couvert par une note différente.
+        # Ex : "Anthropic et la conscience des LLM" → note Anthropic ≠ note DeepMind.
+        # Dans ce cas on distribue le contexte uniformément plutôt que de focaliser
+        # sur la note dominante (qui monopoliserait 60 % du contexte).
+        concept_keys = self._multi_concept_note_keys(query, chunks)
+        if len(concept_keys) >= 2:
+            logger.debug(f"RAG context: multi-concept ({len(concept_keys)} notes) — focus dominant désactivé")
+            return self._owner._prefer_informative_chunks(chunks)[: cfg.max_context_chunks]
 
         dominant_note_key = self._extract_primary_note_hint(chunks)
         if not dominant_note_key:

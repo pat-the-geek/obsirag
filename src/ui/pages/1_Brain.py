@@ -119,6 +119,7 @@ type_demo_paths = {
     "report": "obsirag/synthesis/demo.md",
     "insight": "obsirag/insights/demo.md",
     "synapse": "obsirag/synapses/demo.md",
+    "entity": "obsirag/entities/demo.md",
 }
 filtered = brain_explorer.filter_brain_notes(
     notes_with_folder,
