@@ -29,10 +29,41 @@ Si non défini, MCP est public (accessible sans token).
 
 ## 4. Tester MCP
 
-### Initialiser la connexion
+### Smoke test automatisé (recommandé)
 
 ```bash
-curl -X POST http://localhost:8081/mcp/initialize \
+python scripts/mcp_smoke_test.py --base-url http://localhost:8081
+# Avec auth:
+python scripts/mcp_smoke_test.py \
+  --base-url http://localhost:8081 \
+  --auth-token "sk-obsirag-..."
+```
+
+### Test manuel SSE
+
+Le transport actif est SSE avec un endpoint de session dynamique:
+
+1. Ouvrir le flux: `GET /mcp/sse`
+2. Lire l'événement `endpoint` qui contient `/mcp/messages/?session_id=...`
+3. Envoyer les requêtes JSON-RPC en `POST` sur cet endpoint `messages`
+
+#### 4.1 Ouvrir la session SSE
+
+```bash
+curl -N http://localhost:8081/mcp/sse
+```
+
+Réponse initiale attendue (exemple):
+
+```text
+event: endpoint
+data: /mcp/messages/?session_id=abc123...
+```
+
+#### 4.2 Initialiser la session MCP
+
+```bash
+curl -X POST "http://localhost:8081/mcp/messages/?session_id=abc123..." \
   -H "Authorization: Bearer sk-obsirag-a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6" \
   -H "Content-Type: application/json" \
   -d '{
@@ -47,7 +78,10 @@ curl -X POST http://localhost:8081/mcp/initialize \
   }'
 ```
 
-**Réponse attendue:**
+Le serveur répond `202 Accepted`; la réponse JSON-RPC arrive ensuite sur le flux SSE.
+
+Réponse JSON-RPC attendue sur le flux SSE:
+
 ```json
 {
   "jsonrpc": "2.0",
@@ -63,10 +97,10 @@ curl -X POST http://localhost:8081/mcp/initialize \
 }
 ```
 
-### Lister les outils
+#### 4.3 Lister les outils
 
 ```bash
-curl -X POST http://localhost:8081/mcp/tools/list \
+curl -X POST "http://localhost:8081/mcp/messages/?session_id=abc123..." \
   -H "Authorization: Bearer sk-obsirag-a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6" \
   -H "Content-Type: application/json" \
   -d '{
@@ -76,10 +110,10 @@ curl -X POST http://localhost:8081/mcp/tools/list \
   }'
 ```
 
-### Appeler un outil (exemple: get_system_status)
+#### 4.4 Appeler un outil (exemple: get_system_status)
 
 ```bash
-curl -X POST http://localhost:8081/mcp/tools/call \
+curl -X POST "http://localhost:8081/mcp/messages/?session_id=abc123..." \
   -H "Authorization: Bearer sk-obsirag-a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6" \
   -H "Content-Type: application/json" \
   -d '{

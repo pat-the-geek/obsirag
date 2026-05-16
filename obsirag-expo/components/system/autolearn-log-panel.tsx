@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Platform, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { SectionCard } from '../ui/section-card';
 
@@ -18,33 +18,51 @@ export function AutolearnLogPanel({
 }: AutolearnLogPanelProps) {
   const logScrollRef = useRef<ScrollView | null>(null);
   const entries = log ?? [];
+  const isWeb = Platform.OS === 'web';
 
   useEffect(() => {
+    if (isWeb) {
+      return;
+    }
     logScrollRef.current?.scrollToEnd({ animated: false });
-  }, [entries]);
+  }, [entries, isWeb]);
 
   const body = (
-    <View style={[styles.logFrame, compact ? styles.logFrameCompact : null]}>
-      <ScrollView
-        ref={logScrollRef}
-        style={styles.logScroll}
-        contentContainerStyle={styles.logContent}
-        nestedScrollEnabled
-        showsVerticalScrollIndicator={false}
-        onContentSizeChange={() => {
-          logScrollRef.current?.scrollToEnd({ animated: false });
-        }}
-      >
-        {entries.length ? (
-          entries.map((entry, index) => (
-            <Text key={`${index}-${entry}`} style={styles.logEntry}>
-              {entry}
-            </Text>
-          ))
-        ) : (
-          <Text style={styles.logEmpty}>Aucun evenement auto-learn a afficher.</Text>
-        )}
-      </ScrollView>
+    <View style={[styles.logFrame, compact ? styles.logFrameCompact : null, isWeb ? styles.logFrameWeb : null]}>
+      {isWeb ? (
+        <View style={[styles.logContent, styles.logContentWeb]}>
+          {entries.length ? (
+            entries.map((entry, index) => (
+              <Text key={`${index}-${entry}`} style={styles.logEntry}>
+                {entry}
+              </Text>
+            ))
+          ) : (
+            <Text style={styles.logEmpty}>Aucun evenement auto-learn a afficher.</Text>
+          )}
+        </View>
+      ) : (
+        <ScrollView
+          ref={logScrollRef}
+          style={styles.logScroll}
+          contentContainerStyle={styles.logContent}
+          nestedScrollEnabled
+          showsVerticalScrollIndicator={false}
+          onContentSizeChange={() => {
+            logScrollRef.current?.scrollToEnd({ animated: false });
+          }}
+        >
+          {entries.length ? (
+            entries.map((entry, index) => (
+              <Text key={`${index}-${entry}`} style={styles.logEntry}>
+                {entry}
+              </Text>
+            ))
+          ) : (
+            <Text style={styles.logEmpty}>Aucun evenement auto-learn a afficher.</Text>
+          )}
+        </ScrollView>
+      )}
     </View>
   );
 
@@ -73,6 +91,10 @@ const styles = StyleSheet.create({
     minHeight: 180,
     maxHeight: 220,
   },
+  logFrameWeb: {
+    maxHeight: undefined,
+    minHeight: 0,
+  },
   logScroll: {
     flex: 1,
   },
@@ -82,6 +104,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 14,
     gap: 8,
+  },
+  logContentWeb: {
+    justifyContent: 'flex-start',
   },
   logEntry: {
     color: '#ece3d5',

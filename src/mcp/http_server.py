@@ -85,13 +85,13 @@ def mount_mcp_server(
     """
     Monter le serveur MCP HTTP (SSE) sur une application FastAPI.
     
-    Le serveur écoute sur <mount_path> via SSE/HTTP streaming.
+    Le serveur écoute sur <mount_path> via transport SSE.
     Les logs MCP sont capturés separément (pas stdout pollution).
     L'authentification se fait par Bearer token si auth_token est fourni.
     
-    IMPORTANT: Cette fonction doit être appelée APRÈS avoir configurer tous les
+    IMPORTANT: Cette fonction doit être appelée APRÈS avoir configuré tous les
     middlewares et routes de l'app FastAPI. Elle retourne immédiatement.
-    Les requêtes MCP se font sur <mount_path> avec protocole SSE/HTTP streaming.
+    Les requêtes MCP se font sur <mount_path>/sse et <mount_path>/messages.
     
     Args:
         app: Application FastAPI
@@ -107,9 +107,9 @@ def mount_mcp_server(
         mount_mcp_server(app, auth_token=settings.mcp_auth_token)
     """
     server = build_server()
-    
-    # FastMCP.streamable_http_app() retourne une Starlette app prête à monter
-    mcp_app = server.streamable_http_app()
+
+    # En mode embarqué FastAPI, sse_app() est stable et n'exige pas run().
+    mcp_app = server.sse_app()
     
     # Monter l'app MCP sur FastAPI avec le préfixe
     app.mount(mount_path, mcp_app)

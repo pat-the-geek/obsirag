@@ -38,6 +38,11 @@ Aucune action supplémentaire : MCP est lancé automatiquement avec `./start.sh`
 http://localhost:8081/mcp
 ```
 
+Transport HTTP actif:
+
+- `GET /mcp/sse` pour ouvrir le flux SSE
+- `POST /mcp/messages/?session_id=...` pour envoyer les requêtes JSON-RPC
+
 ### Authentification
 
 ```bash
@@ -47,10 +52,30 @@ Content-Type: application/json
 
 ### Requête MCP JSON-RPC 2.0
 
+#### Smoke test automatisé
+
+```bash
+python scripts/mcp_smoke_test.py --base-url http://localhost:8081
+# Avec auth:
+python scripts/mcp_smoke_test.py \
+  --base-url http://localhost:8081 \
+  --auth-token "sk-obsirag-xxxxxxxxxxxxx"
+```
+
+#### Flux manuel SSE
+
+1. Ouvrir `GET /mcp/sse`
+2. Lire `event: endpoint` et `data: /mcp/messages/?session_id=...`
+3. Poster initialize/tools/list/tools/call sur l'URL `messages`
+
 #### Initialize
 
 ```bash
-curl -X POST http://localhost:8081/mcp/initialize \
+curl -N http://localhost:8081/mcp/sse
+# event: endpoint
+# data: /mcp/messages/?session_id=abc123...
+
+curl -X POST "http://localhost:8081/mcp/messages/?session_id=abc123..." \
   -H "Authorization: Bearer sk-obsirag-xxxxxxxxxxxxx" \
   -H "Content-Type: application/json" \
   -d '{
@@ -68,7 +93,10 @@ curl -X POST http://localhost:8081/mcp/initialize \
   }'
 ```
 
-**Réponse:**
+La requête retourne `202 Accepted`. La réponse JSON-RPC est envoyée sur le flux SSE ouvert.
+
+**Réponse JSON-RPC attendue (sur SSE):**
+
 ```json
 {
   "jsonrpc": "2.0",
@@ -89,7 +117,7 @@ curl -X POST http://localhost:8081/mcp/initialize \
 #### List Tools
 
 ```bash
-curl -X POST http://localhost:8081/mcp/list_tools \
+curl -X POST "http://localhost:8081/mcp/messages/?session_id=abc123..." \
   -H "Authorization: Bearer sk-obsirag-xxxxxxxxxxxxx" \
   -H "Content-Type: application/json" \
   -d '{
@@ -102,7 +130,7 @@ curl -X POST http://localhost:8081/mcp/list_tools \
 #### Call Tool
 
 ```bash
-curl -X POST http://localhost:8081/mcp/call_tool \
+curl -X POST "http://localhost:8081/mcp/messages/?session_id=abc123..." \
   -H "Authorization: Bearer sk-obsirag-xxxxxxxxxxxxx" \
   -H "Content-Type: application/json" \
   -d '{
@@ -174,7 +202,7 @@ FastAPI (port 8081)
   └─ / (Expo web static)
 ```
 
-Le serveur MCP est une **ASGI app autonome montée sur FastAPI**, utilisant FastMCP's transport `streamable-http`.
+Le serveur MCP est une **ASGI app autonome montée sur FastAPI**, utilisant le transport FastMCP `sse`.
 
 ### Performance
 

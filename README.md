@@ -60,6 +60,16 @@ MCP_AUTH_TOKEN=sk-obsirag-a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6
 # MCP HTTP disponible sur: http://localhost:8081/mcp
 ```
 
+#### 2bis. Vérifier MCP rapidement
+
+```bash
+python scripts/mcp_smoke_test.py --base-url http://localhost:8081
+# Avec auth:
+python scripts/mcp_smoke_test.py \
+  --base-url http://localhost:8081 \
+  --auth-token "sk-obsirag-..."
+```
+
 #### 3. Configurer Claude Desktop
 
 Fichier: `~/Library/Application\ Support/Claude/claude_desktop_config.json`
@@ -79,6 +89,7 @@ Fichier: `~/Library/Application\ Support/Claude/claude_desktop_config.json`
 ```
 
 Puis relancer Claude :
+
 ```bash
 killall Claude
 open -a Claude
@@ -231,7 +242,7 @@ docker volume create obsirag-data
 docker compose up -d
 ```
 
-L'interface web et l'API sont disponibles sur **http://localhost:8080**.
+L'interface web et l'API sont disponibles sur **<http://localhost:8080>**.
 
 ### Commandes utiles
 
@@ -276,7 +287,7 @@ docker compose down           # arrêter
 | Base vectorielle | LanceDB (fichiers locaux dans `data/lance/`) |
 | Embeddings | sentence-transformers `paraphrase-multilingual-MiniLM-L12-v2` (768 dim, CPU, multilingue) |
 | Interface | Expo React Native web + FastAPI |
-| Protocole agents | MCP stdio (Model Context Protocol) |
+| Protocole agents | MCP HTTP (SSE) + stdio legacy |
 | Graphe | NetworkX + Pyvis |
 | Recherche web | DuckDuckGo Search |
 | NER | spaCy `xx_ent_wiki_sm` + validation WUDD.ai |

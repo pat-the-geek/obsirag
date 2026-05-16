@@ -4541,8 +4541,6 @@ def _mount_expo_web_if_available() -> None:
     app.mount("/", _SinglePageAppFiles(directory=str(dist_dir), html=True), name="expo-web")
 
 
-_mount_expo_web_if_available()
-
 # Monter le serveur MCP HTTP (SSE) sur /mcp/* avec authentification Bearer token si configurée.
 # Import local pour éviter la boucle circulaire src.api.app ↔ src.mcp.http_server
 # Format: Authorization: Bearer <mcp_auth_token>
@@ -4555,9 +4553,12 @@ _mount_expo_web_if_available()
 # IMPORTANT: Monter le serveur MCP via lifespan (pas au module load time)
 # pour éviter la boucle circulaire: app → http_server → tools → runtime → app
 @app.on_event("startup")
-async def _mount_mcp_on_startup() -> None:
+async def _mount_servers_on_startup() -> None:
     from src.mcp.http_server import mount_mcp_server
+
+    # Monter d'abord /mcp pour qu'il ne soit pas masqué par le fallback SPA sur '/'.
     mount_mcp_server(app, auth_token=settings.mcp_auth_token, mount_path="/mcp")
+    _mount_expo_web_if_available()
 
 
 _GRAPH_TAG_GARBAGE_RE = re.compile(

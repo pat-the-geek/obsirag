@@ -17,7 +17,10 @@ type ScreenProps = PropsWithChildren<{
 export function Screen({ children, scroll = true, refreshing = false, onRefresh, backgroundColor, contentStyle, scrollContentStyle, scrollRef }: ScreenProps) {
   const insets = useSafeAreaInsets();
   const theme = useAppTheme();
-  const bottomPadding = insets.bottom + (isStandalonePwaWeb() ? 0 : 20);
+  const standalone = isStandalonePwaWeb();
+  // En mode standalone (app lancée depuis le Dock), la tab bar est forcée en fixed (64px)
+  // via app/+html.tsx. On réserve cet espace pour éviter que le bas des cartes soit masqué.
+  const bottomPadding = insets.bottom + (standalone ? 84 : 20);
   const content = <View style={[styles.content, contentStyle]}>{children}</View>;
 
   return (

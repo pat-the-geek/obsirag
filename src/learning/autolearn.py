@@ -74,6 +74,7 @@ _WEAK_ANSWER_PATTERNS = re.compile(
     re.IGNORECASE,
 )
 _MIN_ANSWER_LENGTH = 150  # réponse trop courte = insuffisante
+_STATUS_LOG_MAX_ENTRIES = 500
 
 # Mapping type WUDD.ai → préfixe de tag Obsidian
 _WUDDAI_TYPE_TO_PREFIX: dict[str, str] = {
@@ -728,7 +729,7 @@ class AutoLearner:
             location = file_path.strip() or note.strip()
             prefix = f"{location} — " if location else ""
             log.append(f"{datetime.now().strftime('%H:%M:%S')} — {prefix}{step}")
-            if len(log) > 20:  # garder les 20 derniers messages
+            if len(log) > _STATUS_LOG_MAX_ENTRIES:
                 log.pop(0)
         self.processing_status.update({"active": active, "note": note, "step": step})
         self._persist_status()
