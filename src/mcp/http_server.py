@@ -1,40 +1,9 @@
-"""
-MCP HTTP Server (SSE) — Intégration FastMCP dans FastAPI.
-
-Remplace le transport stdio par streamable-http pour éviter les timeouts initialize
-et permettre un process MCP persistant sans logs sur stdout.
-
-Utilisation dans FastAPI:
-    from src.mcp.http_server import mount_mcp_server
-    mount_mcp_server(app, auth_token=settings.mcp_auth_token)
-
-L'authentification se fait par Bearer token sur toutes les routes /mcp/*.
-
-Exemple client MCP:
-    curl -X POST http://localhost:8081/mcp/initialize \\
-      -H "Authorization: Bearer your-token" \\
-      -H "Content-Type: application/json" \\
-      -d '{
-        "jsonrpc": "2.0",
-        "id": 1,
-        "method": "initialize",
-        "params": {
-          "protocolVersion": "2024-11-05",
-          "capabilities": {},
-          "clientInfo": {"name": "claude", "version": "1.0"}
-        }
-      }'
-"""
-
 from __future__ import annotations
 
 import os
 from typing import Callable
 
 from fastapi import Depends, FastAPI, Header, HTTPException, status
-from mcp.server.fastmcp import FastMCP
-
-from src.mcp.tools import register_tools
 
 # Désactive les services background (indexeur, autolearn, watcher) dans le processus MCP.
 # Sans ce flag, ServiceManager démarre un thread _initial_index qui verrouille ChromaDB
@@ -49,8 +18,19 @@ SERVER_INSTRUCTIONS = (
 )
 
 
-def build_server() -> FastMCP:
-    """Construire le serveur FastMCP pour montage dans FastAPI."""
+def build_server():
+    """
+    Construire le serveur FastMCP pour montage dans FastAPI.
+    
+    LAZY IMPORT — appelé dynamiquement pour éviter les boucles circulaires:
+    http_server → tools → runtime → app (partiel)
+    
+    Donc on importe FastMCP et register_tools UNE FOIS quand mount_mcp_server()
+    est appelé (à la fin du démarrage app).
+    """
+    from mcp.server.fastmcp import FastMCP
+    from src.mcp.tools import register_tools
+    
     server = FastMCP(
         name="ObsiRAG",
         instructions=SERVER_INSTRUCTIONS,
@@ -105,13 +85,13 @@ def mount_mcp_server(
     """
     Monter le serveur MCP HTTP (SSE) sur une application FastAPI.
     
-    Le serveur écoute sur <mount_path>/* (ex: /mcp/initialize, /mcp/call_tool, etc).
-    Les logs MCP sont captés separément (pas stdout pollution).
+    Le serveur écoute sur <mount_path> via SSE/HTTP streaming.
+    Les logs MCP sont capturés separément (pas stdout pollution).
     L'authentification se fait par Bearer token si auth_token est fourni.
     
     IMPORTANT: Cette fonction doit être appelée APRÈS avoir configurer tous les
     middlewares et routes de l'app FastAPI. Elle retourne immédiatement.
-    Les requêtes MCP se font sur les routes <mount_path>/*.
+    Les requêtes MCP se font sur <mount_path> avec protocole SSE/HTTP streaming.
     
     Args:
         app: Application FastAPI
@@ -128,8 +108,8 @@ def mount_mcp_server(
     """
     server = build_server()
     
-    # FastMCP.streamable_http_app est une ASGI app prête à monter
-    mcp_app = server.streamable_http_app
+    # FastMCP.streamable_http_app() retourne une Starlette app prête à monter
+    mcp_app = server.streamable_http_app()
     
     # Monter l'app MCP sur FastAPI avec le préfixe
     app.mount(mount_path, mcp_app)
@@ -149,14 +129,14 @@ def mount_mcp_server(
                     
                     if not auth_header:
                         return Response(
-                            content='{"jsonrpc":"2.0","error":{"code":-32600,"message":"Missing Authorization header"}}',
+                            content='{"error":"Missing Authorization header"}',
                             status_code=401,
                             media_type="application/json",
                         )
                     
                     if not auth_header.startswith("Bearer "):
                         return Response(
-                            content='{"jsonrpc":"2.0","error":{"code":-32600,"message":"Invalid Authorization format"}}',
+                            content='{"error":"Invalid Authorization format"}',
                             status_code=401,
                             media_type="application/json",
                         )
@@ -164,7 +144,7 @@ def mount_mcp_server(
                     token = auth_header[7:]
                     if token != auth_token:
                         return Response(
-                            content='{"jsonrpc":"2.0","error":{"code":-32600,"message":"Invalid token"}}',
+                            content='{"error":"Invalid token"}',
                             status_code=403,
                             media_type="application/json",
                         )
