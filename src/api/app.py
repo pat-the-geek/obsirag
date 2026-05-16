@@ -4551,11 +4551,13 @@ _mount_expo_web_if_available()
 # - Les logs MCP sont capturés separément (pas stdout pollution)
 # - La latence initialize est sub-500ms (pas de timeout Claude)
 # - Process persistant dans FastAPI (pas de subprocess stdio)
-def _mount_mcp_server() -> None:
+
+# IMPORTANT: Monter le serveur MCP via lifespan (pas au module load time)
+# pour éviter la boucle circulaire: app → http_server → tools → runtime → app
+@app.on_event("startup")
+async def _mount_mcp_on_startup() -> None:
     from src.mcp.http_server import mount_mcp_server
     mount_mcp_server(app, auth_token=settings.mcp_auth_token, mount_path="/mcp")
-
-_mount_mcp_server()
 
 
 _GRAPH_TAG_GARBAGE_RE = re.compile(
