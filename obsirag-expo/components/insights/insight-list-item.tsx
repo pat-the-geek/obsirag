@@ -23,7 +23,9 @@ export function InsightListItem({ item, onPress, onOpenTag }: InsightListItemPro
     <View style={[styles.card, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }] }>
       <Pressable onPress={onPress} style={styles.mainPressable}>
         <View style={styles.header}>
-          <Text style={[styles.title, { color: theme.colors.text }]}>{item.title}</Text>
+          <View style={[styles.titleWrapper, { flex: 1 }]}>
+            <Text style={[styles.title, { color: theme.colors.text, flex: 1, flexWrap: 'wrap' as any }]} numberOfLines={0}>{item.title}</Text>
+          </View>
           <StatusPill label={item.kind} tone="neutral" />
         </View>
         {item.excerpt ? <Text style={[styles.excerpt, { color: theme.colors.textMuted }]}>{item.excerpt}</Text> : null}
@@ -53,13 +55,21 @@ const styles = StyleSheet.create({
   },
   header: {
     flexDirection: 'row',
+    alignItems: 'flex-start',
     justifyContent: 'space-between',
     gap: 12,
   },
-  title: {
+  titleWrapper: {
     flex: 1,
+    flexShrink: 1,
+    minWidth: 0,
+    overflow: 'hidden' as any,
+  },
+  title: {
     fontWeight: '700',
     fontSize: 16,
+    flex: 1,
+    wordBreak: 'break-all' as any,
   },
   excerpt: {
     lineHeight: 20,

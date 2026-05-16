@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import time
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -12,6 +13,7 @@ from src.api.app import _build_conversation_theme_coverage_section
 from src.api.app import _build_source_models
 from src.api.app import _conversation_size_bytes
 from src.api.app import _artifact_size_bytes
+from src.api.app import _count_chunks_fast
 from src.api.app import _iter_answer_tokens
 from src.api.app import _lookup_conversation_entity_contexts
 from src.api.app import _normalize_indexing_status
@@ -181,6 +183,18 @@ def test_normalize_indexing_status_replaces_stale_current_when_not_running():
         "total": 789,
         "current": "Indexation terminee",
     }
+
+
+def test_count_chunks_fast_uses_lancedb_store_when_backend_is_lance(tmp_settings):
+    settings_lance = tmp_settings.model_copy(update={"vector_backend": "lance"})
+    service_manager = _StubServiceManager()
+    service_manager.chroma.count.return_value = 5109
+
+    with (
+        patch("src.api.app.settings", settings_lance),
+        patch("src.api.app.get_service_manager", return_value=service_manager),
+    ):
+        assert _count_chunks_fast() == 5109
 
 
 def test_conversation_size_bytes_returns_positive_value():
@@ -896,6 +910,75 @@ def test_create_message_deduplicates_duplicate_sources_in_response(tmp_path: Pat
     stored = store.get("conv-source-dedupe")
     assert stored is not None
     assert [item.filePath for item in stored.messages[1].sources] == ["Space/Artemis II.md", "Space/Orion.md"]
+
+
+def test_create_message_falls_back_to_source_based_text_when_answer_is_empty(tmp_path: Path, tmp_settings):
+    store = ApiConversationStore(tmp_path / "api" / "conversations.json")
+    service_manager = _StubServiceManager()
+    worker_payload = {
+        "answer": "",
+        "sources": [
+            {
+                "metadata": {
+                    "file_path": "People/Sam Altman.md",
+                    "note_title": "Sam Altman",
+                    "is_primary": True,
+                },
+                "score": 0.92,
+            }
+        ],
+    }
+
+    with (
+        patch("src.api.app.settings", tmp_settings),
+        patch("src.api.app.conversation_store", store),
+        patch("src.api.app.get_service_manager", return_value=service_manager),
+        patch(
+            "src.api.app.subprocess.run",
+            return_value=subprocess.CompletedProcess(
+                args=["python", "-m", "src.api.chat_worker"],
+                returncode=0,
+                stdout=json.dumps(worker_payload, ensure_ascii=False),
+                stderr="",
+            ),
+        ),
+    ):
+        client = TestClient(app)
+        response = client.post("/api/v1/conversations/conv-empty-answer/messages", json={"prompt": "recherche les informations sur Sam Altman"})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["sources"]
+    assert payload["content"].strip()
+    assert "Sam Altman" in payload["content"]
+
+    stored = store.get("conv-empty-answer")
+    assert stored is not None
+    assert stored.messages[1].content.strip()
+
+
+def test_build_assistant_message_replaces_heading_only_stub_with_source_fallback():
+    from src.api.app import _build_assistant_message
+
+    message = _build_assistant_message(
+        answer="### Aperçu de Sam Altman\n\n### Détails utiles",
+        sources=[
+            {
+                "metadata": {
+                    "file_path": "People/Sam Altman.md",
+                    "note_title": "Sam Altman",
+                    "is_primary": True,
+                },
+                "score": 0.93,
+            }
+        ],
+        started_at=time.perf_counter() - 0.1,
+        timeline=[],
+    )
+
+    assert message.content.strip()
+    assert "Sam Altman" in message.content
+    assert "Aperçu" not in message.content
 
 
 def test_create_message_returns_legacy_style_enrichment_panels(tmp_path: Path, tmp_settings):

@@ -45,6 +45,7 @@ from src.api.schemas import (
     ConversationDetailModel,
     ConversationInvestigationStatsModel,
     ConversationSummaryModel,
+    ConversationResyncResponseModel,
     FeaturesModel,
     FeaturesUpdateRequest,
     CreateConversationRequest,
@@ -303,6 +304,8 @@ def _normalize_assistant_provenance(provenance: str | None) -> str:
 def _should_attempt_web_answer(answer: str, svc) -> bool:
     if is_not_in_vault(answer):
         return True
+    if _is_structural_stub_answer(answer):
+        return True
 
     learner = getattr(svc, "learner", None)
     is_weak_answer = getattr(learner, "_is_weak_answer", None)
@@ -360,6 +363,81 @@ def _sanitize_assistant_answer_text(answer: str) -> str:
     cleaned = re.sub(r" {2,}", " ", cleaned)
     cleaned = cleaned.strip()
     return cleaned or original.strip()
+
+
+def _is_structural_stub_answer(answer: str) -> bool:
+    cleaned = _sanitize_assistant_answer_text(answer)
+    if not cleaned:
+        return True
+
+    lines = [line.strip() for line in cleaned.split("\n") if line.strip()]
+    if lines and all(re.match(r"^#{1,6}\\s+\\S", line) for line in lines):
+        return True
+
+    lowered = cleaned.lower()
+    if len(cleaned.split()) <= 12 and (
+        "aperçu" in lowered
+        or "apercu" in lowered
+        or "détails utiles" in lowered
+        or "details utiles" in lowered
+    ):
+        return True
+
+    return False
+
+
+def _is_non_informative_answer(answer: str) -> bool:
+    cleaned = _sanitize_assistant_answer_text(answer)
+    if not cleaned:
+        return True
+    lowered = cleaned.lower()
+    weak_signals = (
+        "aucune information spécifique",
+        "aucune information specifique",
+        "n'est pas fournie",
+        "n est pas fournie",
+        "pas d'information",
+        "pas d informations",
+        "se concentrent principalement sur d'autres sujets",
+        "se concentrent principalement sur d autres sujets",
+    )
+    return any(signal in lowered for signal in weak_signals)
+
+
+def _fallback_assistant_answer_text(
+    answer: str,
+    *,
+    source_models: list[SourceRefModel],
+    query_overview: dict[str, Any] | None = None,
+) -> str:
+    cleaned = _sanitize_assistant_answer_text(answer)
+    if cleaned and not _is_structural_stub_answer(cleaned):
+        return cleaned
+
+    overview_summary = _sanitize_assistant_answer_text(str((query_overview or {}).get("summary") or ""))
+    if overview_summary:
+        return overview_summary
+
+    if not source_models:
+        return cleaned
+
+    titles: list[str] = []
+    for source in source_models:
+        title = str(source.noteTitle or source.filePath or "").strip()
+        if not title or title in titles:
+            continue
+        titles.append(title)
+        if len(titles) >= 3:
+            break
+
+    if not titles:
+        return "Je n'ai pas pu generer une reponse textuelle, mais des sources pertinentes ont ete trouvees."
+
+    listed_titles = ", ".join(titles)
+    return (
+        "Je n'ai pas pu generer une reponse textuelle, "
+        f"mais j'ai trouve des sources pertinentes: {listed_titles}."
+    )
 
 
 def _build_web_result_snippets(results: list[dict[str, Any]], *, max_results: int = 5) -> str:
@@ -1150,6 +1228,15 @@ def _infer_ready_startup_payload(indexing_status: dict[str, Any], index_state: d
 
 
 def _count_chunks_fast() -> int:
+    # LanceDB backend: delegate to the active vector store implementation.
+    if settings.vector_backend == "lance":
+        try:
+            svc = get_service_manager()
+            return int(svc.chroma.count())
+        except Exception:
+            return 0
+
+    # ChromaDB backend: keep the direct SQLite path for low-latency status checks.
     db_path = settings.data_dir / "chroma" / "chroma.sqlite3"
     try:
         con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
@@ -1492,6 +1579,12 @@ def system_reindex(_: None = Depends(require_api_auth)) -> ReindexResponseModel:
     )
 
 
+@app.post("/api/v1/system/conversations/resync", response_model=ConversationResyncResponseModel)
+def system_conversations_resync(_: None = Depends(require_api_auth)) -> ConversationResyncResponseModel:
+    stats = conversation_store.resync_from_saved_markdown(overwrite=False)
+    return ConversationResyncResponseModel(status="ok", **stats)
+
+
 @app.get("/api/v1/conversations", response_model=list[ConversationSummaryModel])
 def list_conversations(_: None = Depends(require_api_auth)) -> list[ConversationSummaryModel]:
     items = conversation_store.list()
@@ -1679,6 +1772,7 @@ async def create_message(
             query_overview = enriched_result.get("query_overview") or query_overview
 
         sentinel = is_not_in_vault(answer)
+        structural_stub = _is_structural_stub_answer(answer)
         source_models = _build_source_models(sources)
         primary_source = next((item for item in source_models if item.isPrimary), None)
         entity_contexts = [] if fast_fallback else _enrich_entity_contexts(
@@ -1690,7 +1784,7 @@ async def create_message(
             svc=svc,
             llm=llm,
         )
-        if sentinel and not query_overview and not fast_fallback:
+        if (sentinel or structural_stub) and not query_overview and not fast_fallback:
             try:
                 query_overview = await asyncio.wait_for(
                     asyncio.to_thread(_lookup_query_overview, payload.prompt, svc, llm=llm),
@@ -1699,6 +1793,10 @@ async def create_message(
             except (asyncio.TimeoutError, Exception) as overview_exc:
                 logger.warning("[create_message] query overview skipped: {}", _exception_details(overview_exc))
                 query_overview = {}
+
+        knowledge_fallback = _build_entity_knowledge_fallback_answer(payload.prompt, svc)
+        if knowledge_fallback and (_is_structural_stub_answer(answer) or _is_non_informative_answer(answer)):
+            answer = knowledge_fallback
     assistant_message = _build_assistant_message(
         answer=answer,
         sources=sources,
@@ -1945,6 +2043,7 @@ async def stream_message(
         answer = str(result.get("answer") or "")
         sources = list(result.get("sources") or [])
         sentinel = is_not_in_vault(answer)
+        structural_stub = _is_structural_stub_answer(answer)
         provenance = "vault"
         enrichment_path: str | None = None
         source_models = _build_source_models(sources)
@@ -1988,7 +2087,7 @@ async def stream_message(
             source_models = _build_source_models(sources)
             primary_source = next((item for item in source_models if item.isPrimary), None)
 
-        if sentinel and not query_overview:
+        if (sentinel or structural_stub) and not query_overview:
             try:
                 query_overview = await asyncio.wait_for(
                     asyncio.to_thread(_lookup_query_overview, payload.prompt, svc, llm=llm),
@@ -1997,6 +2096,10 @@ async def stream_message(
             except (asyncio.TimeoutError, Exception) as _ov_exc:
                 logger.warning("[_event_stream] query overview skipped: {}", _exception_details(_ov_exc))
                 query_overview = {}
+
+        knowledge_fallback = _build_entity_knowledge_fallback_answer(payload.prompt, svc)
+        if knowledge_fallback and (_is_structural_stub_answer(answer) or _is_non_informative_answer(answer)):
+            answer = knowledge_fallback
 
         yield _sse_event("sources_ready", {"sources": [item.model_dump(mode="json") for item in source_models]})
 
@@ -3127,7 +3230,11 @@ def _build_assistant_message(
     enrichment_path: str | None = None,
 ) -> ChatMessageModel:
     source_models = _build_source_models(sources)
-    answer = _sanitize_assistant_answer_text(answer)
+    answer = _fallback_assistant_answer_text(
+        answer,
+        source_models=source_models,
+        query_overview=query_overview,
+    )
     answer = _linkify_answer_note_citations(answer, source_models)
     primary_source = next((item for item in source_models if item.isPrimary), None)
     normalized_provenance = _normalize_assistant_provenance(provenance)
@@ -3160,6 +3267,30 @@ def _lookup_conversation_entity_contexts(user_text: str, assistant_text: str, sv
         return result if isinstance(result, list) else []
     except Exception:
         return []
+
+
+def _build_entity_knowledge_fallback_answer(user_text: str, svc) -> str | None:
+    try:
+        contexts = _lookup_conversation_entity_contexts(user_text, "", svc)
+    except Exception:
+        return None
+
+    for entity in contexts:
+        value = str(entity.get("value") or "").strip()
+        ddg = entity.get("ddg_knowledge") or {}
+        summary = str(
+            ddg.get("abstract_text")
+            or ddg.get("answer")
+            or ddg.get("definition")
+            or ""
+        ).strip()
+        if not summary:
+            continue
+        if value and value.lower() not in summary.lower():
+            return f"{value}: {summary}"
+        return summary
+
+    return None
 
 
 def _lookup_query_overview(user_text: str, svc, llm=None) -> dict[str, Any]:
@@ -4411,6 +4542,20 @@ def _mount_expo_web_if_available() -> None:
 
 
 _mount_expo_web_if_available()
+
+# Monter le serveur MCP HTTP (SSE) sur /mcp/* avec authentification Bearer token si configurée.
+# Import local pour éviter la boucle circulaire src.api.app ↔ src.mcp.http_server
+# Format: Authorization: Bearer <mcp_auth_token>
+# Réponses: /mcp/initialize, /mcp/list_tools, /mcp/call_tool, etc. (standard JSON-RPC 2.0)
+# Notes:
+# - Les logs MCP sont capturés separément (pas stdout pollution)
+# - La latence initialize est sub-500ms (pas de timeout Claude)
+# - Process persistant dans FastAPI (pas de subprocess stdio)
+def _mount_mcp_server() -> None:
+    from src.mcp.http_server import mount_mcp_server
+    mount_mcp_server(app, auth_token=settings.mcp_auth_token, mount_path="/mcp")
+
+_mount_mcp_server()
 
 
 _GRAPH_TAG_GARBAGE_RE = re.compile(

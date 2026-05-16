@@ -21,6 +21,8 @@ services:
       VAULT_PATH: /vault
       APP_DATA_DIR: /app/data
       LOG_DIR: /app/logs
+      # Port interne fixe de l'API dans le container (le port hôte reste configurable via OBSIRAG_API_PORT)
+      OBSIRAG_API_PORT: "8080"
       # Le worker autolearn tourne en processus séparé via cron :
       # l'API ne doit pas le lancer en interne.
       AUTOLEARN_ALLOW_BACKGROUND_LLM: "false"

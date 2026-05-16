@@ -267,6 +267,15 @@ export type ReindexResult = {
   indexing: NonNullable<SystemStatus['indexing']>;
 };
 
+export type ConversationResyncResult = {
+  status: 'ok';
+  recovered: number;
+  existing: number;
+  added: number;
+  updated: number;
+  total: number;
+};
+
 export type ServerConfig = {
   backendUrl: string;
   accessToken?: string;

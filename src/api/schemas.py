@@ -119,6 +119,15 @@ class ReindexResponseModel(BaseModel):
     indexing: IndexingStatusModel
 
 
+class ConversationResyncResponseModel(BaseModel):
+    status: Literal["ok"] = "ok"
+    recovered: int
+    existing: int
+    added: int
+    updated: int
+    total: int
+
+
 class SourceRefModel(BaseModel):
     filePath: str
     noteTitle: str

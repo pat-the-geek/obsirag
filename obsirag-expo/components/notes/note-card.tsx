@@ -22,7 +22,7 @@ export function NoteCard({ note, onOpenNote, onOpenTag }: NoteCardProps) {
 
   return (
     <View style={[styles.card, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }] }>
-      <Text style={[styles.title, { color: theme.colors.text }]}>{note.title}</Text>
+      <Text style={[styles.title, { color: theme.colors.text }]} numberOfLines={0}>{note.title}</Text>
       <Text style={[styles.path, { color: theme.colors.textSubtle }]}>{note.filePath}</Text>
       <View style={styles.tagsRow}>
         {(note.tags || []).map((tag) => (
@@ -49,6 +49,7 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 22,
     fontWeight: '800',
+    wordBreak: 'break-all' as any,
   },
   path: {
     fontSize: 12,

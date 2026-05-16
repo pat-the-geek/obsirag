@@ -1,6 +1,7 @@
 import {
   ChatMessage,
   ConversationDetail,
+  ConversationResyncResult,
   ConversationSummary,
   DetectSynapsesResult,
   EntityContext,
@@ -131,6 +132,23 @@ export class ObsiRagApi {
     }
 
     return this.requestJson<ReindexResult>('/api/v1/system/reindex', {
+      method: 'POST',
+    });
+  }
+
+  async resyncConversations(): Promise<ConversationResyncResult> {
+    if (this.config.useMockServer) {
+      return {
+        status: 'ok',
+        recovered: mockConversationSummaries.length,
+        existing: mockConversationSummaries.length,
+        added: 0,
+        updated: 0,
+        total: mockConversationSummaries.length,
+      };
+    }
+
+    return this.requestJson<ConversationResyncResult>('/api/v1/system/conversations/resync', {
       method: 'POST',
     });
   }

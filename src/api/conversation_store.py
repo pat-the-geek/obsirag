@@ -5,6 +5,8 @@ from pathlib import Path
 import re
 from uuid import uuid4
 
+import frontmatter
+
 from src.config import settings
 from src.storage.json_state import JsonStateStore
 from src.storage.safe_read import read_text_lines
@@ -28,10 +30,19 @@ class ApiConversationStore:
         payload = StoredConversationCollectionModel.model_validate(
             self._store.load({"conversations": [], "updatedAt": datetime.now(UTC).isoformat()})
         )
-        return [
+        items = [
             self._normalize_conversation(ConversationDetailModel.model_validate(item.model_dump()))
             for item in payload.conversations
         ]
+        if items:
+            return items
+
+        # Recovery path: when the JSON store is empty/missing, rebuild a minimal
+        # conversation history from markdown artifacts saved in the vault.
+        recovered = self._recover_from_saved_markdown()
+        if recovered:
+            self._save_all(recovered)
+        return recovered
 
     def get(self, conversation_id: str) -> ConversationDetailModel | None:
         return next((item for item in self.list() if item.id == conversation_id), None)
@@ -208,6 +219,49 @@ class ApiConversationStore:
         out_path.write_text(markdown.rstrip() + "\n", encoding="utf-8")
         return out_path
 
+    def resync_from_saved_markdown(self, *, overwrite: bool = False) -> dict[str, int]:
+        recovered = self._recover_from_saved_markdown()
+        if not recovered:
+            return {
+                "recovered": 0,
+                "existing": len(self.list()),
+                "added": 0,
+                "updated": 0,
+                "total": len(self.list()),
+            }
+
+        recovered_by_id = {item.id: item for item in recovered}
+        current = {item.id: item for item in self.list()}
+        existing_count = len(current)
+
+        added = 0
+        updated = 0
+        if overwrite:
+            merged = recovered_by_id
+            added = len(merged)
+        else:
+            merged = dict(current)
+            for conversation_id, conversation in recovered_by_id.items():
+                if conversation_id in merged:
+                    current_messages = len(merged[conversation_id].messages)
+                    recovered_messages = len(conversation.messages)
+                    if recovered_messages > current_messages:
+                        merged[conversation_id] = conversation
+                        updated += 1
+                else:
+                    merged[conversation_id] = conversation
+                    added += 1
+
+        final_items = sorted(merged.values(), key=lambda item: item.updatedAt, reverse=True)
+        self._save_all(final_items)
+        return {
+            "recovered": len(recovered_by_id),
+            "existing": existing_count,
+            "added": added,
+            "updated": updated,
+            "total": len(final_items),
+        }
+
     def _save_all(self, conversations: list[ConversationDetailModel]) -> None:
         payload = StoredConversationCollectionModel(
             conversations=[
@@ -217,6 +271,85 @@ class ApiConversationStore:
             updatedAt=datetime.now(UTC).isoformat(),
         )
         self._store.save(payload.model_dump(mode="json"), ensure_ascii=False, indent=2)
+
+    def _recover_from_saved_markdown(self) -> list[ConversationDetailModel]:
+        root = settings.conversations_dir
+        if not root.exists():
+            return []
+
+        recovered_by_id: dict[str, ConversationDetailModel] = {}
+        for month_dir in sorted((p for p in root.iterdir() if p.is_dir()), reverse=True):
+            for path in sorted(month_dir.glob("*.md"), key=lambda p: p.stat().st_mtime, reverse=True):
+                conversation = self._conversation_from_markdown(path)
+                if conversation is None:
+                    continue
+                if conversation.id in recovered_by_id:
+                    continue
+                recovered_by_id[conversation.id] = conversation
+
+        return sorted(recovered_by_id.values(), key=lambda item: item.updatedAt, reverse=True)
+
+    def _conversation_from_markdown(self, path: Path) -> ConversationDetailModel | None:
+        try:
+            post = frontmatter.loads(path.read_text(encoding="utf-8", errors="replace"))
+        except OSError:
+            return None
+        except Exception:
+            return None
+
+        metadata = post.metadata or {}
+        conversation_id = str(metadata.get("conversation_id") or "").strip()
+        if not conversation_id:
+            return None
+
+        created_at = str(metadata.get("created_at") or "").strip()
+        closed_at = str(metadata.get("closed_at") or "").strip()
+        updated_at = closed_at or created_at
+        if not updated_at:
+            try:
+                updated_at = datetime.fromtimestamp(path.stat().st_mtime, UTC).isoformat()
+            except OSError:
+                updated_at = datetime.now(UTC).isoformat()
+
+        title = self._extract_markdown_title(str(post.content or ""))
+        if not title:
+            title = path.stem.replace("-", " ").replace("_", " ").strip() or "Conversation"
+
+        turns = metadata.get("turns_history") if isinstance(metadata.get("turns_history"), list) else []
+        messages: list[ChatMessageModel] = []
+        for index, turn in enumerate(turns):
+            if not isinstance(turn, dict):
+                continue
+            role = str(turn.get("role") or "").strip().lower()
+            if role not in {"user", "assistant", "system"}:
+                continue
+            content = str(turn.get("content") or "").strip()
+            if not content:
+                continue
+            messages.append(
+                ChatMessageModel(
+                    id=f"restored-{conversation_id}-{index}",
+                    role=role,
+                    content=content,
+                    createdAt=updated_at,
+                )
+            )
+
+        return ConversationDetailModel(
+            id=conversation_id,
+            title=title,
+            updatedAt=updated_at,
+            draft="",
+            messages=messages,
+            lastGenerationStats=self._latest_generation_stats(messages),
+        )
+
+    @staticmethod
+    def _extract_markdown_title(markdown: str) -> str:
+        for line in markdown.splitlines():
+            if line.startswith("# "):
+                return line[2:].strip()
+        return ""
 
     @staticmethod
     def _derive_title(messages: list[ChatMessageModel]) -> str:

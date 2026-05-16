@@ -19,7 +19,51 @@ export default function Root({ children }: { children: ReactNode }) {
           dangerouslySetInnerHTML={{
             __html: `
               html, body {
+                margin: 0;
+                padding: 0;
+                width: 100%;
+                height: var(--obsirag-app-height, 100dvh);
+                min-height: var(--obsirag-app-height, 100dvh);
                 background: #f4f1ea;
+                overscroll-behavior: none;
+              }
+
+              body {
+                overflow: hidden;
+                -webkit-text-size-adjust: 100%;
+                -webkit-overflow-scrolling: touch;
+                position: fixed;
+                inset: 0;
+              }
+
+              #root,
+              #__next,
+              body > div:first-child {
+                width: 100%;
+                height: var(--obsirag-app-height, 100dvh);
+                min-height: var(--obsirag-app-height, 100dvh);
+              }
+
+              html[data-obsirag-standalone='true'] [role='tablist'] {
+                position: fixed !important;
+                left: 0 !important;
+                right: 0 !important;
+                bottom: 0 !important;
+                height: 64px !important;
+                min-height: 64px !important;
+                max-height: 64px !important;
+                margin: 0 !important;
+                padding-top: 0 !important;
+                padding-bottom: 0 !important;
+                transform: none !important;
+                z-index: 2147483646 !important;
+              }
+
+              html[data-obsirag-standalone='true'] [role='tablist'] > * {
+                margin-top: 0 !important;
+                margin-bottom: 0 !important;
+                padding-top: 0 !important;
+                padding-bottom: 0 !important;
               }
 
               body[data-obsirag-booted='true'] #obsirag-preboot {
@@ -78,6 +122,107 @@ export default function Root({ children }: { children: ReactNode }) {
           }}
         />
         <ScrollViewStyleReset />
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `
+              (function () {
+                var tabObserver;
+                function applyAppHeight() {
+                  var vv = window.visualViewport;
+                  var height = Math.round(Math.max(
+                    window.innerHeight || 0,
+                    vv && vv.height ? vv.height : 0,
+                    document.documentElement.clientHeight || 0
+                  ));
+                  document.documentElement.style.setProperty('--obsirag-app-height', height + 'px');
+                }
+                function patchTabBar(standalone) {
+                  var tablist = document.querySelector('[role="tablist"]');
+                  if (!tablist) {
+                    return;
+                  }
+                  if (!standalone) {
+                    tablist.style.position = '';
+                    tablist.style.left = '';
+                    tablist.style.right = '';
+                    tablist.style.bottom = '';
+                    tablist.style.height = '';
+                    tablist.style.minHeight = '';
+                    tablist.style.maxHeight = '';
+                    tablist.style.paddingTop = '';
+                    tablist.style.paddingBottom = '';
+                    tablist.style.marginTop = '';
+                    tablist.style.marginBottom = '';
+                    tablist.style.transform = '';
+                    tablist.style.zIndex = '';
+                    return;
+                  }
+                  tablist.style.position = 'fixed';
+                  tablist.style.left = '0';
+                  tablist.style.right = '0';
+                  tablist.style.bottom = '0';
+                  tablist.style.height = '64px';
+                  tablist.style.minHeight = '64px';
+                  tablist.style.maxHeight = '64px';
+                  tablist.style.paddingTop = '0';
+                  tablist.style.paddingBottom = '0';
+                  tablist.style.marginTop = '0';
+                  tablist.style.marginBottom = '0';
+                  tablist.style.transform = 'none';
+                  tablist.style.zIndex = '2147483646';
+                }
+                function ensureTabObserver(standalone) {
+                  if (!standalone) {
+                    if (tabObserver) {
+                      tabObserver.disconnect();
+                      tabObserver = undefined;
+                    }
+                    return;
+                  }
+                  if (tabObserver || typeof MutationObserver === 'undefined') {
+                    return;
+                  }
+                  tabObserver = new MutationObserver(function () {
+                    patchTabBar(true);
+                  });
+                  tabObserver.observe(document.documentElement, { childList: true, subtree: true, attributes: true });
+                }
+                function applyStandaloneFlag() {
+                  var standaloneByDisplayMode = window.matchMedia && window.matchMedia('(display-mode: standalone)').matches;
+                  var standaloneByNavigator = window.navigator && window.navigator.standalone === true;
+                  var standalone = !!(standaloneByDisplayMode || standaloneByNavigator);
+                  document.documentElement.setAttribute('data-obsirag-standalone', standalone ? 'true' : 'false');
+                  patchTabBar(standalone);
+                  ensureTabObserver(standalone);
+                }
+                applyAppHeight();
+                if (document.readyState === 'loading') {
+                  document.addEventListener('DOMContentLoaded', function () {
+                    applyStandaloneFlag();
+                    applyAppHeight();
+                  }, { once: true });
+                } else {
+                  applyStandaloneFlag();
+                }
+                requestAnimationFrame(function () {
+                  applyStandaloneFlag();
+                  applyAppHeight();
+                });
+                window.addEventListener('resize', applyAppHeight, { passive: true });
+                window.addEventListener('orientationchange', applyAppHeight, { passive: true });
+                if (window.visualViewport) {
+                  window.visualViewport.addEventListener('resize', applyAppHeight, { passive: true });
+                }
+                if (window.matchMedia) {
+                  var media = window.matchMedia('(display-mode: standalone)');
+                  if (media && media.addEventListener) {
+                    media.addEventListener('change', applyStandaloneFlag);
+                  }
+                }
+              })();
+            `,
+          }}
+        />
       </head>
       <body>
         <div id="obsirag-preboot" aria-live="polite">

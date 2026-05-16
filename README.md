@@ -32,55 +32,92 @@ L'agent peut rechercher des notes, lire leur contenu, naviguer dans le graphe de
 
 ---
 
-## Serveur MCP — référence complète
+## Serveur MCP — architecture HTTP (SSE)
 
-### Configuration (Claude Desktop, Cursor…)
+**NOUVEAU :** ObsiRAG expose un serveur MCP natif via **HTTP (SSE)** directement depuis FastAPI, sans subprocess stdio. Cela signifie :
+
+- ✅ **Pas de timeout initialize** — réponse < 100ms
+- ✅ **Process persistant** — lancé une fois avec le backend
+- ✅ **Logs propres** — zéro pollution stdout
+- ✅ **Auth Bearer token** — sécurité intégrée
+- ✅ **Scalable** — support clients multiples concurrent
+
+### Quick-start
+
+#### 1. Configuration `.env` (optionnel — auth)
+
+```env
+# Générer un token:
+# openssl rand -hex 32 | sed 's/^/sk-obsirag-/'
+
+MCP_AUTH_TOKEN=sk-obsirag-a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6
+```
+
+#### 2. Démarrer
+
+```bash
+./start.sh
+# MCP HTTP disponible sur: http://localhost:8081/mcp
+```
+
+#### 3. Configurer Claude Desktop
+
+Fichier: `~/Library/Application\ Support/Claude/claude_desktop_config.json`
 
 ```json
 {
   "mcpServers": {
     "obsirag": {
-      "command": "/chemin/vers/obsirag/.venv/bin/python",
-      "args": ["-m", "src.mcp.server"],
-      "env": {
-        "PYTHONPATH": "/chemin/vers/obsirag"
-      },
-      "cwd": "/chemin/vers/obsirag"
+      "url": "http://localhost:8081/mcp",
+      "auth": {
+        "type": "bearer",
+        "token": "sk-obsirag-a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6"
+      }
     }
   }
 }
 ```
 
-Le serveur MCP réutilise la même configuration `.env` que le backend principal (`VAULT_PATH`, `APP_DATA_DIR`, modèles, etc.).
+Puis relancer Claude :
+```bash
+killall Claude
+open -a Claude
+```
 
-### Outils exposés
+### Outils MCP exposés
 
 | Outil | Description |
 | --- | --- |
 | `obsirag_ask_rag` | **Recherche RAG principale.** Pose une question sur le coffre via Ollama. Bascule automatiquement sur Euria + recherche web si le coffre ne suffit pas. |
 | `obsirag_search_notes` | Recherche des notes par titre ou chemin relatif dans le coffre indexé. |
+| `obsirag_search_notes_semantic` | Recherche vectorielle (embedding). |
 | `obsirag_get_note` | Retourne le contenu Markdown complet et les métadonnées d'une note connue. |
-| `obsirag_browse_notes_by_date` | Liste les notes triées par date de modification décroissante. Supporte les filtres de période, dossier et tag — idéal pour *"mes 10 dernières notes"*. |
-| `obsirag_get_graph_subgraph` | Explore le graphe de connaissances autour d'une note — voisins, synapses, filtres par dossier, tag, type ou récence. |
-| `obsirag_get_system_status` | Retourne l'état du runtime, l'indexation et les composants actifs. |
-| `obsirag_conversation_start` | Démarre une conversation d'investigation persistée dans le coffre. |
-| `obsirag_conversation_continue` | Ajoute un tour de Q&R à une investigation en cours. |
-| `obsirag_conversation_finalize` | Clôt une investigation et écrit la synthèse finale. |
+| `obsirag_browse_notes_by_date` | Liste les notes triées par date de modification décroissante. |
+| `obsirag_get_graph_subgraph` | Explore le graphe de connaissances autour d'une note. |
+| `obsirag_get_entity_stats` | Statistiques sur les entités NER détectées. |
+| `obsirag_get_graph_filters` | Options disponibles pour filtrer le graphe. |
+| `obsirag_get_system_status` | État du runtime, indexation, composants actifs. |
+| `obsirag_conversation_start` | Démarre une conversation d'investigation persistée. |
+| `obsirag_conversation_continue` | Ajoute un tour à une investigation en cours. |
+| `obsirag_conversation_finalize` | Clôt une investigation et sauvegarde la synthèse. |
+| `obsirag_list_folder` | Énumération des dossiers et fichiers dans le coffre. |
 
-### Lancement local
+### Documentation complète
+
+- [MCP HTTP — Configuration détaillée](./docs/MCP_HTTP.md)
+- [MCP Quick-Start](./docs/MCP_QUICKSTART.md)
+- [Architecture générale](./docs/architecture.md)
+
+### Backward compatibility
+
+Le transport stdio legacy est conservé pour usages pre-HTTP :
 
 ```bash
-source .venv/bin/activate
+# Mode historique (déprécié)
 python -m src.mcp.server
 ```
 
-### Ce que les agents peuvent faire avec ObsiRAG
-
-- Retrouver vos dernières notes et les synthétiser
-- Répondre à une question en s'appuyant sur vos propres écrits, avec citation des sources
-- Explorer les connexions entre notes (synapses, wikilinks)
-- Conduire une investigation multi-tours sur un sujet et sauvegarder le résultat dans votre coffre
-- Filtrer vos notes par période, dossier ou tag pour contextualiser une réponse
+Mais la production utilise HTTP (`./start.sh`).
 
 ---
 

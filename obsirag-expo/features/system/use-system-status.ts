@@ -53,3 +53,18 @@ export function useUpdateFeatures() {
     },
   });
 }
+
+export function useResyncConversations() {
+  const { api } = useServerConfig();
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: () => api.resyncConversations(),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['system-status'] }),
+        queryClient.invalidateQueries({ queryKey: ['conversations'] }),
+      ]);
+    },
+  });
+}

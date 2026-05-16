@@ -1,6 +1,6 @@
 import { Home, Layers, MessageCircle, Settings, Share2 } from 'lucide-react-native';
 import { Redirect, Tabs, useRouter, useSegments } from 'expo-router';
-import { ActivityIndicator } from 'react-native';
+import { ActivityIndicator, Platform } from 'react-native';
 
 import { useAppTheme } from '../../theme/app-theme';
 
@@ -17,6 +17,7 @@ export default function TabsLayout() {
   const session = useSessionStatus();
   const setActiveConversationId = useAppStore((state) => state.setActiveConversationId);
   const isInsideChatThread = routeSegments.includes('chat') && routeSegments.length > 2;
+  const standalonePwaWeb = isStandalonePwaWeb();
 
   if (!hasHydrated) {
     return (
@@ -52,10 +53,25 @@ export default function TabsLayout() {
         headerShown: false,
         tabBarActiveTintColor: colors.primary,
         tabBarInactiveTintColor: colors.textMuted,
+        ...(standalonePwaWeb ? { safeAreaInsets: { bottom: 0, left: 0, right: 0, top: 0 } } : {}),
         tabBarStyle: {
           backgroundColor: colors.surface,
           borderTopColor: colors.border,
+          ...(standalonePwaWeb
+            ? {
+                position: 'absolute',
+                left: 0,
+                right: 0,
+                bottom: 0,
+                height: 64,
+                minHeight: 64,
+                maxHeight: 64,
+                paddingBottom: 0,
+                paddingTop: 0,
+              }
+            : {}),
         },
+        ...(standalonePwaWeb ? { tabBarItemStyle: { paddingVertical: 0, marginVertical: 0 } } : {}),
       }}
     >
       <Tabs.Screen name="index" options={{ title: 'Dashboard', tabBarIcon: ({ color, size }) => <Home size={size} color={color} /> }} />
@@ -79,4 +95,13 @@ export default function TabsLayout() {
       <Tabs.Screen name="note/[noteId]" options={{ href: null }} />
     </Tabs>
   );
+}
+
+function isStandalonePwaWeb() {
+  if (Platform.OS !== 'web' || typeof window === 'undefined') {
+    return false;
+  }
+  const byDisplayMode = window.matchMedia?.('(display-mode: standalone)')?.matches;
+  const byNavigatorFlag = (window.navigator as Navigator & { standalone?: boolean }).standalone === true;
+  return Boolean(byDisplayMode || byNavigatorFlag);
 }

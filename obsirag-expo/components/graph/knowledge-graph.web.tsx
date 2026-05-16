@@ -1116,12 +1116,26 @@ function ensureVisTooltipStyles() {
       padding: 16px;
     }
     .obsirag-graph-tooltip__entity-image {
-      width: 56px;
-      height: 56px;
-      object-fit: cover;
-      border-radius: 8px;
+      width: 100%;
+      max-width: 220px;
+      height: auto;
+      max-height: 180px;
+      object-fit: contain;
+      border-radius: 10px;
       display: block;
       align-self: flex-start;
+      padding: 6px;
+      border: 1px solid rgba(148, 163, 184, 0.28);
+      background:
+        linear-gradient(135deg, rgba(248, 250, 252, 0.98) 0%, rgba(226, 232, 240, 0.95) 100%),
+        repeating-linear-gradient(
+          45deg,
+          rgba(148, 163, 184, 0.16) 0,
+          rgba(148, 163, 184, 0.16) 8px,
+          rgba(241, 245, 249, 0.85) 8px,
+          rgba(241, 245, 249, 0.85) 16px
+        );
+      box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.35);
     }
     .obsirag-graph-tooltip__title {
       color: #f8fafc;

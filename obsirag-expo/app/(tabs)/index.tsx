@@ -9,7 +9,7 @@ import { SectionCard } from '../../components/ui/section-card';
 import { StatusPill } from '../../components/ui/status-pill';
 import { useServerConfig } from '../../features/auth/use-server-config';
 import { useNoteSearch } from '../../features/notes/use-notes';
-import { useSystemStatus } from '../../features/system/use-system-status';
+import { useResyncConversations, useSystemStatus } from '../../features/system/use-system-status';
 import { useAppTheme } from '../../theme/app-theme';
 import { formatMetadataDate, formatSizeBytes, joinMetadataParts } from '../../utils/format-display';
 
@@ -28,9 +28,26 @@ export default function DashboardScreen() {
   const { colors } = useAppTheme();
   const [noteQuery, setNoteQuery] = useState('');
   const [heroImageFailed, setHeroImageFailed] = useState(false);
+  const [resyncMessage, setResyncMessage] = useState('');
+  const [resyncFailed, setResyncFailed] = useState(false);
   const { backendUrl, useMockServer } = useServerConfig();
   const { data, isLoading, isRefetching, refetch, isError, error } = useSystemStatus({ refetchIntervalMs: 1200 });
+  const resyncConversations = useResyncConversations();
   const noteSearch = useNoteSearch(noteQuery);
+
+  const handleResyncConversations = async () => {
+    setResyncMessage('');
+    setResyncFailed(false);
+    try {
+      const result = await resyncConversations.mutateAsync();
+      setResyncMessage(
+        `Resync terminée: ${result.total} fils (${result.added} ajoutés, ${result.updated} mis à jour).`,
+      );
+    } catch (mutationError) {
+      setResyncFailed(true);
+      setResyncMessage(mutationError instanceof Error ? mutationError.message : 'Resync impossible.');
+    }
+  };
 
   if (isLoading || !data) {
     return (
@@ -139,6 +156,26 @@ export default function DashboardScreen() {
         <Text style={{ color: colors.text }}>Indexation: {indexingStatus}</Text>
         <Text style={{ color: colors.text }}>Auto-learn: {autolearnStatus}</Text>
         <Text style={{ color: colors.text }}>Source runtime: {runtimeSourceLabel}</Text>
+        <View style={styles.systemActionsRow}>
+          <Pressable
+            onPress={handleResyncConversations}
+            disabled={resyncConversations.isPending}
+            style={[
+              styles.systemActionButton,
+              { backgroundColor: colors.primary },
+              resyncConversations.isPending ? styles.systemActionButtonDisabled : null,
+            ]}
+          >
+            <Text style={[styles.systemActionButtonLabel, { color: colors.primaryText }]}>
+              {resyncConversations.isPending ? 'Resync en cours…' : 'Resync conversations'}
+            </Text>
+          </Pressable>
+        </View>
+        {resyncMessage ? (
+          <Text style={{ color: resyncFailed ? colors.warningText : colors.successText }}>
+            {resyncMessage}
+          </Text>
+        ) : null}
         <SystemStartupView
           {...(data.startup ? { startup: data.startup } : {})}
           backendReachable={data.backendReachable}
@@ -343,5 +380,23 @@ const styles = StyleSheet.create({
   },
   quickMeta: {
     fontSize: 12,
+  },
+  systemActionsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginTop: 4,
+  },
+  systemActionButton: {
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  systemActionButtonDisabled: {
+    opacity: 0.6,
+  },
+  systemActionButtonLabel: {
+    fontSize: 12,
+    fontWeight: '700',
   },
 });

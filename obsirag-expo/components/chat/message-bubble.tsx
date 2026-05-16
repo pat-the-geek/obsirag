@@ -47,10 +47,16 @@ export function MessageBubble({
   const [entityContextsOpen, setEntityContextsOpen] = useState(false);
   const hasRenderableQueryOverview = isRenderableQueryOverview(message);
   const hasMermaidContent = containsMermaidFence(message.content);
+  const hasAssistantContent = Boolean(message.content.trim());
   const shouldHideAssistantMainBubble = Boolean(
-    !isUser && hasRenderableQueryOverview && !hasMermaidContent && (message.sentinel || message.provenance === 'web'),
+    !isUser &&
+      hasRenderableQueryOverview &&
+      !hasMermaidContent &&
+      (message.provenance === 'web' || (message.sentinel && !hasAssistantContent)),
   );
-  const shouldRenderQueryOverviewBubble = Boolean(!isUser && hasRenderableQueryOverview && (message.sentinel || message.provenance === 'web'));
+  const shouldRenderQueryOverviewBubble = Boolean(
+    !isUser && hasRenderableQueryOverview && (message.provenance === 'web' || (message.sentinel && !hasAssistantContent)),
+  );
   const isPendingAssistant = Boolean(!isUser && (message.id === 'streaming-assistant' || message.id === 'pending-web-assistant'));
   const showWebSearchAction = Boolean(!isUser && !isPendingAssistant && webSearchSuggestion && onSuggestWebSearch);
   const showDeleteAction = Boolean(!isUser && !isPendingAssistant && onDeleteMessage);
@@ -420,6 +426,9 @@ function buildDdgMarkdown(message: ChatMessage): string {
   const summary = sanitizeDdgMarkdown(message.queryOverview.summary?.trim() ?? '');
   if (summary) {
     lines.push(summary, '');
+  } else if (message.queryOverview.sources?.length) {
+    const firstSourceTitle = message.queryOverview.sources[0]?.title?.trim() || message.queryOverview.sources[0]?.href?.trim() || 'source web';
+    lines.push(`Résumé indisponible. Consultez les sources ci-dessous (ex: ${firstSourceTitle}).`, '');
   }
 
   if (message.queryOverview.searchQuery?.trim()) {

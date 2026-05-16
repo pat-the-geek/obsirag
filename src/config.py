@@ -48,6 +48,11 @@ class Settings(BaseSettings):
     api_public_base_url: str = "http://localhost:8080"
     expo_web_dist_path: str = str(Path(__file__).resolve().parent.parent / "obsirag-expo" / "dist")
 
+    # MCP HTTP Server (SSE) — Bearer token pour authentifier les clients Claude, etc.
+    # Si non défini, MCP est accessible sans authentification.
+    # Exemple: MCP_AUTH_TOKEN=sk-obsirag-xxx dans .env
+    mcp_auth_token: Optional[str] = None
+
     # Euria (Infomaniak)
     euria_url: Optional[str] = Field(
         default=None,
