@@ -4,24 +4,30 @@ from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 
-from src.mcp.runtime import (
-    ask_rag_payload,
-    browse_notes_by_date_payload,
-    conversation_continue_payload,
-    conversation_finalize_payload,
-    conversation_start_payload,
-    get_entity_stats_payload,
-    get_graph_filters_payload,
-    get_graph_subgraph_payload,
-    get_note_payload,
-    get_system_status_payload,
-    list_folder_payload,
-    search_notes_payload,
-    search_notes_semantic_payload,
-)
-
 
 def register_tools(server: FastMCP) -> None:
+    """
+    Enregistrer tous les outils MCP.
+    
+    LAZY IMPORT: runtime est importé ici (pas au module level) pour éviter
+    la boucle circulaire: app → http_server → tools → runtime → app
+    """
+    from src.mcp.runtime import (
+        ask_rag_payload,
+        browse_notes_by_date_payload,
+        conversation_continue_payload,
+        conversation_finalize_payload,
+        conversation_start_payload,
+        get_entity_stats_payload,
+        get_graph_filters_payload,
+        get_graph_subgraph_payload,
+        get_note_payload,
+        get_system_status_payload,
+        list_folder_payload,
+        search_notes_payload,
+        search_notes_semantic_payload,
+    )
+
     @server.tool(
         name="obsirag_get_system_status",
         description="Retourne l'etat du runtime ObsiRAG, de l'indexation et des composants locaux.",
