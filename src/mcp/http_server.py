@@ -29,12 +29,35 @@ def build_server():
     est appelé (à la fin du démarrage app).
     """
     from mcp.server.fastmcp import FastMCP
+    from mcp.server.transport_security import TransportSecuritySettings
     from src.mcp.tools import register_tools
-    
+
+    # Le transport SSE du SDK MCP active une protection anti-DNS-rebinding qui,
+    # avec allowed_hosts vide, ne tolère que localhost/127.0.0.1 et rejette tout
+    # autre Host header en 421 "Invalid Host header". ObsiRAG étant joint via
+    # l'IP Tailscale, on autorise explicitement cet hôte (motif ":*" du SDK =
+    # robuste au changement de port) tout en gardant la protection active.
+    transport_security = TransportSecuritySettings(
+        enable_dns_rebinding_protection=True,
+        allowed_hosts=[
+            "100.72.122.51:*",
+            "localhost:*",
+            "127.0.0.1:*",
+            "localhost",
+            "127.0.0.1",
+        ],
+        allowed_origins=[
+            "http://100.72.122.51:*",
+            "http://localhost:*",
+            "http://127.0.0.1:*",
+        ],
+    )
+
     server = FastMCP(
         name="ObsiRAG",
         instructions=SERVER_INSTRUCTIONS,
         log_level="INFO",
+        transport_security=transport_security,
     )
     register_tools(server)
     return server
